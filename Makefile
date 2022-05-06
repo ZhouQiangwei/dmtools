@@ -1,3 +1,9 @@
+#ifndef CPP
+#$(error CPP variable undefined)
+#endif
+
+CPP = $(shell pwd)
+
 CC ?= gcc
 AR ?= ar
 RANLIB ?= ranlib
@@ -71,6 +77,12 @@ test/testRemote: libBigWig.a
 test/testWrite: libBigWig.a
 	$(CC) -o $@ -I. $(CFLAGS) test/testWrite.c libBigWig.a $(LIBS)
 
+bmtools: libBigWig.so
+	$(CC) -o $@ -I. -L. $(CFLAGS) bmtools.c -lBigWig $(LIBS) -Wl,-rpath $(CPP)
+
+bmDMR: regression.o
+	g++ -o bmDMR bmDMR.cpp regression.o -I. -L. -lBigWig -Wl,-rpath $(CPP) -lgsl -lgslcblas -lm -lz
+
 test/exampleWrite: libBigWig.so
 	$(CC) -o $@ -I. -L. $(CFLAGS) test/exampleWrite.c -lBigWig $(LIBS) -Wl,-rpath .
 
@@ -80,13 +92,15 @@ test/testBigBed: libBigWig.a
 test/testIterator: libBigWig.a
 	$(CC) -o $@ -I. $(CFLAGS) test/testIterator.c libBigWig.a $(LIBS)
 
-test: test/testLocal test/testRemote test/testWrite test/testLocal test/exampleWrite test/testRemoteManyContigs test/testBigBed test/testIterator
+install: bmtools bmDMR
+
+test: test/testLocal test/testRemote test/testWrite test/testLocal bmtools test/exampleWrite test/testRemoteManyContigs test/testBigBed test/testIterator
 	./test/test.py
 
 clean:
-	rm -f *.o libBigWig.a libBigWig.so *.pico test/testLocal test/testRemote test/testWrite test/exampleWrite test/testRemoteManyContigs test/testBigBed test/testIterator example_output.bw
+	rm -f *.o libBigWig.a libBigWig.so *.pico test/testLocal test/testRemote test/testWrite bmtools bmDMR test/exampleWrite test/testRemoteManyContigs test/testBigBed test/testIterator example_output.bw
 
-install: libBigWig.a libBigWig.so
+install-old: libBigWig.a libBigWig.so
 	install -d $(prefix)/lib $(prefix)/include
 	install libBigWig.a $(prefix)/lib
 	install libBigWig.so $(prefix)/lib

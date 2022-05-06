@@ -185,11 +185,13 @@ static int writeChromList(FILE *fp, chromList_t *cl) {
 //returns 0 on success
 //Still need to fill in indexOffset
 int bwWriteHdr(bigWigFile_t *bw) {
-    uint32_t magic = BM_MAGIC;
-    magic |= bw->type;
+    uint32_t magic = BIGWIG_MAGIC;
+    //
+    uint16_t magic2 = BM_MAGIC;
+    magic2 |= (uint16_t) bw->type;
     if(DEBUG>1) printf("|||||| %ld\n", bw->type);
 
-    uint16_t two = 4;
+    uint16_t two = magic2; //4;
     FILE *fp;
     void *p = calloc(58, sizeof(uint8_t)); //58 bytes of nothing
     if(!bw->isWrite) return 1;
@@ -330,7 +332,9 @@ static int flushBuffer(bigWigFile_t *fp) {
     //Determine the number of items
     switch(wb->ltype) {
     case 1:
-        nItems = (wb->l-24)/12;
+        //nItems = (wb->l-24)/16; //12 here must same as iterm size
+        nItems = wb->nItems;
+        if(DEBUG>1) printf("SIZE %d %d\n", (wb->l-24)/16, wb->nItems);
         break;
     case 2:
         nItems = (wb->l-24)/8;
@@ -359,6 +363,7 @@ static int flushBuffer(bigWigFile_t *fp) {
 
     wb->nBlocks++;
     wb->l = 24;
+    wb->nItems = 0;
     return 0;
 }
 
@@ -385,6 +390,8 @@ int bwAddIntervals(bigWigFile_t *fp, char **chrom, uint32_t *start, uint32_t *en
 
     //Flush if needed
     if(wb->ltype != 1) if(flushBuffer(fp)) return 3;
+    if(DEBUG>1) printf("fp->hdr->bufSize %d %d\n", wb->l, fp->hdr->bufSize);
+
     if(wb->l+36 > fp->hdr->bufSize) if(flushBuffer(fp)) return 4;
     lastChrom = chrom[0];
     tid = bwGetTid(fp, chrom[0]);
@@ -395,7 +402,7 @@ int bwAddIntervals(bigWigFile_t *fp, char **chrom, uint32_t *start, uint32_t *en
         wb->start = start[0];
         wb->end = end[0];
     }
-
+    //fprintf(stderr, "-x- %d %d %d %d\n", tid, wb->tid, wb->start, wb->end);
     //Ensure that everything is set correctly
     wb->ltype = 1;
     if(wb->l <= 24) {
@@ -430,6 +437,7 @@ int bwAddIntervals(bigWigFile_t *fp, char **chrom, uint32_t *start, uint32_t *en
         wb->l += slen;
     }
     wb->l += elen;
+    wb->nItems += 1;
     updateStats(fp, end[0]-start[0], values[0]);
     /*
     if(fp->type & BM_COVER){
@@ -494,7 +502,8 @@ int bwAddIntervals(bigWigFile_t *fp, char **chrom, uint32_t *start, uint32_t *en
             flushBuffer(fp);
             wb->start = start[i];
         }
-        if(DEBUG>1) printf("buffer %d %d %d %d\n", start[i], end[i], wb->l, fp->hdr->bufSize);
+        //if(DEBUG>1) 
+        if(DEBUG>1) printf("--==--buffer %d %d %d %d\n", start[i], end[i], wb->l, fp->hdr->bufSize);
         if(!memcpy(wb->p+wb->l, &(start[i]), sizeof(uint32_t))) return 11;
         elen = 4;
 
@@ -523,6 +532,7 @@ int bwAddIntervals(bigWigFile_t *fp, char **chrom, uint32_t *start, uint32_t *en
         }
         if(DEBUG>1) printf("elen %d\n", elen);
         wb->l += elen;
+        wb->nItems += 1;
         updateStats(fp, end[i]-start[i], values[i]);
 
 /*
@@ -591,6 +601,7 @@ int bwAppendIntervals(bigWigFile_t *fp, uint32_t *start, uint32_t *end, float *v
 
     for(i=0; i<n; i++) {
         if(wb->l+50 > fp->hdr->bufSize) { //12, but now maybe have ID
+            if(DEBUG>1) fprintf(stderr, "Big buffer!!! %d %d %d %d\n", wb->l, fp->hdr->bufSize, i, end[i-1]);
             if(i>0) { //otherwise it's already set
                 wb->end = end[i-1];
             }
@@ -624,6 +635,7 @@ int bwAppendIntervals(bigWigFile_t *fp, uint32_t *start, uint32_t *end, float *v
             wb->l += slen;
         }
         wb->l += elen;
+        wb->nItems += 1;
         updateStats(fp, end[i]-start[i], values[i]);
 /*
         if(fp->type == 0){
@@ -1026,15 +1038,21 @@ int writeIndex(bigWigFile_t *fp) {
 //This may or may not produce the requested number of zoom levels
 int makeZoomLevels(bigWigFile_t *fp) {
     uint32_t meanBinSize, i;
-    uint32_t multiplier = 4, zoom = 10, maxZoom = 0;
+    //uint32_t multiplier = 4, zoom = 10, maxZoom = 0;
+    // for methylation data, not good for zoom in old version, modified by qwzhou at 2022.38
+    uint32_t multiplier = 10, zoom = 100, maxZoom = 0;
+
     uint16_t nLevels = 0;
 
     meanBinSize = ((double) fp->writeBuffer->runningWidthSum)/(fp->writeBuffer->nEntries);
     //In reality, one level is skipped
-    meanBinSize *= 4;
+    //meanBinSize *= 4;
+    // for methylation data, not good for zoom in old version, modified by qwzhou at 2022.38
     //N.B., we must ALWAYS check that the zoom doesn't overflow a uint32_t!
     if(((uint32_t)-1)>>2 < meanBinSize) return 0; //No zoom levels!
-    if(meanBinSize*4 > zoom) zoom = multiplier*meanBinSize;
+    
+    //if(meanBinSize*4 > zoom) zoom = multiplier*meanBinSize;
+    // for methylation data, not good for zoom in old version, modified by qwzhou at 2022.38
 
     fp->hdr->zoomHdrs = calloc(1, sizeof(bwZoomHdr_t));
     if(!fp->hdr->zoomHdrs) return 1;
@@ -1053,6 +1071,7 @@ int makeZoomLevels(bigWigFile_t *fp) {
         if(fp->cl->len[i] > maxZoom) maxZoom = fp->cl->len[i];
     }
     if(zoom > maxZoom) zoom = maxZoom;
+    fprintf(stderr, "\nzoom %ld %ld\n", zoom, maxZoom);
 
     for(i=0; i<fp->hdr->nLevels; i++) {
         if(zoom > maxZoom) break; //prevent absurdly large zoom levels
@@ -1248,18 +1267,19 @@ int constructZoomLevels(bigWigFile_t *fp) {
     if(!sum || !sumsq) goto error;
 
     for(i=0; i<fp->cl->nKeys; i++) {
-        if(DEBUG>1) printf("add Int ===zz-- %ld\n", fp->cl->len[i]);
+        if(DEBUG>1) printf("add Int ===zz-- %s %ld\n", fp->cl->chrom[i], fp->cl->len[i]);
         it = bwOverlappingIntervalsIterator(fp, fp->cl->chrom[i], 0, fp->cl->len[i], 100000);
         if(!it) goto error;
+        if(DEBUG>1) printf("add Int ===zxxz-- %d\n", it->intervals->l);
         while(it->data != NULL){
-        for(j=0;j<it->intervals->l;j++){
-            for(k=0;k<fp->hdr->nLevels;k++){
-                if(DEBUG>1) printf("add Int ===-- \n");
-                if(addIntervalValue(fp, &(fp->writeBuffer->nNodes[k]), sum+k, sumsq+k, fp->writeBuffer->lastZoomBuffer[k], fp->hdr->bufSize/32, fp->hdr->zoomHdrs->level[k], i, it->intervals->start[j], it->intervals->end[j], it->intervals->value[j])) goto error;
-                while(fp->writeBuffer->lastZoomBuffer[k]->next) fp->writeBuffer->lastZoomBuffer[k] = fp->writeBuffer->lastZoomBuffer[k]->next;
+            for(j=0;j<it->intervals->l;j++){
+                for(k=0;k<fp->hdr->nLevels;k++){
+                    //printf("add Int xx===-- %d %d, %d %d %f\n", j, fp->hdr->nLevels, it->intervals->start[j], it->intervals->end[j], it->intervals->value[j]);
+                    if(addIntervalValue(fp, &(fp->writeBuffer->nNodes[k]), sum+k, sumsq+k, fp->writeBuffer->lastZoomBuffer[k], fp->hdr->bufSize/32, fp->hdr->zoomHdrs->level[k], i, it->intervals->start[j], it->intervals->end[j], it->intervals->value[j])) goto error;
+                    while(fp->writeBuffer->lastZoomBuffer[k]->next) fp->writeBuffer->lastZoomBuffer[k] = fp->writeBuffer->lastZoomBuffer[k]->next;
+                }
             }
-        }
-        it = bwIteratorNext(it);
+            it = bwIteratorNext(it);
         }
         bwIteratorDestroy(it);
     }
@@ -1328,6 +1348,7 @@ int writeZoomLevels(bigWigFile_t *fp) {
 
             wb->nBlocks++;
             wb->l = 24;
+            wb->nItems = 0;
             zb = zb->next;
         }
         if(DEBUG>1) printf("-----1111.3\n");
@@ -1499,9 +1520,9 @@ int bwFinalize(bigWigFile_t *fp) {
     }
     if(DEBUG>1) printf("666666\n");
     //write magic at the end of the file
-    four = BM_MAGIC;//BIGWIG_MAGIC;
+    four = BIGWIG_MAGIC; //BM_MAGIC;//BIGWIG_MAGIC;
     if(fwrite(&four, sizeof(uint32_t), 1, fp->URL->x.fp) != 1) return 9;
-    printf("four %d\n", four);
+    if(DEBUG>1) printf("--- four %d\n", four);
 
     return 0;
 }

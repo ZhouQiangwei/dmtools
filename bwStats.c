@@ -11,7 +11,8 @@
 static int32_t determineZoomLevel(bigWigFile_t *fp, int basesPerBin) {
     int32_t out = -1;
     int64_t diff;
-    uint32_t bestDiff = -1;
+    //uint32_t bestDiff = -1;
+    uint32_t bestDiff = 1000000;
     uint16_t i;
 
     basesPerBin/=2;
@@ -165,7 +166,7 @@ error:
     return strtod("NaN", NULL);
 }
 
-static double intMean(bwOverlappingIntervals_t* ints, uint32_t start, uint32_t end) {
+static double intMean(bwOverlappingIntervals_t* ints, uint32_t start, uint32_t end, uint16_t version, uint8_t strand, uint8_t context) {
     double sum = 0.0;
     uint32_t nBases = 0, i, start_use, end_use;
 
@@ -173,14 +174,374 @@ static double intMean(bwOverlappingIntervals_t* ints, uint32_t start, uint32_t e
 
     for(i=0; i<ints->l; i++) {
         start_use = ints->start[i];
-        end_use = ints->end[i];
-        if(ints->start[i] < start) start_use = start;
-        if(ints->end[i] > end) end_use = end;
-        nBases += end_use-start_use;
-        sum += (end_use-start_use)*((double) ints->value[i]);
+        if(version & BM_END){
+            end_use = ints->end[i];
+            if(ints->start[i] < start) start_use = start;
+            if(ints->end[i] > end) end_use = end;
+            if((version & BM_STRAND) && (version & BM_CONTEXT)){
+                if((ints->strand[i] == strand || strand == 2) 
+                    && (ints->context[i] == context || context == 0) ){
+                    nBases += end_use-start_use;
+                    sum += (end_use-start_use)*((double) ints->value[i]); 
+                }
+            }else if(version & BM_STRAND){
+                if(ints->strand[i] == strand || strand == 2){
+                    nBases += end_use-start_use;
+                    sum += (end_use-start_use)*((double) ints->value[i]); 
+                }
+            }else if(version & BM_CONTEXT){
+                if(ints->context[i] == context || context == 0){
+                    nBases += end_use-start_use;
+                    sum += (end_use-start_use)*((double) ints->value[i]); 
+                }
+            }else{
+                nBases += end_use-start_use;
+                sum += (end_use-start_use)*((double) ints->value[i]);
+            }
+        }else{
+            if((version & BM_STRAND) && (version & BM_CONTEXT)){
+                if((ints->strand[i] == strand || strand == 2) 
+                    && (ints->context[i] == context || context == 0) ){
+                    nBases += 1;
+                    sum += ((double) ints->value[i]); 
+                }
+            }else if(version & BM_STRAND){
+                if(ints->strand[i] == strand || strand == 2){
+                    nBases += 1;
+                    sum += ((double) ints->value[i]);
+                }
+            }else if(version & BM_CONTEXT){
+                if(ints->context[i] == context || context == 0){
+                    nBases += 1;
+                    sum += ((double) ints->value[i]);
+                }
+            }else{
+                nBases += 1;
+                sum += ((double) ints->value[i]);
+            }
+        }
     }
 
     return sum/nBases;
+}
+
+double *intMean_array(bwOverlappingIntervals_t* ints, uint32_t start, uint32_t end, uint16_t version, uint8_t strand) {
+    uint32_t i, start_use, end_use;
+    //0 c, 1 cg, 2 chg, 3 chh
+    int Tsize = 4;
+    double *sum = malloc(sizeof(double)*Tsize);
+    uint32_t *nBases = malloc(sizeof(uint32_t)*Tsize);
+    for(i=0;i<Tsize;i++) nBases[i] = 0;
+    for(i=0;i<Tsize;i++) sum[i] = 0;
+    double *output = malloc(sizeof(double)*Tsize);
+
+    if(!ints->l) {
+        //return strtod("NaN", NULL);
+        for(i=0;i<Tsize;i++){
+            output[i] = strtod("NaN", NULL);
+        }
+        return output;
+    }
+
+    for(i=0; i<ints->l; i++) {
+        start_use = ints->start[i];
+        if(version & BM_END){
+            end_use = ints->end[i];
+            if(ints->start[i] < start) start_use = start;
+            if(ints->end[i] > end) end_use = end;
+            if((version & BM_STRAND) && (version & BM_CONTEXT)){
+                if(ints->strand[i] == strand || strand == 2){
+                    nBases[ints->context[i]] += end_use-start_use;
+                    sum[ints->context[i]] += (end_use-start_use)*((double) ints->value[i]);
+                    if(ints->context[i]!=0){
+                        nBases[0] += end_use-start_use;
+                        sum[0] += (end_use-start_use)*((double) ints->value[i]);
+                    }
+                }
+            }else if(version & BM_STRAND){
+                if(ints->strand[i] == strand || strand == 2){
+                    nBases[0] += end_use-start_use;
+                    sum[0] += (end_use-start_use)*((double) ints->value[i]); 
+                }
+            }else if(version & BM_CONTEXT){
+                nBases[ints->context[i]] += end_use-start_use;
+                sum[ints->context[i]] += (end_use-start_use)*((double) ints->value[i]);
+                if(ints->context[i]!=0){
+                    nBases[0] += end_use-start_use;
+                    sum[0] += (end_use-start_use)*((double) ints->value[i]);
+                }
+            }else{
+                nBases[0] += end_use-start_use;
+                sum[0] += (end_use-start_use)*((double) ints->value[i]);
+            }
+        }else{
+            if((version & BM_STRAND) && (version & BM_CONTEXT)){
+                if(ints->strand[i] == strand || strand == 2){
+                    nBases[ints->context[i]] += 1;
+                    sum[ints->context[i]] += ((double) ints->value[i]);
+                    if(ints->context[i]!=0){
+                        nBases[0] += 1;
+                        sum[0] += ((double) ints->value[i]); 
+                    }
+                }
+            }else if(version & BM_STRAND){
+                if(ints->strand[i] == strand || strand == 2){
+                    nBases[0] += 1;
+                    sum[0] += ((double) ints->value[i]);
+                }
+            }else if(version & BM_CONTEXT){
+                nBases[ints->context[i]] += 1;
+                sum[ints->context[i]] += ((double) ints->value[i]);
+                if(ints->context[i]!=0){
+                    nBases[0] += 1;
+                    sum[0] += ((double) ints->value[i]); 
+                }
+            }else{
+                nBases[0] += 1;
+                sum[0] += ((double) ints->value[i]);
+            }
+        }
+    }
+
+    for(i=0;i<Tsize;i++){
+        if(nBases[i] <= 0) output[i] = strtod("NaN", NULL);
+        else output[i] = sum[i]/nBases[i];
+    }
+    return output;
+}
+
+
+
+double *intweightedMean_array(bwOverlappingIntervals_t* ints, uint32_t start, uint32_t end, uint16_t version, uint8_t strand) {
+    uint32_t i, start_use, end_use;
+    int Tsize = 4;
+    double *sum = malloc(sizeof(double)*Tsize);
+    uint32_t *nBases = malloc(sizeof(uint32_t)*Tsize);
+    for(i=0;i<Tsize;i++) nBases[i] = 0;
+    for(i=0;i<Tsize;i++) sum[i] = 0;
+    uint32_t coverC = 0;
+    double *output = malloc(sizeof(double)*Tsize);
+    if(!(version & BM_COVER)){
+        fprintf(stderr, "Error: mbw file without coverage information!!!\n mean average will replace weight coverage.");
+        double *Amean = intMean_array(ints, start, end, version, strand);
+        return Amean;
+    }
+    if(!ints->l) {
+        //return strtod("NaN", NULL);
+        for(i=0;i<Tsize;i++){
+            output[i] = strtod("NaN", NULL);
+        }
+        return output;
+    }
+    for(i=0; i<ints->l; i++) {
+        start_use = ints->start[i];
+        coverC = (int)(ints->value[i] * ints->coverage[i]+0.5);
+        if(version & BM_END){
+            end_use = ints->end[i];
+            if(ints->start[i] < start) start_use = start;
+            if(ints->end[i] > end) end_use = end;
+            if((version & BM_STRAND) && (version & BM_CONTEXT)){
+                if(ints->strand[i] == strand || strand == 2){
+                    nBases[ints->context[i]] += (end_use-start_use)*coverC;
+                    sum[ints->context[i]] += (end_use-start_use)*ints->coverage[i];
+                    if(ints->context[i]!=0){
+                        nBases[0] += (end_use-start_use)*coverC;
+                        sum[0] += (end_use-start_use)*ints->coverage[i];
+                    }
+                }
+            }else if(version & BM_STRAND){
+                if(strand == 2 || ints->strand[i] == strand){
+                    nBases[0] += (end_use-start_use)*coverC;
+                    sum[0] += (end_use-start_use)*ints->coverage[i];
+                }
+            }else if(version & BM_CONTEXT){
+                nBases[ints->context[i]] += (end_use-start_use)*coverC;
+                sum[ints->context[i]] += (end_use-start_use)*ints->coverage[i];
+                if(ints->context[i]!=0){
+                    nBases[0] += (end_use-start_use)*coverC;
+                    sum[0] += (end_use-start_use)*ints->coverage[i];
+                }
+            }else{
+                nBases[0] += (end_use-start_use)*coverC;
+                sum[0] += (end_use-start_use)*ints->coverage[i];
+            }
+        }else{
+            if((version & BM_STRAND) && (version & BM_CONTEXT)){
+                if(ints->strand[i] == strand || strand == 2){
+                    nBases[ints->context[i]] += coverC;
+                    sum[ints->context[i]] += ints->coverage[i];
+                    if(ints->context[i]!=0){
+                        nBases[0] += coverC;
+                        sum[0] += ints->coverage[i];
+                    }
+                }
+            }else if(version & BM_STRAND){
+                if(strand == 2 || ints->strand[i] == strand){
+                    nBases[0] += coverC;
+                    sum[0] += ints->coverage[i];
+                }
+            }else if(version & BM_CONTEXT){
+                nBases[ints->context[i]] += coverC;
+                sum[ints->context[i]] += ints->coverage[i];
+                if(ints->context[i]!=0){
+                    nBases[0] += coverC;
+                    sum[0] += ints->coverage[i];
+                }
+            }else{
+                nBases[0] += coverC;
+                sum[0] += ints->coverage[i];
+            }
+        }
+    }
+
+    for(i=0;i<Tsize;i++){
+        //printf("%f %d %d %d\n", sum[i], nBases[i], ints->l, strand );
+        if(sum[i] <= 0) output[i] = strtod("NaN", NULL);
+        else output[i] = nBases[i]/sum[i];
+    }
+    return output;
+}
+
+void intweightedMean_array_count(bwOverlappingIntervals_t* ints, uint32_t start, uint32_t end, uint16_t version, uint8_t strand, uint16_t *countC, uint16_t *countCT) {
+    uint32_t i, start_use, end_use;
+    int Tsize = 4;
+    uint32_t coverC = 0;
+    if(!(version & BM_COVER)){
+        fprintf(stderr, "Error: mbw file without coverage information!!!\n");
+        return;
+    }
+    for(i=0;i<Tsize;i++){
+        countC[i] = 0;
+        countCT[i] = 0;
+    }
+    if(!ints->l) {
+        return;
+    }
+    
+    for(i=0; i<ints->l; i++) {
+        start_use = ints->start[i];
+        coverC = (int)(ints->value[i] * ints->coverage[i]+0.5);
+        if(version & BM_END){
+            end_use = ints->end[i];
+            if(ints->start[i] < start) start_use = start;
+            if(ints->end[i] > end) end_use = end;
+            if((version & BM_STRAND) && (version & BM_CONTEXT)){
+                if(ints->strand[i] == strand || strand == 2){
+                    countC[ints->context[i]] += (end_use-start_use)*coverC;
+                    countCT[ints->context[i]] += (end_use-start_use)*ints->coverage[i];
+                    if(ints->context[i]!=0){
+                        countC[0] += (end_use-start_use)*coverC;
+                        countCT[0] += (end_use-start_use)*ints->coverage[i];
+                    }
+                }
+            }else if(version & BM_STRAND){
+                if(strand == 2 || ints->strand[i] == strand){
+                    countC[0] += (end_use-start_use)*coverC;
+                    countCT[0] += (end_use-start_use)*ints->coverage[i];
+                }
+            }else if(version & BM_CONTEXT){
+                countC[ints->context[i]] += (end_use-start_use)*coverC;
+                countCT[ints->context[i]] += (end_use-start_use)*ints->coverage[i];
+                if(ints->context[i]!=0){
+                    countC[0] += (end_use-start_use)*coverC;
+                    countCT[0] += (end_use-start_use)*ints->coverage[i];
+                }
+            }else{
+                countC[0] += (end_use-start_use)*coverC;
+                countCT[0] += (end_use-start_use)*ints->coverage[i];
+            }
+        }else{
+            if((version & BM_STRAND) && (version & BM_CONTEXT)){
+                if(ints->strand[i] == strand || strand == 2){
+                    countC[ints->context[i]] += coverC;
+                    countCT[ints->context[i]] += ints->coverage[i];
+                    if(ints->context[i]!=0){
+                        countC[0] += coverC;
+                        countCT[0] += ints->coverage[i];
+                    }
+                }
+            }else if(version & BM_STRAND){
+                if(strand == 2 || ints->strand[i] == strand){
+                    countC[0] += coverC;
+                    countCT[0] += ints->coverage[i];
+                }
+            }else if(version & BM_CONTEXT){
+                countC[ints->context[i]] += coverC;
+                countCT[ints->context[i]] += ints->coverage[i];
+                if(ints->context[i]!=0){
+                    countC[0] += coverC;
+                    countCT[0] += ints->coverage[i];
+                }
+            }else{
+                countC[0] += coverC;
+                countCT[0] += ints->coverage[i];
+            }
+        }
+    }
+
+    return;
+}
+
+static double intweightedMean(bwOverlappingIntervals_t* ints, uint32_t start, uint32_t end, uint16_t version, uint8_t strand, uint8_t context) {
+    double sum = 0.0;
+    uint32_t nBases = 0, i, start_use, end_use;
+    if(!(version & BM_COVER)){
+        fprintf(stderr, "Error: mbw file without coverage information!!!\n mean average will replace weight coverage.");
+        float Amean = intMean(ints, start, end, version, strand, context);
+        return Amean;
+    }
+    if(!ints->l) return strtod("NaN", NULL);
+    for(i=0; i<ints->l; i++) {
+        start_use = ints->start[i];
+        if(version & BM_END){
+            end_use = ints->end[i];
+            if(ints->start[i] < start) start_use = start;
+            if(ints->end[i] > end) end_use = end;
+            if((version & BM_STRAND) && (version & BM_CONTEXT)){
+                if((ints->strand[i] == strand || strand == 2) 
+                    && (ints->context[i] == context || context == 0) ){
+                    nBases += (end_use-start_use)*(uint32_t)((double) ints->value[i] * ints->coverage[i]+0.5);
+                    sum += (end_use-start_use)*ints->coverage[i]; 
+                }
+            }else if(version & BM_STRAND){
+                if(strand == 2 || ints->strand[i] == strand){
+                    nBases += (end_use-start_use)*(uint32_t)((double) ints->value[i] * ints->coverage[i]+0.5);
+                    sum += (end_use-start_use)*ints->coverage[i];
+                }
+            }else if(version & BM_CONTEXT){
+                if(ints->context[i] == context || context == 0){
+                    nBases += (end_use-start_use)*(uint32_t)((double) ints->value[i] * ints->coverage[i]+0.5);
+                    sum += (end_use-start_use)*ints->coverage[i];
+                }
+            }else{
+                nBases += (end_use-start_use)*(uint32_t)((double) ints->value[i] * ints->coverage[i]+0.5);
+                sum += (end_use-start_use)*ints->coverage[i];
+            }
+        }else{
+            if((version & BM_STRAND) && (version & BM_CONTEXT)){
+                if((ints->strand[i] == strand || strand == 2) 
+                    && (ints->context[i] == context || context == 0) ){
+                    nBases += (uint32_t)((double) ints->value[i] * ints->coverage[i]+0.5);
+                    sum += ints->coverage[i];
+                }
+            }else if(version & BM_STRAND){
+                if(strand == 2 || ints->strand[i] == strand){
+                    nBases += (uint32_t)((double) ints->value[i] * ints->coverage[i]+0.5);
+                    sum += ints->coverage[i];
+                }
+            }else if(version & BM_CONTEXT){
+                if(ints->context[i] == context || context == 0){
+                    nBases += (uint32_t)((double) ints->value[i] * ints->coverage[i]+0.5);
+                    sum += ints->coverage[i];
+                }
+            }else{
+                nBases += (uint32_t)((double) ints->value[i] * ints->coverage[i]+0.5);
+                sum += ints->coverage[i];
+            }
+        }
+    }
+
+    return nBases/sum;
 }
 
 //Does UCSC compensate for partial block/range overlap?
@@ -220,20 +581,63 @@ error:
 }
 
 //This uses compensated summation to account for finite precision math
-static double intDev(bwOverlappingIntervals_t* ints, uint32_t start, uint32_t end) {
+static double intDev(bwOverlappingIntervals_t* ints, uint32_t start, uint32_t end, uint16_t version, uint8_t strand, uint8_t context) {
     double v1 = 0.0, mean, rv;
     uint32_t nBases = 0, i, start_use, end_use;
 
     if(!ints->l) return strtod("NaN", NULL);
-    mean = intMean(ints, start, end);
+    mean = intMean(ints, start, end, version, strand, context);
 
-    for(i=0; i<ints->l; i++) {
-        start_use = ints->start[i];
-        end_use = ints->end[i];
-        if(ints->start[i] < start) start_use = start;
-        if(ints->end[i] > end) end_use = end;
-        nBases += end_use-start_use;
-        v1 += (end_use-start_use) * pow(ints->value[i]-mean, 2.0); //running sum of squared difference
+    if(version & BM_END){
+        for(i=0; i<ints->l; i++) {
+            start_use = ints->start[i];
+            end_use = ints->end[i];
+            if(ints->start[i] < start) start_use = start;
+            if(ints->end[i] > end) end_use = end;
+            if((version & BM_STRAND) && (version & BM_CONTEXT)){
+                if((ints->strand[i] == strand || strand == 2) 
+                    && (ints->context[i] == context || context == 0) ){
+                    nBases += end_use-start_use;
+                    v1 += (end_use-start_use) * pow(ints->value[i]-mean, 2.0);
+                }
+            }else if(version & BM_STRAND){
+                if(ints->strand[i] == strand || strand == 2){
+                    nBases += end_use-start_use;
+                    v1 += (end_use-start_use) * pow(ints->value[i]-mean, 2.0); //running sum of squared difference
+                }
+            }else if(version & BM_CONTEXT){
+                if(ints->context[i] == context || context == 0){
+                    nBases += end_use-start_use;
+                    v1 += (end_use-start_use) * pow(ints->value[i]-mean, 2.0); //running sum of squared difference
+                }
+            }else{
+                nBases += end_use-start_use;
+                v1 += (end_use-start_use) * pow(ints->value[i]-mean, 2.0); //running sum of squared difference
+            }
+        }
+    }else{
+        for(i=0; i<ints->l; i++) {
+            if((version & BM_STRAND) && (version & BM_CONTEXT)){
+                if((ints->strand[i] == strand || strand == 2) 
+                    && (ints->context[i] == context || context == 0) ){
+                    nBases += 1;
+                    v1 += pow(ints->value[i]-mean, 2.0);
+                }
+            }else if(version & BM_STRAND){
+                if(ints->strand[i] == strand || strand == 2){
+                    nBases += 1;
+                    v1 += pow(ints->value[i]-mean, 2.0); //running sum of squared difference
+                }
+            }else if(version & BM_CONTEXT){
+                if(ints->context[i] == context || context == 0){
+                    nBases += 1;
+                    v1 += pow(ints->value[i]-mean, 2.0); //running sum of squared difference
+                }
+            }else{
+                nBases += 1;
+                v1 += pow(ints->value[i]-mean, 2.0); //running sum of squared difference
+            }
+        }
     }
 
     if(nBases>=2) rv = sqrt(v1/(nBases-1));
@@ -356,18 +760,24 @@ error:
     return strtod("NaN", NULL);
 }
 
-static double intCoverage(bwOverlappingIntervals_t* ints, uint32_t start, uint32_t end) {
+static double intCoverage(bwOverlappingIntervals_t* ints, uint32_t start, uint32_t end, uint16_t version) {
     uint32_t i, start_use, end_use;
     double o = 0.0;
 
     if(!ints->l) return strtod("NaN", NULL);
 
-    for(i=0; i<ints->l; i++) {
-        start_use = ints->start[i];
-        end_use = ints->end[i];
-        if(start_use < start) start_use = start;
-        if(end_use > end) end_use = end;
-        o += end_use - start_use;
+    if(version & BM_END){
+        for(i=0; i<ints->l; i++) {
+            start_use = ints->start[i];
+            end_use = ints->end[i];
+            if(start_use < start) start_use = start;
+            if(end_use > end) end_use = end;
+            o += end_use - start_use;
+        }
+    }else{
+        for(i=0; i<ints->l; i++) {
+            o += 1;
+        }
     }
 
     return o/(end-start);
@@ -402,18 +812,24 @@ error:
     return strtod("NaN", NULL);
 }
 
-static double intSum(bwOverlappingIntervals_t* ints, uint32_t start, uint32_t end) {
+static double intSum(bwOverlappingIntervals_t* ints, uint32_t start, uint32_t end, uint16_t version) {
     uint32_t i, start_use, end_use;
     double o = 0.0;
 
     if(!ints->l) return strtod("NaN", NULL);
 
-    for(i=0; i<ints->l; i++) {
-        start_use = ints->start[i];
-        end_use = ints->end[i];
-        if(start_use < start) start_use = start;
-        if(end_use > end) end_use = end;
-        o += (end_use - start_use) * ints->value[i];
+    if(version & BM_END){
+        for(i=0; i<ints->l; i++) {
+            start_use = ints->start[i];
+            end_use = ints->end[i];
+            if(start_use < start) start_use = start;
+            if(end_use > end) end_use = end;
+            o += (end_use - start_use) * ints->value[i];
+        }
+    }else{
+        for(i=0; i<ints->l; i++) {
+            o += ints->value[i];
+        }
     }
 
     return o;
@@ -482,14 +898,19 @@ error:
     return NULL;
 }
 
-double *bwStatsFromFull(bigWigFile_t *fp, char *chrom, uint32_t start, uint32_t end, uint32_t nBins, enum bwStatsType type) {
+double *bwStatsFromFull(bigWigFile_t *fp, char *chrom, uint32_t start, uint32_t end, uint32_t nBins, uint32_t movestep, enum bwStatsType type, uint8_t strand, uint8_t context) {
     bwOverlappingIntervals_t *ints = NULL;
     double *output = malloc(sizeof(double)*nBins);
     uint32_t i, pos = start, end2;
     if(!output) return NULL;
 
     for(i=0; i<nBins; i++) {
-        end2 = start + ((double)(end-start)*(i+1))/((int) nBins);
+        //end2 = start + ((double)(end-start)*(i+1))/((int) nBins);
+        if(i==0){
+            end2 = start + ((double)(end-start)*(i+1))/((int) nBins);
+        }else{
+            end2 = start + movestep*(i+1);
+        }
         ints = bwGetOverlappingIntervals(fp, chrom, pos, end2);
 
         if(!ints) {
@@ -500,10 +921,13 @@ double *bwStatsFromFull(bigWigFile_t *fp, char *chrom, uint32_t start, uint32_t 
         switch(type) {
         default :
         case 0:
-            output[i] = intMean(ints, pos, end2);
+            output[i] = intMean(ints, pos, end2, fp->hdr->version, strand, context);
+            break;
+        case 6:
+            output[i] = intweightedMean(ints, pos, end2, fp->hdr->version, strand, context);
             break;
         case 1:
-            output[i] = intDev(ints, pos, end2);
+            output[i] = intDev(ints, pos, end2, fp->hdr->version, strand, context);
             break;
         case 2:
             output[i] = intMax(ints);
@@ -512,26 +936,142 @@ double *bwStatsFromFull(bigWigFile_t *fp, char *chrom, uint32_t start, uint32_t 
             output[i] = intMin(ints);
             break;
         case 4:
-            output[i] = intCoverage(ints, pos, end2);
+            output[i] = intCoverage(ints, pos, end2, fp->hdr->version);
             break;
         case 5:
-            output[i] = intSum(ints, pos, end2);
+            output[i] = intSum(ints, pos, end2, fp->hdr->version);
             break;
         }
         bwDestroyOverlappingIntervals(ints);
-        pos = end2;
+        //pos = end2;
+        pos = pos + movestep;
     }
 
     return output;
 }
 
+double *bwStatsFromFull_array(bigWigFile_t *fp, char *chrom, uint32_t start, uint32_t end, uint32_t nBins, uint32_t movestep, enum bwStatsType type, uint8_t strand) {
+    bwOverlappingIntervals_t *ints = NULL;
+    int Tsize = 4;
+    double *output = malloc(sizeof(double)*nBins*Tsize);
+    uint32_t i, pos = start, end2, j, k;
+    if(!output) return NULL;
+    double *outmean = malloc(sizeof(double)*Tsize);
+
+    for(i=0,k=0; i<nBins; i++) {
+        //end2 = start + ((double)(end-start)*(i+1))/((int) nBins);
+        if(i==0){
+            end2 = start + ((double)(end-start)*(i+1))/((int) nBins);
+        }else{
+            end2 = start + movestep*(i+1);
+        }
+        ints = bwGetOverlappingIntervals(fp, chrom, pos, end2);
+
+        if(!ints) {
+            for(j=0;j<Tsize;j++){
+                output[k+j] = strtod("NaN", NULL);
+            }
+            continue;
+        }
+
+        switch(type) {
+            default :
+            case 0:
+                outmean = intMean_array(ints, pos, end2, fp->hdr->version, strand);
+                for(j=0;j<Tsize;j++){
+                    output[k+j] = outmean[j];
+                }
+                break;
+            case 6:
+                outmean = intweightedMean_array(ints, pos, end2, fp->hdr->version, strand);
+                for(j=0;j<Tsize;j++){
+                    output[k+j] = outmean[j];
+                }
+                break;
+        }
+        k += Tsize;
+        bwDestroyOverlappingIntervals(ints);
+        //pos = end2;
+        pos = pos + movestep;
+    }
+    free(outmean);
+    return output;
+}
+
+void bwStatsFromFull_array_count(bigWigFile_t *fp, char *chrom, uint32_t start, uint32_t end, uint32_t nBins, uint32_t movestep, enum bwStatsType type, uint8_t strand, uint16_t *countC, uint16_t *countCT) {
+    bwOverlappingIntervals_t *ints = NULL;
+    int Tsize = 4;
+    //double *output = malloc(sizeof(double)*nBins*Tsize);
+    uint32_t i, pos = start, end2, j, k;
+    if(!countC || !countCT) return;
+    uint16_t *out_C = malloc(sizeof(uint16_t)*Tsize);
+    uint16_t *out_CT = malloc(sizeof(uint16_t)*Tsize);
+
+    for(i=0,k=0; i<nBins; i++) {
+        //end2 = start + ((double)(end-start)*(i+1))/((int) nBins);
+        if(i==0){
+            end2 = start + ((double)(end-start)*(i+1))/((int) nBins);
+        }else{
+            end2 = start + movestep*(i+1);
+        }
+        ints = bwGetOverlappingIntervals(fp, chrom, pos, end2);
+
+        if(!ints) {
+            for(j=0;j<Tsize;j++){
+                countC[k+j] = 0;
+                countCT[k+j] = 0;
+            }
+            continue;
+        }
+
+        switch(type) {
+            default :
+            case 6:
+                intweightedMean_array_count(ints, pos, end2, fp->hdr->version, strand, out_C, out_CT);
+                for(j=0;j<Tsize;j++){
+                    countC[k+j] = out_C[j];
+                    countCT[k+j] = out_CT[j];
+                }
+                break;
+        }
+        k += Tsize;
+        bwDestroyOverlappingIntervals(ints);
+        //pos = end2;
+        pos = pos + movestep;
+    }
+    free(out_C); free(out_CT);
+    return;
+}
+
 //Returns a list of floats of length nBins that must be free()d
 //On error, NULL is returned
-double *bwStats(bigWigFile_t *fp, char *chrom, uint32_t start, uint32_t end, uint32_t nBins, enum bwStatsType type) {
-    int32_t level = determineZoomLevel(fp, ((double)(end-start))/((int) nBins));
+double *bwStats(bigWigFile_t *fp, char *chrom, uint32_t start, uint32_t end, uint32_t nBins, uint32_t movestep, enum bwStatsType type, uint8_t strand, uint8_t context) {
+    //int32_t level = determineZoomLevel(fp, ((double)(end-start))/((int) nBins));
     uint32_t tid = bwGetTid(fp, chrom);
     if(tid == (uint32_t) -1) return NULL;
 
-    if(level == -1) return bwStatsFromFull(fp, chrom, start, end, nBins, type);
-    return bwStatsFromZoom(fp, level, tid, start, end, nBins, type);
+    //if(level == -1 || level == 0)
+    return bwStatsFromFull(fp, chrom, start, end, nBins, movestep, type, strand, context);
+    //return bwStatsFromZoom(fp, level, tid, start, end, nBins, type);
+}
+
+double *bwStats_array(bigWigFile_t *fp, char *chrom, uint32_t start, uint32_t end, uint32_t nBins, uint32_t movestep, enum bwStatsType type, uint8_t strand) {
+    //int32_t level = determineZoomLevel(fp, ((double)(end-start))/((int) nBins));
+    uint32_t tid = bwGetTid(fp, chrom);
+    if(tid == (uint32_t) -1) return NULL;
+
+    //if(level == -1 || level == 0)
+    return bwStatsFromFull_array(fp, chrom, start, end, nBins, movestep, type, strand);
+    //return bwStatsFromZoom(fp, level, tid, start, end, nBins, type);
+}
+
+void bwStats_array_count(bigWigFile_t *fp, char *chrom, uint32_t start, uint32_t end, uint32_t nBins, uint32_t movestep, enum bwStatsType type, uint8_t strand, uint16_t *countC, uint16_t *countCT) {
+    //int32_t level = determineZoomLevel(fp, ((double)(end-start))/((int) nBins));
+    uint32_t tid = bwGetTid(fp, chrom);
+    if(tid == (uint32_t) -1) return;
+
+    //if(level == -1 || level == 0)
+    bwStatsFromFull_array_count(fp, chrom, start, end, nBins, movestep, type, strand, countC, countCT);
+    //return bwStatsFromZoom(fp, level, tid, start, end, nBins, type);
+    return;
 }

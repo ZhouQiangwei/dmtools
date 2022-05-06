@@ -435,7 +435,8 @@ static bwOverlappingIntervals_t *pushIntervals_string(bwOverlappingIntervals_t *
     }
     if(withString) o->entryid[o->l] = strdup(entryid);
     o->l++;
-    //fprintf(stderr, "len2 %d %d", o->l, o->m);
+    //fprintf(stderr, "len2---- %d %d %d %d", o->l, o->m, start, end);
+    //if(start == 75878) exit(0);
     return o;
 
 error:
@@ -479,6 +480,7 @@ bwOverlappingIntervals_t *bwGetOverlappingIntervalsCore(bigWigFile_t *fp, bwOver
     float value;
     bwDataHeader_t hdr;
     bwOverlappingIntervals_t *output = calloc(1, sizeof(bwOverlappingIntervals_t));
+    //output->l = 0; output->m = 0;
     if(DEBUG>1) printf("EEEE111 %d %d\n", fp->type, o->n);
 
     if(!output) goto error;
@@ -605,6 +607,7 @@ bwOverlappingIntervals_t *bwGetOverlappingIntervalsCore_string(bigWigFile_t *fp,
     float value;
     bwDataHeader_t hdr;
     bwOverlappingIntervals_t *output = calloc(1, sizeof(bwOverlappingIntervals_t));
+    if(DEBUG>1) printf("EEEE111 %d %d\n", fp->type, o->n);
 
     if(!output) goto error;
 
@@ -643,7 +646,7 @@ bwOverlappingIntervals_t *bwGetOverlappingIntervalsCore_string(bigWigFile_t *fp,
         tmpbuf = buf;
         buf += (6*sizeof(uint32_t));
         if(hdr.tid != tid) continue;
-        uint32_t slen = 0, elen = 0, Nelement = 0;
+        uint8_t slen = 0, elen = 0, Nelement = 0;
         int withString = 0;
         if(fp->type & BM_ID){
             withString = 1;
@@ -651,8 +654,8 @@ bwOverlappingIntervals_t *bwGetOverlappingIntervalsCore_string(bigWigFile_t *fp,
         if(DEBUG>1) fprintf(stderr, "\ntsssssss\n");
 
         if(hdr.type == 3) start = hdr.start - hdr.step;
-        
-        if(DEBUG>1) fprintf(stderr, "hdr.nItems %d %d", hdr.nItems, fp->type);
+
+        if(DEBUG>1) fprintf(stderr, "hdr.nItems %d %d %d\n", hdr.nItems, fp->type, output->l);
         //FIXME: We should ensure that sz is large enough to hold nItems of the given type
         for(j=0; j<hdr.nItems; j++) {
             switch(hdr.type) {
@@ -713,6 +716,7 @@ bwOverlappingIntervals_t *bwGetOverlappingIntervalsCore_string(bigWigFile_t *fp,
             //Push the overlap
             if(DEBUG>1) fprintf(stderr, "\n-getregion-%d %d %d 1\t%ld\t%ld\t%f\t%d\n", j, hdr.nItems, hdr.type, start, end, value, coverage);
             if(!pushIntervals_string(output, start, end, value, coverage, strand, context, entryid, withString, fp->type)) goto error;
+            //printf("\n---====output %d %d\n", output->l, j);
         }
         buf = tmpbuf;
     }
@@ -807,9 +811,10 @@ error:
 //Returns NULL on error OR no intervals, which is a bad design...
 bwOverlappingIntervals_t *bwGetOverlappingIntervals(bigWigFile_t *fp, char *chrom, uint32_t start, uint32_t end) {
     bwOverlappingIntervals_t *output;
+    
     uint32_t tid = bwGetTid(fp, chrom);
     if(tid == (uint32_t) -1) return NULL;
-    if(DEBUG>1) fprintf(stderr, "222222XXXXXX %d\n", fp->type);
+    if(DEBUG>1) fprintf(stderr, "\n222222XXXXXX %d\n", fp->type);
     bwOverlapBlock_t *blocks = bwGetOverlappingBlocks(fp, chrom, start, end);
     if(!blocks) return NULL;
     if(fp->type & BM_ID){
@@ -853,16 +858,16 @@ bwOverlapIterator_t *bwOverlappingIntervalsIterator(bigWigFile_t *bw, char *chro
     output->blocksPerIteration = blocksPerIteration;
 
     if(blocks) {
-        if(DEBUG>1) printf("bwOverlappingIntervalsIterator blocks xxxxx %d\n", bw->type);
+        //if(DEBUG>1) 
+        if(DEBUG>1) printf("bwOverlappingIntervalsIterator blocks xxxxx %d %d\n", bw->type, blocks->n);
         n = blocks->n;
         if(n>blocksPerIteration) blocks->n = blocksPerIteration;
         if(bw->type & BM_ID){
-            if(DEBUG>1) fprintf(stderr, "1111-1 %d\n", bw->type);
             output->intervals = bwGetOverlappingIntervalsCore_string(bw, blocks,tid, start, end);
         }else{
-            if(DEBUG>1) fprintf(stderr, "222222-1 %d %d\n", start, end);
             output->intervals = bwGetOverlappingIntervalsCore_string(bw, blocks,tid, start, end);
         }
+        if(DEBUG>1) fprintf(stderr, "xxxxxx-1 %d %d, %d lll, %d\n", start, end, n, output->intervals->l);
         blocks->n = n;
         output->offset = blocksPerIteration;
     }
@@ -989,6 +994,7 @@ bwOverlappingIntervals_t *bwGetValues(bigWigFile_t *fp, char *chrom, uint32_t st
     if(!intermediate) return NULL;
 
     output = calloc(1, sizeof(bwOverlappingIntervals_t));
+    //output->l = 0; output->m = 0;
     if(!output) goto error;
     if(includeNA) {
         output->l = end-start;

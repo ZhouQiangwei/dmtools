@@ -133,6 +133,7 @@ enum bwStatsType {
     doesNotExist = -1, /*!< This does nothing */
     mean = 0, /*!< The mean value */
     average = 0, /*!< The mean value */
+    weighted = 6,
     stdev = 1, /*!< The standard deviation of the values */
     dev = 1, /*!< The standard deviation of the values */
     max = 2, /*!< The maximum value */
@@ -223,6 +224,7 @@ typedef struct {
     uint32_t step; /**<The step size, if applicable*/
     uint8_t ltype; /**<The type of the last entry added*/
     uint32_t l; /**<The current size of p. This and the type determine the number of items held*/
+    uint16_t nItems;
     void *p; /**<A buffer of size hdr->bufSize*/
     bwLL *firstIndexNode; /**<The first index node in the linked list*/
     bwLL *currentIndexNode; /**<The last index node in a linked list*/
@@ -243,7 +245,9 @@ typedef struct {
     bwRTree_t *idx; /**<The index for the full dataset.*/
     bwWriteBuffer_t *writeBuffer; /**<The buffer used for writing.*/
     int isWrite; /**<0: Opened for reading, 1: Opened for writing.*/
-    int type; /* 0: bigmeth, 1: bigmeth for region with ID, 2: bigmeth for region without ID, 3: ID with strand */
+    int type; /**<0: bigWig, 1: bigBed.*/
+    int mtype;
+    /* 0: bigmeth, 1: bigmeth for region with ID, 2: bigmeth for region without ID, 3: ID with strand */
     /**<0: bigWig, 1: bigBed.*/
 } bigWigFile_t;
 
@@ -258,9 +262,11 @@ typedef struct {
 typedef struct {
     uint32_t l; /**<Number of intervals held*/
     uint32_t m; /**<Maximum number of values/intervals the struct can hold*/
+
     uint32_t *start; /**<The start positions (0-based half open)*/
     uint32_t *end; /**<The end positions (0-based half open)*/
     float *value; /**<The value associated with each position*/
+
     uint16_t *coverage;
     uint8_t *strand;
     uint8_t *context;
@@ -498,7 +504,9 @@ bwOverlappingIntervals_t *bwGetValues(bigWigFile_t *fp, char *chrom, uint32_t st
  * @see bwStatsType
  * @return A pointer to an array of double precission floating point values. Note that bigWig files only hold 32-bit values, so this is done to help prevent overflows.
  */
-double *bwStats(bigWigFile_t *fp, char *chrom, uint32_t start, uint32_t end, uint32_t nBins, enum bwStatsType type);
+double *bwStats(bigWigFile_t *fp, char *chrom, uint32_t start, uint32_t end, uint32_t nBins, uint32_t movestep, enum bwStatsType type, uint8_t strand, uint8_t context);
+double *bwStats_array(bigWigFile_t *fp, char *chrom, uint32_t start, uint32_t end, uint32_t nBins, uint32_t movestep, enum bwStatsType type, uint8_t strand);
+void bwStats_array_count(bigWigFile_t *fp, char *chrom, uint32_t start, uint32_t end, uint32_t nBins, uint32_t movestep, enum bwStatsType type, uint8_t strand, uint16_t *countC, uint16_t *countCT);
 
 /*!
  * @brief Determines per-interval bigWig statistics
@@ -512,7 +520,8 @@ double *bwStats(bigWigFile_t *fp, char *chrom, uint32_t start, uint32_t end, uin
  * @see bwStatsType
  * @return A pointer to an array of double precission floating point values. Note that bigWig files only hold 32-bit values, so this is done to help prevent overflows.
 */
-double *bwStatsFromFull(bigWigFile_t *fp, char *chrom, uint32_t start, uint32_t end, uint32_t nBins, enum bwStatsType type);
+double *bwStatsFromFull(bigWigFile_t *fp, char *chrom, uint32_t start, uint32_t end, uint32_t nBins, uint32_t movestep, enum bwStatsType type, uint8_t strand, uint8_t context);
+double *bwStatsFromFull_array(bigWigFile_t *fp, char *chrom, uint32_t start, uint32_t end, uint32_t nBins, uint32_t movestep, enum bwStatsType type, uint8_t strand);
 
 //Writer functions
 
