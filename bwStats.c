@@ -228,7 +228,7 @@ static double intMean(bwOverlappingIntervals_t* ints, uint32_t start, uint32_t e
 double *intMean_array(bwOverlappingIntervals_t* ints, uint32_t start, uint32_t end, uint16_t version, uint8_t strand) {
     uint32_t i, start_use, end_use;
     //0 c, 1 cg, 2 chg, 3 chh
-    int Tsize = 4;
+    unsigned int Tsize = 4;
     double *sum = malloc(sizeof(double)*Tsize);
     uint32_t *nBases = malloc(sizeof(uint32_t)*Tsize);
     for(i=0;i<Tsize;i++) nBases[i] = 0;
@@ -314,7 +314,7 @@ double *intMean_array(bwOverlappingIntervals_t* ints, uint32_t start, uint32_t e
 
 double *intweightedMean_array(bwOverlappingIntervals_t* ints, uint32_t start, uint32_t end, uint16_t version, uint8_t strand) {
     uint32_t i, start_use, end_use;
-    int Tsize = 4;
+    unsigned int Tsize = 4;
     double *sum = malloc(sizeof(double)*Tsize);
     uint32_t *nBases = malloc(sizeof(uint32_t)*Tsize);
     for(i=0;i<Tsize;i++) nBases[i] = 0;
@@ -404,7 +404,7 @@ double *intweightedMean_array(bwOverlappingIntervals_t* ints, uint32_t start, ui
 
 void intweightedMean_array_count(bwOverlappingIntervals_t* ints, uint32_t start, uint32_t end, uint16_t version, uint8_t strand, uint16_t *countC, uint16_t *countCT) {
     uint32_t i, start_use, end_use;
-    int Tsize = 4;
+    unsigned int Tsize = 4;
     uint32_t coverC = 0;
     if(!(version & BM_COVER)){
         fprintf(stderr, "Error: mbw file without coverage information!!!\n");
@@ -952,7 +952,7 @@ double *bwStatsFromFull(bigWigFile_t *fp, char *chrom, uint32_t start, uint32_t 
 
 double *bwStatsFromFull_array(bigWigFile_t *fp, char *chrom, uint32_t start, uint32_t end, uint32_t nBins, uint32_t movestep, enum bwStatsType type, uint8_t strand) {
     bwOverlappingIntervals_t *ints = NULL;
-    int Tsize = 4;
+    unsigned int Tsize = 4;
     double *output = malloc(sizeof(double)*nBins*Tsize);
     uint32_t i, pos = start, end2, j, k;
     if(!output) return NULL;
@@ -1000,7 +1000,7 @@ double *bwStatsFromFull_array(bigWigFile_t *fp, char *chrom, uint32_t start, uin
 
 void bwStatsFromFull_array_count(bigWigFile_t *fp, char *chrom, uint32_t start, uint32_t end, uint32_t nBins, uint32_t movestep, enum bwStatsType type, uint8_t strand, uint16_t *countC, uint16_t *countCT) {
     bwOverlappingIntervals_t *ints = NULL;
-    int Tsize = 4;
+    unsigned int Tsize = 4;
     //double *output = malloc(sizeof(double)*nBins*Tsize);
     uint32_t i, pos = start, end2, j, k;
     if(!countC || !countCT) return;

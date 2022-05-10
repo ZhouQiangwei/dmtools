@@ -3,11 +3,16 @@
 #endif
 
 CPP = $(shell pwd)
+SOURCES = $(wildcard *.cpp)
+OBJECTS = $(patsubst %.cpp,%.o,$(SOURCES))
+PROGS = bmtools bmDMR
 
-CC ?= gcc
-AR ?= ar
-RANLIB ?= ranlib
-CFLAGS ?= -g -Wall -O3 -Wsign-compare
+CC = gcc
+AR = ar
+RANLIB = ranlib
+CFLAGS = -g -w -O3 -Wsign-compare
+#-Wall
+## changed: = instaed of ?= above 4 lines
 LIBS = -lm -lz
 EXTRA_CFLAGS_PIC = -fpic
 LDFLAGS =
@@ -38,7 +43,7 @@ libdir = $(exec_prefix)/lib
 
 .SUFFIXES: .c .o .pico
 
-all: lib
+all: lib $(PROGS)
 
 lib: lib-static lib-shared
 
@@ -63,7 +68,8 @@ libBigWig.a: $(OBJS)
 	$(RANLIB) $@
 
 libBigWig.so: $(OBJS:.o=.pico)
-	$(CC) -shared $(LDFLAGS) -o $@ $(OBJS:.o=.pico) $(LDLIBS) $(LIBS)
+	$(CC) -shared -o $@ $(OBJS:.o=.pico) $(LDLIBS) $(LIBS)
+#$(CC) -shared $(LDFLAGS) -o $@ $(OBJS:.o=.pico) $(LDLIBS) $(LIBS)
 
 test/testLocal: libBigWig.a
 	$(CC) -o $@ -I. $(CFLAGS) test/testLocal.c libBigWig.a $(LIBS)
@@ -80,7 +86,8 @@ test/testWrite: libBigWig.a
 bmtools: libBigWig.so
 	$(CC) -o $@ -I. -L. $(CFLAGS) bmtools.c -lBigWig $(LIBS) -Wl,-rpath $(CPP)
 
-bmDMR: regression.o
+bmDMR:
+	g++ -c -o regression.o regression.cpp
 	g++ -o bmDMR bmDMR.cpp regression.o -I. -L. -lBigWig -Wl,-rpath $(CPP) -lgsl -lgslcblas -lm -lz
 
 test/exampleWrite: libBigWig.so

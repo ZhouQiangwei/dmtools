@@ -50,6 +50,7 @@ void delete_char2(char* str,char target,char target2);
 void calbody_print(bigWigFile_t *fp, char* chrom, int start, int end, int splitN, char* method, int pstrand, int format, char* geneid, uint8_t context, char* bodycase, char* strand, FILE* outfileF);
 void calregion_print(bigWigFile_t *fp, char* chrom, int start, int end, int splitN, char* method, int pstrand, int format, char* geneid, uint8_t context, char* strand, FILE* outfileF);
 void calregion_weighted_print(bigWigFile_t *fp, char* chrom, int start, int end, int splitN, char* method, int pstrand, int format, char* geneid, uint8_t context, char* bodycase, char* strand, FILE* outfileF_c, FILE* outfileF_cg, FILE* outfileF_chg, FILE* outfileF_chh, uint16_t *countC, uint16_t *countCT);
+int main_view_file(bigWigFile_t *ifp, char *bedfile);
 
 #define MAX_LINE_PRINT 1000000
 #define MAX_BUFF_PRINT 20000000
@@ -209,7 +210,7 @@ int main(int argc, char *argv[]) {
     uint8_t *contexts = malloc(sizeof(uint8_t) * MAX_LINE_PRINT);
 
     char* chromlenf = malloc(100*sizeof(char));
-    uint32_t i;
+    int i = 0;
     uint32_t write_type = 0x8000;
     char methfile[100]; char *outbmfile = malloc(100);
     char *inbmfile = malloc(100);
@@ -236,7 +237,7 @@ int main(int argc, char *argv[]) {
     int upstream = 2000, downstream = 2000;
     double profilestep = 0.02, profilemovestep = 0.01;
     double bodyprofilestep = 0.02, bodyprofilemovestep = 0.01;
-    int mcover_cutoff = 4; unsigned long TotalC = 0;
+    unsigned int mcover_cutoff = 4; unsigned long TotalC = 0;
     int zoomlevel = 5;
     char *sortY = malloc(10); strcpy(sortY, "Y");
     char* outfile = malloc(sizeof(char)*100);
@@ -372,7 +373,8 @@ int main(int argc, char *argv[]) {
         FILE *methF = File_Open(methfile, "r"); 
         char *chrom = malloc(50); char *old_chrom = malloc(50);
         int MAX_CHROM = 10000;
-        char *PerLine = malloc(200); char **chromsArray = malloc(sizeof(char*)*MAX_CHROM);
+        char *PerLine = malloc(200); 
+        //char **chromsArray = malloc(sizeof(char*)*MAX_CHROM);
         unsigned long chrprintL = 0;
         if(strcmp(sortY, "Y") == 0){
             fprintf(stderr, "obtained chromosome order in meth ratio file ... \n");
@@ -456,7 +458,7 @@ int main(int argc, char *argv[]) {
         methF = File_Open(methfile, "r");
         strcpy(old_chrom, "NN"); 
         char *strand = malloc(2), *context = malloc(10), *nameid = malloc(100);
-        unsigned start=0, end = 0; unsigned coverC,coverage=0; float value=0;
+        unsigned start=0, end = 0; unsigned int coverC,coverage=0; float value=0;
         printL = 0;
         strcpy(context, pcontext);
         char *decide = malloc(10);
@@ -474,7 +476,7 @@ int main(int argc, char *argv[]) {
                 //bedmethyl2mbw
                 //chrom start end name score strand thickStart thickEnd itemRgb reads_coverage percent
                 //chr11   61452   61453   .       14      +       61452   61453   0,255,0 14      0
-                sscanf(PerLine, "%s%u%u%s%*s%s%*s%*s%*s%u%u", chrom, &start, &end, nameid, strand, &coverage, &value);
+                sscanf(PerLine, "%s%u%u%s%*s%s%*s%*s%*s%u%f", chrom, &start, &end, nameid, strand, &coverage, &value);
                 value = value/100;
                 coverC = (int)(value*coverage+0.5);
                 // cause start from 0
@@ -993,7 +995,7 @@ error:
 double *Sregionstats(bigWigFile_t *fp, char *chrom, int start, int end, int splitN, uint32_t movestep, char *method, uint8_t strand, uint8_t context){
     double *stats = NULL;
     assert(splitN>0);
-    int i=0;
+    //int i=0;
     if(strcmp(method, "mean")==0){
         stats = bwStats(fp, chrom, start, end, splitN, movestep, mean, strand, context);
     }else if(strcmp(method, "weighted")==0){
