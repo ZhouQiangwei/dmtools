@@ -64,13 +64,13 @@ struct PvalLocus {
 FILE* File_Open(const char* File_Name,const char* Mode);
 const char *strand_str[] = {"+", "-", "."};
 const char *context_str[] = {"C", "CG", "CHG", "CHH"};
-int bw_overlap_all(char *inbmF1, char *inbmF2, int n1, int n2, uint8_t pstrand, vector<PvalLocus> &pvals, unsigned long &NcountC, float Pcutoff, float methdiff);
+int bw_overlap_all(char *inbmF1, char *inbmF2, int n1, int n2, uint8_t pstrand, vector<PvalLocus> &pvals, unsigned long &NcountC, float Pcutoff, float methdiff, char *filtercontext);
 int bw_overlap_all_mul(char *inbmFs, uint8_t pstrand);
-int bw_overlap_all_mul_sep(char *inbmFs1, char *inbmFs2, uint8_t pstrand, vector<PvalLocus> &pvals, unsigned long &NcountC, float Pcutoff, float methdiff);
+int bw_overlap_all_mul_sep(char *inbmFs1, char *inbmFs2, uint8_t pstrand, vector<PvalLocus> &pvals, unsigned long &NcountC, float Pcutoff, float methdiff, char* filtercontext);
 int bw_overlap_mul(bigWigFile_t **ifp1s, int sizeifp, char *chrom, int start, int end, uint8_t strand, int Nsample1);
-int bw_overlap_mul_calp(bigWigFile_t **ifp1s, int sizeifp, char *chrom, int start, int end, uint8_t strand, int Nsample1, Regression &full_regression, Regression &null_regression, vector<PvalLocus> &pvals, unsigned long &NcountC, float Pcutoff, float methdiff, unsigned long chrom_offset);
+int bw_overlap_mul_calp(bigWigFile_t **ifp1s, int sizeifp, char *chrom, int start, int end, uint8_t strand, int Nsample1, Regression &full_regression, Regression &null_regression, vector<PvalLocus> &pvals, unsigned long &NcountC, float Pcutoff, float methdiff, unsigned long chrom_offset, char* filtercontext);
 int bw_overlap(bigWigFile_t *ifp1, bigWigFile_t *ifp2, char *chrom, int start, int end, uint8_t strand,vector<PvalLocus> &loci,
-    unsigned long &NcountC, float Pcutoff, float methdiff, unsigned long chrom_offset);
+    unsigned long &NcountC, float Pcutoff, float methdiff, unsigned long chrom_offset, char* filtercontext);
 void adjust(vector<PvalLocus> &loci, unsigned long NcountC);
 void Print_dm_result(const vector<PvalLocus> &pval_loci, ostream &output_encoding, double cutoff, double Pcutoff, double methdiff, string dmr_outfile, 
     bool singleAuto, int mindmc, int mindmcdis, int maxdmrlen, bool geneid);
@@ -79,22 +79,22 @@ double loglikratio_test(double null_loglik, double full_loglik);
 int checkcomma(char* inbmfiles);
 
 #define MAX_LINE_PRINT 1000000
-const char* Help_String="bmDMR [options] -p <prefix of result> -1 [Sample1-methy ..] -2 [sample2-methy ..] \n"
+const char* Help_String="bmDMR [options] -p <prefix of result> -1 [Sample1-methbw ..] -2 [sample2-methbw ..] \n"
                 "\nExample:\n"
         		"\tbmDMR -1 s1.mbw -2 s2.mbw -p prefix --mindmc 5 --minstep 200\n"
                 "\nUsage:\n"
         		"\t-p            output file prefix\n"
-                "\t-1            sample1 methy bm files, sperate by space.\n"
-                "\t-2            sample2 methy bm files, sperate by space.\n"
+                "\t-1            sample1 methy mbw files, sperate by space.\n"
+                "\t-2            sample2 methy mbw files, sperate by space.\n"
                 "\t--mindmc      min dmc sites in dmr region. [default : 4]\n"
                 "\t--minstep     min step in bp [default : 100]\n"
                 "\t--maxdis      max length of dmr [default : 0]\n"
                 "\t--pvalue      pvalue cutoff, default: 0.01\n"
-                "\t--FDR         adjust pvalue cutoff default : 1.0\n"
+                "\t--fdr         adjust pvalue cutoff default : 1.0\n"
                 "\t--methdiff    the cutoff of methylation differention. default: 0.25 [CpG]\n"
                 "\t--element     caculate gene or TE etc function elements.\n"
-                "\t--context     Context for DM. [CG/CHG/CHH/ALL]\n"
-                "\t-L           predefinded regions or loci.\n"
+                "\t--context     Context for DM. C/CG/CHG/CHH, [C]\n"
+                //"\t-L           predefinded regions or loci.\n"
                 "\t-h|--help";
 int main(int argc, char *argv[]) {
     bigWigFile_t *fp = NULL;
@@ -112,12 +112,12 @@ int main(int argc, char *argv[]) {
     char *mrformat = (char *)malloc(100);
     strcpy(mrformat, "methratio");
     char *filtercontext = (char *)malloc(10);
-    strcpy(filtercontext, "CG");
+    strcpy(filtercontext, "C");
 
     string dmc_outfile;
     string dmr_outfile;
     string prefix = "";    
-    double Pcutoff=0.01; double cutoff = 1; 
+    double Pcutoff=0.01; double fdr_cutoff = 1; 
     double methdiff=0.25;
     double mdcg = 0.2; double mdchg = 0.1; double mdchh = 0.1;
     bool singleAuto = true;
@@ -156,6 +156,8 @@ int main(int argc, char *argv[]) {
             strcpy(bmfile2, argv[++i]);
         }else if(strcmp(argv[i], "--pvalue") == 0){
             Pcutoff = atof(argv[++i]);
+        }else if(strcmp(argv[i], "--fdr") == 0){
+            fdr_cutoff = atof(argv[++i]);
         }else if(strcmp(argv[i], "--methdiff") == 0){
             methdiff = atof(argv[++i]);
         }else if(strcmp(argv[i], "--context") == 0){
@@ -176,17 +178,17 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "start overlap and calculate p-value for cytosine site\n");
         if(checkcomma(inbmfile) || checkcomma(bmfile2)){
             fprintf(stderr, "with replication, run beta-bionormal test\n");
-            bw_overlap_all_mul_sep(inbmfile, bmfile2, pstrand, pvals, NcountC, Pcutoff, methdiff);
+            bw_overlap_all_mul_sep(inbmfile, bmfile2, pstrand, pvals, NcountC, Pcutoff, methdiff, filtercontext);
         }else{
             fprintf(stderr, "without replication, run p-value test\n");
-            bw_overlap_all(inbmfile, bmfile2, 1, 1, pstrand, pvals, NcountC, Pcutoff, methdiff);
+            bw_overlap_all(inbmfile, bmfile2, 1, 1, pstrand, pvals, NcountC, Pcutoff, methdiff, filtercontext);
         }
         fprintf(stderr, "end overlap and start calculate adjusted p-value %ld, %ld\n", pvals.size(), NcountC);
         ofstream OutFileAdjust;
         adjust(pvals, NcountC);
         fprintf(stderr, "done and print result\n");
         OutFileAdjust.open(dmc_outfile.c_str());
-        Print_dm_result(pvals, OutFileAdjust, cutoff, Pcutoff, methdiff, dmr_outfile, singleAuto, mindmc, mindmcdis, maxdmrlen, geneid);
+        Print_dm_result(pvals, OutFileAdjust, fdr_cutoff, Pcutoff, methdiff, dmr_outfile, singleAuto, mindmc, mindmcdis, maxdmrlen, geneid);
 
         free(inbmfile); 
         free(bmfile2); 
@@ -201,7 +203,7 @@ int checkcomma(char* inbmfiles) {
     return 0;
 }
 
-int bw_overlap_all_mul_sep(char *inbmFs1, char *inbmFs2, uint8_t pstrand, vector<PvalLocus> &pvals, unsigned long &NcountC, float Pcutoff, float methdiff){
+int bw_overlap_all_mul_sep(char *inbmFs1, char *inbmFs2, uint8_t pstrand, vector<PvalLocus> &pvals, unsigned long &NcountC, float Pcutoff, float methdiff, char* filtercontext){
     int Nsample1 = 0;
     char *substr= strtok(inbmFs1, ",");
     char infiles[1000][200] = {""};
@@ -266,12 +268,12 @@ int bw_overlap_all_mul_sep(char *inbmFs1, char *inbmFs2, uint8_t pstrand, vector
         char* chrom = (char*)ifps[0]->cl->chrom[i];
         int len = (int)ifps[0]->cl->len[i];
         start = 0, end = SEGlen-1;
-        fprintf(stderr, "CCCC %s\t%ld\t%d\n", chrom, len, sizeifp);
+        fprintf(stderr, "process chrom, %s\t%ld\t%d\n", chrom, len, sizeifp);
         while(start<len){
             if(end>len){
                 end = len;
             }
-            bw_overlap_mul_calp(ifps, sizeifp, chrom, start, end, pstrand, Nsample1, full_regression, null_regression, pvals, NcountC, Pcutoff, methdiff, chrom_offset);
+            bw_overlap_mul_calp(ifps, sizeifp, chrom, start, end, pstrand, Nsample1, full_regression, null_regression, pvals, NcountC, Pcutoff, methdiff, chrom_offset, filtercontext);
             start += SEGlen;
             end += SEGlen;
         }
@@ -329,7 +331,7 @@ int bw_overlap_all_mul(char *inbmFs, uint8_t pstrand){
 }
 
 int bw_overlap_all(char *inbmF1, char *inbmF2, int n1, int n2, uint8_t pstrand, vector<PvalLocus> &pvals, unsigned long &NcountC,
-    float Pcutoff, float methdiff){
+    float Pcutoff, float methdiff, char* filtercontext){
     if(n1<1 || n2<1){
         return -1;
     }
@@ -355,7 +357,7 @@ int bw_overlap_all(char *inbmF1, char *inbmF2, int n1, int n2, uint8_t pstrand, 
                 end = len;
             }
             //fprintf(stderr, "region %s %d %d\n", chrom, start, end);
-            bw_overlap(ifp1, ifp2, chrom, start, end, pstrand, pvals, NcountC, Pcutoff, methdiff, chrom_offset);
+            bw_overlap(ifp1, ifp2, chrom, start, end, pstrand, pvals, NcountC, Pcutoff, methdiff, chrom_offset, filtercontext);
             start += SEGlen;
             end += SEGlen;
         }
@@ -368,7 +370,7 @@ int bw_overlap_all(char *inbmF1, char *inbmF2, int n1, int n2, uint8_t pstrand, 
 }
 
 int bw_overlap(bigWigFile_t *ifp1, bigWigFile_t *ifp2, char *chrom, int start, int end, uint8_t strand,vector<PvalLocus> &pvals,
-    unsigned long &NcountC, float Pcutoff, float methdiff, unsigned long chrom_offset){
+    unsigned long &NcountC, float Pcutoff, float methdiff, unsigned long chrom_offset, char* filtercontext){
     bwOverlappingIntervals_t *o1;
     bwOverlappingIntervals_t *o2;
 
@@ -395,6 +397,13 @@ int bw_overlap(bigWigFile_t *ifp1, bigWigFile_t *ifp2, char *chrom, int start, i
                         }
                     }
                 }
+                if(strcmp(filtercontext, "C") != 0){
+                    if(ifp1->hdr->version & BM_CONTEXT){
+                        if(strcmp(filtercontext, context_str[o1->context[j]]) != 0 ){
+                            continue;
+                        }
+                    }
+                }
                 //if(o1->start[j] == 2144615) {fprintf(stderr, "1111 %s %d\n", chrom, countM[o1->start[j]-start]);}
                 countM[o1->start[j]-start]++;
             }
@@ -402,6 +411,13 @@ int bw_overlap(bigWigFile_t *ifp1, bigWigFile_t *ifp2, char *chrom, int start, i
                 if(strand!=2){
                     if(ifp2->hdr->version & BM_STRAND){
                         if(strand != o2->strand[j]){
+                            continue;
+                        }
+                    }
+                }
+                if(strcmp(filtercontext, "C") != 0){
+                    if(ifp2->hdr->version & BM_CONTEXT){
+                        if(strcmp(filtercontext, context_str[o2->context[j]]) != 0 ){
                             continue;
                         }
                     }
@@ -462,7 +478,8 @@ int bw_overlap(bigWigFile_t *ifp1, bigWigFile_t *ifp2, char *chrom, int start, i
     return 0;
 }
 
-int bw_overlap_mul_calp(bigWigFile_t **ifp1s, int sizeifp, char *chrom, int start, int end, uint8_t strand, int Nsample1, Regression &full_regression, Regression &null_regression, vector<PvalLocus> &pvals, unsigned long &NcountC, float Pcutoff, float methdiff, unsigned long chrom_offset){
+int bw_overlap_mul_calp(bigWigFile_t **ifp1s, int sizeifp, char *chrom, int start, int end, uint8_t strand, int Nsample1, Regression &full_regression, Regression &null_regression, vector<PvalLocus> &pvals, unsigned long &NcountC, \
+    float Pcutoff, float methdiff, unsigned long chrom_offset, char *filtercontext){
     bwOverlappingIntervals_t *o1;
     fprintf(stderr, "process region %s %d %d\n", chrom, start, end);
     int slen = 1, i =0, j = 0;
@@ -485,6 +502,13 @@ int bw_overlap_mul_calp(bigWigFile_t **ifp1s, int sizeifp, char *chrom, int star
                 if(strand!=2){
                     if(ifp1s[i]->hdr->version & BM_STRAND){
                         if(strand != o1->strand[j]){
+                            continue;
+                        }
+                    }
+                }
+                if(strcmp(filtercontext, "C")!=0){
+                    if(ifp1s[i]->hdr->version & BM_CONTEXT){
+                        if(strcmp(filtercontext, context_str[o1->context[j]])!=0){
                             continue;
                         }
                     }
@@ -841,7 +865,7 @@ void adjust(vector<PvalLocus> &loci, unsigned long NcountC) {
       std::sort(loci.begin(), loci.end(), ls_locus_position); 
 }
 
-void Print_dm_result(const vector<PvalLocus> &pval_loci, ostream &output_encoding, double cutoff, double Pcutoff, double methdiff, string dmr_outfile, 
+void Print_dm_result(const vector<PvalLocus> &pval_loci, ostream &output_encoding, double fdr_cutoff, double Pcutoff, double methdiff, string dmr_outfile, 
     bool singleAuto, int mindmc, int mindmcdis, int maxdmrlen, bool geneid) {
   string record, chrom, context, sign;string name;
   int position, coverage_factor, meth_factor, coverage_rest, meth_rest; //size_t
@@ -870,7 +894,7 @@ void Print_dm_result(const vector<PvalLocus> &pval_loci, ostream &output_encodin
     double signed_methdiff=double(meth_factor)/coverage_factor - double(meth_rest)/coverage_rest;
     //if(!(adjust_pvalue < cutoff && (pval < Pcutoff || (pval < Pcutoff+0.05 && coverage_factor+coverage_rest<=50) ) && meth_diff >= methdiff ) ) {
     //fprintf(stderr, "111\n");
-    if(!(adjust_pvalue <= cutoff && pval <= Pcutoff && meth_diff >= methdiff ) ) {
+    if(!(adjust_pvalue <= fdr_cutoff && pval <= Pcutoff && meth_diff >= methdiff ) ) {
         cur_locus_iter++;
         i++;
         continue;
