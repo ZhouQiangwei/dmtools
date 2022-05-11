@@ -6,9 +6,10 @@ Compared with bigwig, mbw format contains the coverage of DNA methylation sites,
 
 BMtools provide file format conversion, quick view, methylation level calculation, differential DNA methylation level calculation and other functions for mbw format.
 
-| **[ Main paramaters ]**                                                                        |
+| [ Main paramaters ] |                                                                          |
+|---------------------|--------------------------------------------------------------------------|
 |                     | bmtools <mode> [opnions]                                                 |
-|Usage:                                                                                          |
+| Usage:              |                                                                          |
 | [mode]              | mr2mbw view overlap regionstats bodystats profile chromstats             |
 | mr2mbw              | convert txt meth file to mbw format                                      |
 | view                | mbw format to txt meth                                                   |
