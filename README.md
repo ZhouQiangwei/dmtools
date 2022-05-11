@@ -1,10 +1,11 @@
 # BMtools
 
-Package of C scripts for generation and procession of DNA Methylation BigWig (mbw) files
+Package of C and C++ scripts for generation and procession of DNA Methylation BigWig (mbw) files
 
 Compared with bigwig, mbw format contains the coverage of DNA methylation sites, methylation context, positive and negative strand and gene ID information. Moreover, mbw files still support the visualization of genome browsers as bigwig files.
 
 BMtools provide file format conversion, quick view, methylation level calculation, differential DNA methylation level calculation and other functions for mbw format.
+
 
 | [ bmtools ]         | process with mbw file                                                    |
 |---------------------|--------------------------------------------------------------------------|
@@ -38,3 +39,6 @@ BMtools provide file format conversion, quick view, methylation level calculatio
 This is a BS-Seq results mbw format file view and process tool based on libBigWig.
 
 For more information, please see https://batmeth2-mbw.readthedocs.io/en/latest/function/BMtools.html
+
+And calmeth in batmeth2-mbw can convert align bs bam file to mbw file, https://batmeth2-mbw.readthedocs.io/en/latest/function/Calmeth.html
+
