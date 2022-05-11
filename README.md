@@ -6,10 +6,9 @@ Compared with bigwig, mbw format contains the coverage of DNA methylation sites,
 
 BMtools provide file format conversion, quick view, methylation level calculation, differential DNA methylation level calculation and other functions for mbw format.
 
-| [ Main paramaters ] |                                                                          |
+| [ bmtools ]         | process with mbw file                                                    |
 |---------------------|--------------------------------------------------------------------------|
 |                     | bmtools <mode> [opnions]                                                 |
-| Usage:              |                                                                          |
 | [mode]              | mr2mbw view overlap regionstats bodystats profile chromstats             |
 | mr2mbw              | convert txt meth file to mbw format                                      |
 | view                | mbw format to txt meth                                                   |
@@ -21,7 +20,7 @@ BMtools provide file format conversion, quick view, methylation level calculatio
 | chromstats          | calculate DNA methylation level across chromosome                        |
 | -h|--help                                                                                      |
 
-|      bmDMR          | detect DMC/DMR based on mbw file                                         |
+| bmDMR               | detect DMC/DMR based on mbw file                                         |
 |---------------------|--------------------------------------------------------------------------|
 | -p                  | output file prefix                                                       |
 | -1                  | sample1 methy mbw files, sperate by comma.                               |
@@ -36,6 +35,6 @@ BMtools provide file format conversion, quick view, methylation level calculatio
 | -h|--help                                                                                      | 
 
 
-This is a BS-Seq results mbw format file view and process tool.
+This is a BS-Seq results mbw format file view and process tool based on libBigWig.
 
 For more information, please see https://batmeth2-mbw.readthedocs.io/en/latest/function/BMtools.html
