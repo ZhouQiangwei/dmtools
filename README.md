@@ -21,6 +21,21 @@ BMtools provide file format conversion, quick view, methylation level calculatio
 | chromstats          | calculate DNA methylation level across chromosome                        |
 | -h|--help                                                                                      |
 
+|      bmDMR          | detect DMC/DMR based on mbw file                                         |
+|---------------------|--------------------------------------------------------------------------|
+| -p                  | output file prefix                                                       |
+| -1                  | sample1 methy mbw files, sperate by comma.                               |
+| -2                  | sample2 methy mbw files, sperate by comma.                               |
+| --mindmc            | min dmc sites in dmr region. [default : 4]                               |
+| --minstep           | min step in bp [default : 100]                                           |
+| --maxdis            | max length of dmr [default : 0]                                          |
+| --pvalue            | pvalue cutoff, default: 0.01                                             |
+| --FDR               | adjust pvalue cutoff default : 1.0                                       |
+| --methdiff          | the cutoff of methylation differention. default: 0.25 [CpG]              |
+| --context           | Context for DM. CG/CHG/CHH/C, [C]                                        |
+| -h|--help                                                                                      | 
+
+
 This is a BS-Seq results mbw format file view and process tool.
 
 For more information, please see https://batmeth2-mbw.readthedocs.io/en/latest/function/BMtools.html
