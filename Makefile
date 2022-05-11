@@ -11,8 +11,10 @@ CC = gcc
 AR = ar
 RANLIB = ranlib
 CFLAGS = -g -w -O3 -Wsign-compare
+#-fopenmp
 #-Wall
 ## changed: = instaed of ?= above 4 lines
+## -fopenmp for multi-threads
 LIBS = -lm -lz
 EXTRA_CFLAGS_PIC = -fpic
 LDFLAGS =
@@ -87,8 +89,8 @@ bmtools: libBigWig.so
 	$(CC) -o $@ -I. -L. $(CFLAGS) bmtools.c -lBigWig $(LIBS) -Wl,-rpath $(CPP)
 
 bmDMR:
-	g++ -c -o regression.o regression.cpp
-	g++ -o bmDMR bmDMR.cpp regression.o -I. -L. -lBigWig -Wl,-rpath $(CPP) -lgsl -lgslcblas -lm -lz
+	g++ $(CFLAGS) -c -o regression.o regression.cpp
+	g++ $(CFLAGS) -o bmDMR bmDMR.cpp regression.o -I. -L. -lBigWig -Wl,-rpath $(CPP) -lgsl -lgslcblas -lm -lz
 
 test/exampleWrite: libBigWig.so
 	$(CC) -o $@ -I. -L. $(CFLAGS) test/exampleWrite.c -lBigWig $(LIBS) -Wl,-rpath .

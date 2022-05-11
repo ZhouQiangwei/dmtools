@@ -1,0 +1,11 @@
+start overlap and calculate p-value for cytosine site with cutoff 0.010000 1.000000 0.200000
+with replication, run beta-bionormal test
+process chrom, chrM	16569	4
+process region chrM 0 16569
+process chrom, chr1	248956422	4
+process region chr1 0 999999
+/opt/gridview//pbs/dispatcher/mom_priv/jobs/2806735.admin.SC: line 1: 26248 段错误               (core dumped) ../bmDMR -1 test.chr1.mbw,test.chr1.mbw -2 test2.chr1.mbw,test2.chr1.mbw -p test.dm2-m --pvalue 0.01 --methdiff 0.2
+
+real	0m3.250s
+user	0m1.574s
+sys	0m0.469s
