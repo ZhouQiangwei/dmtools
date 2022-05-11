@@ -51,6 +51,39 @@ error:
     return NULL;
 }
 
+chromList_t *bwCreateChromList_ifp(bigWigFile_t *ifp) {
+    int64_t i = 0;
+    chromList_t *cl = calloc(1, sizeof(chromList_t));
+    if(!cl) return NULL;
+    int n = ifp->cl->nKeys;
+
+    cl->nKeys = n;
+    cl->chrom = malloc(sizeof(char*)*n);
+    cl->len = malloc(sizeof(uint32_t)*n);
+    if(!cl->chrom) goto error;
+    if(!cl->len) goto error;
+
+    for(i=0; i<n; i++) {
+        cl->len[i] = ifp->cl->len[i];
+        cl->chrom[i] = strdup(ifp->cl->chrom[i]);
+        if(!cl->chrom[i]) goto error;
+    }
+
+    return cl;
+
+error:
+    if(i) {
+        int64_t j;
+        for(j=0; j<i; j++) free(cl->chrom[j]);
+    }
+    if(cl) {
+        if(cl->chrom) free(cl->chrom);
+        if(cl->len) free(cl->len);
+        free(cl);
+    }
+    return NULL;
+}
+
 //If maxZooms == 0, then 0 is used (i.e., there are no zoom levels). If maxZooms < 0 or > 65535 then 10 is used.
 //TODO allow changing bufSize and blockSize
 int bwCreateHdr(bigWigFile_t *fp, int32_t maxZooms) {
@@ -189,7 +222,7 @@ int bwWriteHdr(bigWigFile_t *bw) {
     //
     uint16_t magic2 = BM_MAGIC;
     magic2 |= (uint16_t) bw->type;
-    if(DEBUG>1) printf("|||||| %ld\n", bw->type);
+    //if(DEBUG>1) printf("|||||| %ld\n", bw->type);
 
     uint16_t two = magic2; //4;
     FILE *fp;
@@ -390,7 +423,7 @@ int bwAddIntervals(bigWigFile_t *fp, char **chrom, uint32_t *start, uint32_t *en
 
     //Flush if needed
     if(wb->ltype != 1) if(flushBuffer(fp)) return 3;
-    if(DEBUG>1) printf("fp->hdr->bufSize %d %d\n", wb->l, fp->hdr->bufSize);
+    if(DEBUG>1) fprintf(stderr, "fp->hdr->bufSize %d %d\n", wb->l, fp->hdr->bufSize);
 
     if(wb->l+36 > fp->hdr->bufSize) if(flushBuffer(fp)) return 4;
     lastChrom = chrom[0];
@@ -1071,7 +1104,7 @@ int makeZoomLevels(bigWigFile_t *fp) {
         if(fp->cl->len[i] > maxZoom) maxZoom = fp->cl->len[i];
     }
     if(zoom > maxZoom) zoom = maxZoom;
-    fprintf(stderr, "\nzoom %ld %ld\n", zoom, maxZoom);
+    //fprintf(stderr, "\nzoom %ld %ld\n", zoom, maxZoom);
 
     for(i=0; i<fp->hdr->nLevels; i++) {
         if(zoom > maxZoom) break; //prevent absurdly large zoom levels
@@ -1267,7 +1300,7 @@ int constructZoomLevels(bigWigFile_t *fp) {
     if(!sum || !sumsq) goto error;
 
     for(i=0; i<fp->cl->nKeys; i++) {
-        if(DEBUG>1) printf("add Int ===zz-- %s %ld\n", fp->cl->chrom[i], fp->cl->len[i]);
+        //if(DEBUG>1) printf("add Int ===zz-- %s %ld\n", fp->cl->chrom[i], fp->cl->len[i]);
         it = bwOverlappingIntervalsIterator(fp, fp->cl->chrom[i], 0, fp->cl->len[i], 100000);
         if(!it) goto error;
         if(DEBUG>1) printf("add Int ===zxxz-- %d\n", it->intervals->l);

@@ -27,9 +27,9 @@
 FILE* File_Open(const char* File_Name,const char* Mode);
 char *strand_str[] = {"+", "-", "."};
 char *context_str[] = {"C", "CG", "CHG", "CHH"};
-int main_view_all(bigWigFile_t *fp);
-int main_view(bigWigFile_t *fp, char *region);
-int main_view_bedfile(char *inbmF, char *bedfile, int type);
+int main_view_all(bigWigFile_t *fp, FILE* outfileF, char *outformat, bigWigFile_t *ofp, char* filterchrom);
+int main_view(bigWigFile_t *ifp, char *region, FILE* outfileF, char *outformat, bigWigFile_t *ofp);
+int main_view_bedfile(char *inbmF, char *bedfile, int type, FILE* outfileF, char *outformat, bigWigFile_t *ofp);
 int calchromstats(char *inbmfile, char *method, int chromstep, int stepoverlap, uint8_t strand, uint8_t context, FILE* outfileF, FILE* outfileF_c, FILE* outfileF_cg, FILE* outfileF_chg, FILE* outfileF_chh);
 int calregionstats(char *inbmfile, char *method, char *region, uint8_t pstrand, uint8_t context, FILE* outfileF, FILE* outfileF_c, FILE* outfileF_cg, FILE* outfileF_chg, FILE* outfileF_chh);
 int calregionstats_file(char *inbmfile, char *method, char *bedfile, int format, uint8_t context, FILE* outfileF, FILE* outfileF_c, FILE* outfileF_cg, FILE* outfileF_chg, FILE* outfileF_chh);
@@ -50,15 +50,19 @@ void delete_char2(char* str,char target,char target2);
 void calbody_print(bigWigFile_t *fp, char* chrom, int start, int end, int splitN, char* method, int pstrand, int format, char* geneid, uint8_t context, char* bodycase, char* strand, FILE* outfileF);
 void calregion_print(bigWigFile_t *fp, char* chrom, int start, int end, int splitN, char* method, int pstrand, int format, char* geneid, uint8_t context, char* strand, FILE* outfileF);
 void calregion_weighted_print(bigWigFile_t *fp, char* chrom, int start, int end, int splitN, char* method, int pstrand, int format, char* geneid, uint8_t context, char* bodycase, char* strand, FILE* outfileF_c, FILE* outfileF_cg, FILE* outfileF_chg, FILE* outfileF_chh, uint16_t *countC, uint16_t *countCT);
-int main_view_file(bigWigFile_t *ifp, char *bedfile);
+int main_view_file(bigWigFile_t *ifp, char *bedfile, FILE* outfileF, char *outformat, bigWigFile_t *ofp);
+void mbwfileinit(bigWigFile_t *ofp, bigWigFile_t *ifp, char* outfile, int zoomlevel);
+void bwPrintHdr(bigWigFile_t *bw);
+void bwPrintIndexNode(bwRTreeNode_t *node, int level);
 
 #define MAX_LINE_PRINT 1000000
 #define MAX_BUFF_PRINT 20000000
 const char* Help_String_main="Command Format :  bmtools <mode> [opnions]\n"
 		"\nUsage:\n"
-        "\t  [mode]         mr2mbw view overlap regionstats bodystats profile chromstats\n\n"
+        "\t  [mode]         mr2mbw view viewheader overlap regionstats bodystats profile chromstats\n\n"
         "\t  mr2mbw         convert txt meth file to mbw format\n"
         "\t  view           mbw format to txt meth\n"
+        "\t  viewheader     view header of mbw file\n"
         "\t  overlap        overlap cytosine site with more than two mbw files\n"
         "\t  regionstats    calculate DNA methylation level of per region\n"
         "\t  bodystats      calculate DNA methylation level of body, upstream and downstream.\n"
@@ -66,17 +70,17 @@ const char* Help_String_main="Command Format :  bmtools <mode> [opnions]\n"
         "\t  chromstats     calculate DNA methylation level across chromosome\n";
 
 const char* Help_String_mr2mbw="Command Format :  bmtools mr2mbw [opnions] -g genome.fa.fai -m methratio.txt -o outmeth.mbw\n"
-		"\nUsage:\n"
+		"\nUsage: bmtools mr2mbw -C -S --Cx -E -g genome.fa.fai -m meth.txt -o meth.mbw\n"
         "\t [mr2mbw] mode paramaters, required\n"
 		"\t-g                    chromosome size file.\n"
         "\t-m                    methratio file\n"
-        "\t--outmbw              output mbigwig file\n"
+        "\t-o|--outmbw           output mbigwig file\n"
         "\t [mr2mbw] mode paramaters, options\n"
-        "\t-C                    coverage\n"
-        "\t-S                    strand\n"
-        "\t--Cx                  context\n"
-        "\t--Id                  ID\n"
-        "\t-E                    end\n"
+        "\t-C                    print coverage\n"
+        "\t-S                    print strand\n"
+        "\t--Cx                  print context\n"
+        "\t-E                    print end\n"
+        "\t--Id                  print ID\n"
         "\t--CF                  coverage filter, >=[int], default 4.\n"
         "\t--sort Y/N            make chromsize file and meth file in same coordinate, default Y\n"
         "\t--zl                  The maximum number of zoom levels. [1-10]\n"
@@ -101,6 +105,12 @@ const char* Help_String_view="Command Format :  bmtools view [opnions] -i meth.m
         "\t--context             [0/1/2/3] context for show, 0 represent 'C/ALL' context, 1 'CG' context, 2 'CHG' context, 3 'CHH' context.\n"
         "\t--mincover            >= minumum coverage show, default: 0\n"
         "\t--maxcover            <= maximum coverage show, default: 10000\n"
+		"\t-h|--help";
+
+const char* Help_String_viewheader="Command Format :  bmtools viewheader -i meth.mbw\n"
+		"\nUsage:\n"
+        "\t [view] mode paramaters, required\n"
+        "\t-i                    input mbigwig file\n"
 		"\t-h|--help";
 
 const char* Help_String_overlap="Command Format :  bmtools overlap [opnions] -i meth1.mbw -i2 meth2.mbw\n"
@@ -197,6 +207,7 @@ int printcoverage = 0; // print countC and countCT instead of methratio
 
 int main(int argc, char *argv[]) {
     bigWigFile_t *fp = NULL;
+    char *filterchrom = NULL;
     char **chroms = (char**)malloc(sizeof(char*)*MAX_LINE_PRINT);
     if(!chroms) goto error;
     char **chromsUse = malloc(sizeof(char*)*MAX_LINE_PRINT);
@@ -210,12 +221,14 @@ int main(int argc, char *argv[]) {
     uint8_t *contexts = malloc(sizeof(uint8_t) * MAX_LINE_PRINT);
 
     char* chromlenf = malloc(100*sizeof(char));
+    int chromlenf_yes = 0;
+    char* outformat = malloc(100); strcpy(outformat, "txt");
     int i = 0;
     uint32_t write_type = 0x8000;
-    char methfile[100]; char *outbmfile = malloc(100);
+    char methfile[100]; char *outbmfile = NULL;
     char *inbmfile = malloc(100);
     char *bmfile2 = malloc(100);
-    char mode[10]; char *region = malloc(1000);
+    char mode[10]; char *region = NULL;
     char *inbmfiles = malloc(300);
     int inbm_mul = 0;
     char *method = malloc(100);
@@ -223,9 +236,9 @@ int main(int argc, char *argv[]) {
     int chromstep = 100000;
     int stepoverlap = 50000;
     
-    char *bedfile = malloc(100);
-    char *gtffile = malloc(100);
-    char *gfffile = malloc(100);
+    char *bedfile = NULL;
+    char *gtffile = NULL;
+    char *gfffile = NULL;
 
     char *mrformat = malloc(100);
     strcpy(mrformat, "methratio");
@@ -240,7 +253,7 @@ int main(int argc, char *argv[]) {
     unsigned int mcover_cutoff = 4; unsigned long TotalC = 0;
     int zoomlevel = 5;
     char *sortY = malloc(10); strcpy(sortY, "Y");
-    char* outfile = malloc(sizeof(char)*100);
+    char* outfile = NULL;
     int profilemode = 0; //0 gene and flanks, 1 center and flanks, 2 tss and flanks
     char *profilemode_str = malloc(sizeof(char)*10);
     double bodyX = 1; // N times of bin size for gene body
@@ -255,6 +268,8 @@ int main(int argc, char *argv[]) {
            fprintf(stderr, "%s\n", Help_String_mr2mbw); 
         }else if(strcmp(mode, "view") == 0){
            fprintf(stderr, "%s\n", Help_String_view); 
+        }else if(strcmp(mode, "viewheader") == 0){
+           fprintf(stderr, "%s\n", Help_String_viewheader); 
         }else if(strcmp(mode, "overlap") == 0){
            fprintf(stderr, "%s\n", Help_String_overlap); 
         }else if(strcmp(mode, "regionstats") == 0){
@@ -277,6 +292,7 @@ int main(int argc, char *argv[]) {
     for(i=0; i< argc; i++){
         if(strcmp(argv[i], "-g") == 0){
             strcpy(chromlenf, argv[++i]);
+            chromlenf_yes++;
         }else if(strcmp(argv[i], "-C") == 0){
             write_type |= BM_COVER;
         }else if(strcmp(argv[i], "-S") == 0){
@@ -290,7 +306,10 @@ int main(int argc, char *argv[]) {
         }else if(strcmp(argv[i], "-m") == 0){
             strcpy(methfile, argv[++i]);
         }else if(strcmp(argv[i], "--outmbw") == 0){
+            outbmfile = malloc(100);
             strcpy(outbmfile, argv[++i]);
+        }else if(strcmp(argv[i], "--outformat") == 0){
+            strcpy(outformat, argv[++i]);
         }else if(strcmp(argv[i], "-i") == 0){
             strcpy(inbmfile, argv[++i]);
         }else if(strcmp(argv[i], "--CF") == 0){
@@ -301,11 +320,15 @@ int main(int argc, char *argv[]) {
         }else if(strcmp(argv[i], "-i2") == 0){
             strcpy(bmfile2, argv[++i]);
         }else if(strcmp(argv[i], "-r") == 0){
+            region = malloc(1000);
             strcpy(region, argv[++i]);
         }else if(strcmp(argv[i], "--method") == 0){
             strcpy(method, argv[++i]);
         }else if(strcmp(argv[i], "--chromstep") == 0){
             chromstep = atoi(argv[++i]);
+        }else if(strcmp(argv[i], "--chrom") == 0){
+            filterchrom = malloc(200);
+            strcpy(filterchrom, argv[++i]);
         }else if(strcmp(argv[i], "--stepmove") == 0){
             stepoverlap = atoi(argv[++i]);
         }else if(strcmp(argv[i], "--profilestep") == 0){
@@ -340,10 +363,13 @@ int main(int argc, char *argv[]) {
         }else if(strcmp(argv[i], "--fstrand") == 0 || strcmp(argv[i], "--strand") == 0){
             filter_strand = atoi(argv[++i]);
         }else if(strcmp(argv[i], "--bed") == 0){
+            bedfile = malloc(100);
             strcpy(bedfile, argv[++i]);
         }else if(strcmp(argv[i], "--gtf") == 0){
+            gfffile = malloc(100);
             strcpy(gtffile, argv[++i]);
         }else if(strcmp(argv[i], "--gff") == 0){
+            gfffile = malloc(100);
             strcpy(gfffile, argv[++i]);
         }else if(strcmp(argv[i], "-f") == 0){
             strcpy(mrformat, argv[++i]);
@@ -364,15 +390,27 @@ int main(int argc, char *argv[]) {
         }else if(strcmp(argv[i], "--maxcover") == 0){
             maxcover = atoi(argv[++i]);
         }else if(strcmp(argv[i], "-o") == 0 || strcmp(argv[i], "--out") == 0){
-            strcpy(outfile, argv[++i]);
+            if(strcmp(mode, "mr2mbw") == 0){
+                if(!outbmfile){
+                    outbmfile = malloc(100);
+                    strcpy(outbmfile, argv[++i]);
+                }
+            }else{
+                outfile = malloc(sizeof(char)*100);
+                strcpy(outfile, argv[++i]);
+            }
         }
     }
 
     if(strcmp(mode, "mr2mbw") == 0){
         fprintf(stderr, "mr file format %s\n", mrformat);
+        if(chromlenf_yes==0){
+            fprintf(stderr, "please provide chrome size file with -g paramater\n");
+            exit(0);
+        }
         FILE *methF = File_Open(methfile, "r"); 
         char *chrom = malloc(50); char *old_chrom = malloc(50);
-        int MAX_CHROM = 10000;
+        //int MAX_CHROM = 10000;
         char *PerLine = malloc(200); 
         //char **chromsArray = malloc(sizeof(char*)*MAX_CHROM);
         unsigned long chrprintL = 0;
@@ -551,10 +589,15 @@ int main(int argc, char *argv[]) {
                 //sscanf(PerLine, "%s%d%s%s%d%d%f", chrom, &starts[printL], strand, context, &coverC, &coverages[printL], &values[printL]);
                 //chromsUse[printL] = strdup(chrom);
                 //ends[printL] = starts[printL]+1;
-                //fprintf(stderr, "\n--222--- %s %d %d\n", chrom, start, coverage);
+                //fprintf(stderr, "\n--222--- %s %d %d %s %s %f\n", chrom, start, coverage, context, strand, value);
                 chromsUse[printL] = strdup(chrom);
                 starts[printL] = start;
-                ends[printL] = start+1;
+                //ends[printL] = start+1;
+                if(end == 0){
+                    ends[printL] = start+1;
+                }else{
+                    ends[printL] = end;
+                }
                 coverages[printL] = coverage;
                 values[printL] = value;
 
@@ -631,13 +674,11 @@ int main(int argc, char *argv[]) {
         for(i =0; i < MAX_LINE_PRINT; i++){
             free(chroms[i]); free(chromsUse[i]); free(entryid[i]);
         }
-        free(chroms); free(chromsUse); free(entryid); 
-
-        free(chrLens); free(starts);
+        free(chroms); free(chromsUse); free(entryid); free(starts);
         free(ends); free(values); free(coverages); free(strands); free(contexts);
-        free(chrom); free(old_chrom);
+        free(chrom); free(old_chrom); free(chrLens); 
         free(strand); free(context); free(PerLine);free(chromlenf); 
-        free(outfile);
+        if(outfile) free(outfile); if(outbmfile) free(outbmfile);
         return 0;
     }
 
@@ -661,26 +702,88 @@ int main(int argc, char *argv[]) {
     // read bm file, view
     if(strcmp(mode, "view")==0){
         if(DEBUG>0) fprintf(stderr, "bm view\n");
-        fprintf(stderr, "[Mode] ------------- View %s\n", region);
         //char region[] = "chr1:0-100,chr1:16766-16830";
         uint32_t type = BMtype(inbmfile, NULL);
         bigWigFile_t *ifp = NULL;
         ifp = bwOpen(inbmfile, NULL, "r");
         ifp->type = ifp->hdr->version;
-        if(!region[0] && !bedfile[0]){
-            main_view_all(ifp);
-        }else if(region[0]){
-            main_view(ifp, region);
+        FILE *outfp_mbw = NULL;
+        bigWigFile_t *ofp = NULL;
+        if(strcmp(outformat, "txt") == 0){
+            if(outfile) {
+                outfp_mbw = File_Open(outfile,"w");
+            }else {
+                outfp_mbw = stdout;
+            }
+        }else if(strcmp(outformat, "mbw") == 0){
+            fprintf(stderr, "output mbw file\n");
+            //mbwfileinit(ofp, ifp, outfile, zoomlevel); // why not valid????
+            if(bwInit(1<<17) != 0) {
+                fprintf(stderr, "Received an error in bwInit\n");
+                return;
+            }
+            ofp = bwOpen(outfile, NULL, "w");
+            ofp->type = ifp->type;
+            if(!ofp) {
+                fprintf(stderr, "An error occurred while opening mbw for writingn\n");
+                return;
+            }
+            //Allow up to 10 zoom levels, though fewer will be used in practice
+            if(bwCreateHdr(ofp, zoomlevel)) {
+                fprintf(stderr, "== bwCreateHdr ==\n");
+                return;
+            }
+            //Create the chromosome lists
+            ofp->cl = bwCreateChromList_ifp(ifp); //2
+            if(!ofp->cl) {
+                fprintf(stderr, "== bwCreateChromList ==\n");
+                return;
+            }
+            //Write the header
+            if(bwWriteHdr(ofp)) {
+                fprintf(stderr, "== bwWriteHdr ==\n");
+                return;
+            }
+        }
+        
+        if(!region && !bedfile){
+            fprintf(stderr, "[Mode] ------------- View all meth\n");
+            main_view_all(ifp, outfp_mbw, outformat, ofp, filterchrom);
+        }else if(region){
+            fprintf(stderr, "[Mode] ------------- View region %s\n", region);
+            main_view(ifp, region, outfp_mbw, outformat, ofp);
             free(region);
-        }else if(bedfile[0]){
-            main_view_file(ifp, bedfile);
+        }else if(bedfile){
+            fprintf(stderr, "[Mode] ------------- View bedfile %s\n", bedfile);
+            main_view_file(ifp, bedfile, outfp_mbw, outformat, ofp);
             free(bedfile);
         }else{
             fprintf(stderr, "\nplease provide -r or --bed!!!\n");
         }
+        fprintf(stderr, "Done and free mem\n");
         free(inbmfile);
         bwClose(ifp);
-        free(outfile);
+        if(outfile) free(outfile);
+        if(filterchrom) free(filterchrom);
+        if(strcmp(outformat, "txt") == 0){
+            fclose(outfp_mbw);
+        }else if(strcmp(outformat, "mbw") == 0){
+            bwClose(ofp);
+            bwCleanup();
+        }
+        return 0;
+    }
+
+    if(strcmp(mode, "viewheader")==0){
+        if(DEBUG>0) fprintf(stderr, "bm viewheader\n");
+        uint32_t type = BMtype(inbmfile, NULL);
+        bigWigFile_t *ifp = NULL;
+        ifp = bwOpen(inbmfile, NULL, "r");
+        ifp->type = ifp->hdr->version;
+        bwPrintHdr(ifp);
+        //bwPrintIndexTree(ifp);
+        free(inbmfile);
+        bwClose(ifp);
         return 0;
     }
 
@@ -688,12 +791,12 @@ int main(int argc, char *argv[]) {
     if(strcmp(mode, "overlap")==0){
         fprintf(stderr, "[Mode] ------------- overlap %s %s\n", inbmfile, bmfile2);
         if(inbm_mul == 1){
-            if(!region[0] && !bedfile[0]){
+            if(!region && !bedfile){
                 bw_overlap_all_mul(inbmfiles, filter_strand);
-            }else if(region[0]){
+            }else if(region){
                 bw_overlap_region_mul(inbmfiles, region, filter_strand);
                 free(region);
-            }else if(bedfile[0]){
+            }else if(bedfile){
                 bw_overlap_file_mul(inbmfiles, bedfile);
                 free(bedfile);
             }else{
@@ -701,12 +804,12 @@ int main(int argc, char *argv[]) {
             }
             free(inbmfiles); 
         }else{
-            if(!region[0] && !bedfile[0]){
+            if(!region && !bedfile){
                 bw_overlap_all(inbmfile, bmfile2, 1, 1, filter_strand);
-            }else if(region[0]){
+            }else if(region){
                 bw_overlap_region(inbmfile, bmfile2, region, filter_strand);
                 free(region);
-            }else if(bedfile[0]){
+            }else if(bedfile){
                 bw_overlap_file(inbmfile, bmfile2, bedfile);
                 free(bedfile);
             }else{
@@ -715,14 +818,14 @@ int main(int argc, char *argv[]) {
             free(inbmfile); 
             free(bmfile2); 
         }
-        free(outfile);
+        if(outfile) free(outfile);
         return 0;
     }
 
     // region
     if(strcmp(mode, "regionstats")==0){
         FILE *outfp_mean;
-        if(outfile && outfile[0]) {
+        if(outfile) {
             char* outfile_aver_temp = malloc(sizeof(char)*200);
             strcpy(outfile_aver_temp, outfile); strcat(outfile_aver_temp, ".regionm");
             outfp_mean = File_Open(outfile_aver_temp,"w");
@@ -733,7 +836,7 @@ int main(int argc, char *argv[]) {
 
         FILE *outfp,*outfp_cg, *outfp_chg, *outfp_chh;
         if(printcoverage>0) {
-            if(outfile && outfile[0]){
+            if(outfile){
                 strcat(outfile , ".regionm.cover");
                 char* outfile_temp = malloc(sizeof(char)*200);
                 if(print2one != 0){ // dont write to one file
@@ -761,20 +864,20 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        if(region[0]){
+        if(region){
             fprintf(stderr, "[Mode] ------------- regionstats %s %s %s\n", inbmfile, region, method);
             calregionstats(inbmfile, method, region, filter_strand, filter_context, outfp_mean, outfp, outfp_cg, outfp_chg, outfp_chh);
             free(region);
-        }else if(bedfile[0]){
-            fprintf(stderr, "[Mode] ------------- regionstats %s %s %s\n", inbmfile, region, bedfile);
+        }else if(bedfile){
+            fprintf(stderr, "[Mode] ------------- regionstats %s %s %s\n", inbmfile, bedfile, method);
             calregionstats_file(inbmfile, method, bedfile, 0, filter_context, outfp_mean, outfp, outfp_cg, outfp_chg, outfp_chh);
             free(bedfile);
-        }else if(gtffile[0]){
-            fprintf(stderr, "[Mode] ------------- regionstats %s %s %s\n", inbmfile, region, gtffile);
+        }else if(gtffile){
+            fprintf(stderr, "[Mode] ------------- regionstats %s %s %s\n", inbmfile, gtffile, method);
             calregionstats_file(inbmfile, method, gtffile, 1, filter_context, outfp_mean, outfp, outfp_cg, outfp_chg, outfp_chh);
             free(gtffile);
-        }else if(gfffile[0]){
-            fprintf(stderr, "[Mode] ------------- regionstats %s %s %s\n", inbmfile, region, gfffile);
+        }else if(gfffile){
+            fprintf(stderr, "[Mode] ------------- regionstats %s %s %s\n", inbmfile, gfffile, method);
             calregionstats_file(inbmfile, method, gfffile, 2, filter_context, outfp_mean, outfp, outfp_cg, outfp_chg, outfp_chh);
             free(gfffile);
         }else{
@@ -783,17 +886,17 @@ int main(int argc, char *argv[]) {
         free(inbmfile);
         if(printcoverage>0) {
             fclose(outfp);
-            if(outfile && outfile[0] && print2one == 0) { fclose(outfp_cg); fclose(outfp_chg); fclose(outfp_chh); }
+            if(outfile && print2one == 0) { fclose(outfp_cg); fclose(outfp_chg); fclose(outfp_chh); }
         }
         fclose(outfp_mean);
-        free(outfile);
+        if(outfile) free(outfile);
         return 0;
     }
 
     // region
     if(strcmp(mode, "bodystats")==0){
         FILE *outfp_mean;
-        if(outfile && outfile[0]) {
+        if(outfile) {
             char* outfile_aver_temp = malloc(sizeof(char)*200);
             strcpy(outfile_aver_temp, outfile); strcat(outfile_aver_temp, ".bodym");
             outfp_mean = File_Open(outfile_aver_temp,"w");
@@ -804,7 +907,7 @@ int main(int argc, char *argv[]) {
 
         FILE *outfp, *outfp_cg, *outfp_chg, *outfp_chh;
         if(printcoverage>0) {
-            if(outfile && outfile[0]){
+            if(outfile){
                 strcat(outfile , ".bodym.cover");
                 char* outfile_temp = malloc(sizeof(char)*200);
                 if(print2one != 0){ // dont write to one file
@@ -832,20 +935,20 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        if(region[0]){
+        if(region){
             fprintf(stderr, "[Mode] ------------- bodystats %s %s %s\n", inbmfile, region, method);
             calbodystats(inbmfile, method, region, filter_strand, filter_context, outfp_mean, outfp, outfp_cg, outfp_chg, outfp_chh);
             free(region);
-        }else if(bedfile[0]){
-            fprintf(stderr, "[Mode] ------------- bodystats %s %s %s\n", inbmfile, region, bedfile);
+        }else if(bedfile){
+            fprintf(stderr, "[Mode] ------------- bodystats %s %s %s\n", inbmfile, bedfile, method);
             calbodystats_file(inbmfile, method, bedfile, 0, filter_context, outfp_mean, outfp, outfp_cg, outfp_chg, outfp_chh);
             free(bedfile);
-        }else if(gtffile[0]){
-            fprintf(stderr, "[Mode] ------------- bodystats %s %s %s\n", inbmfile, region, gtffile);
+        }else if(gtffile){
+            fprintf(stderr, "[Mode] ------------- bodystats %s %s %s\n", inbmfile, gtffile, method);
             calbodystats_file(inbmfile, method, gtffile, 1, filter_context, outfp_mean, outfp, outfp_cg, outfp_chg, outfp_chh);
             free(gtffile);
-        }else if(gfffile[0]){
-            fprintf(stderr, "[Mode] ------------- bodystats %s %s %s\n", inbmfile, region, gfffile);
+        }else if(gfffile){
+            fprintf(stderr, "[Mode] ------------- bodystats %s %s %s\n", inbmfile, gfffile, method);
             calbodystats_file(inbmfile, method, gfffile, 2, filter_context, outfp_mean, outfp, outfp_cg, outfp_chg, outfp_chh);
             free(gfffile);
         }else{
@@ -855,10 +958,10 @@ int main(int argc, char *argv[]) {
         free(inbmfile);
         if(printcoverage>0) {
             fclose(outfp);
-            if(outfile && outfile[0] && print2one == 0) { fclose(outfp_cg); fclose(outfp_chg); fclose(outfp_chh); }
+            if(outfile && print2one == 0) { fclose(outfp_cg); fclose(outfp_chg); fclose(outfp_chh); }
         }
         fclose(outfp_mean);
-        free(outfile);
+        if(outfile) free(outfile);
         return 0;
     }
 
@@ -866,7 +969,7 @@ int main(int argc, char *argv[]) {
     if(strcmp(mode, "chromstats")==0){
         fprintf(stderr, "[Mode] ------------- chromstats %s %s\n", inbmfile, method);
         FILE *outfp_mean;
-        if(outfile && outfile[0]) {
+        if(outfile) {
             char* outfile_aver_temp = malloc(sizeof(char)*200);
             strcpy(outfile_aver_temp, outfile); strcat(outfile_aver_temp, ".chrom");
             outfp_mean = File_Open(outfile_aver_temp,"w");
@@ -877,7 +980,7 @@ int main(int argc, char *argv[]) {
 
         FILE *outfp, *outfp_cg, *outfp_chg, *outfp_chh;
         if(printcoverage>0) {
-            if(outfile && outfile[0]){
+            if(outfile){
                 strcat(outfile , ".chrom.cover");
                 char* outfile_temp = malloc(sizeof(char)*200);
                 if(print2one != 0){ // dont write to one file
@@ -910,10 +1013,10 @@ int main(int argc, char *argv[]) {
         free(method);
         if(printcoverage>0) {
             fclose(outfp);
-            if(outfile && outfile[0] && print2one == 0) { fclose(outfp_cg); fclose(outfp_chg); fclose(outfp_chh); }
+            if(outfile && print2one == 0) { fclose(outfp_cg); fclose(outfp_chg); fclose(outfp_chh); }
         }
         fclose(outfp_mean); 
-        free(outfile);
+        if(outfile) free(outfile);
         return 0;
     }
 
@@ -921,7 +1024,7 @@ int main(int argc, char *argv[]) {
     if(strcmp(mode, "profile")==0){
         fprintf(stderr, "[Mode] ------------- profile %s\n", inbmfile);
         FILE *outfp, *outfp_cg, *outfp_chg, *outfp_chh;
-        if(outfile && outfile[0]){
+        if(outfile){
             strcat(outfile ,profilemode_str); // add across, tss, center
             char* outfile_temp = malloc(sizeof(char)*200);
             if(print2one != 0){ // dont write to one file
@@ -949,7 +1052,7 @@ int main(int argc, char *argv[]) {
         }
 
         FILE *outfp_aver;
-        if(outfile && outfile[0]) {
+        if(outfile) {
             char* outfile_aver_temp = malloc(sizeof(char)*200);
             strcpy(outfile_aver_temp, outfile); strcat(outfile_aver_temp, ".aver");
             outfp_aver = File_Open(outfile_aver_temp,"w");
@@ -962,14 +1065,14 @@ int main(int argc, char *argv[]) {
         bodyprofilestep = profilestep * bodyX;
         bodyprofilemovestep = profilemovestep * bodyX;
 
-        if(bedfile[0]){
+        if(bedfile){
             calprofile(inbmfile, upstream, downstream, profilestep, profilemovestep, bodyprofilestep, bodyprofilemovestep, bedfile, filter_context, outfp, outfp_cg, outfp_chg, outfp_chh, outfp_aver, profilemode, matrixX);
             free(bedfile);
         }
-        else if(gtffile[0]){
+        else if(gtffile){
             calprofile_gtf(inbmfile, upstream, downstream, profilestep, profilemovestep, bodyprofilestep, bodyprofilemovestep, gtffile, 1, filter_context, outfp, outfp_cg, outfp_chg, outfp_chh, outfp_aver, profilemode, matrixX);
             free(gtffile);
-        }else if(gfffile[0]){
+        }else if(gfffile){
             calprofile_gtf(inbmfile, upstream, downstream, profilestep, profilemovestep, bodyprofilestep, bodyprofilemovestep, gfffile, 2, filter_context, outfp, outfp_cg, outfp_chg, outfp_chh, outfp_aver, profilemode, matrixX);
             free(gfffile);
         }else{
@@ -977,19 +1080,50 @@ int main(int argc, char *argv[]) {
         }
         
         fclose(outfp);
-        if(outfile && outfile[0] && print2one == 0) { fclose(outfp_cg); fclose(outfp_chg); fclose(outfp_chh); }
+        if(outfile && print2one == 0) { fclose(outfp_cg); fclose(outfp_chg); fclose(outfp_chh); }
         fclose(outfp_aver); 
-        free(outfile);
+        if(outfile) free(outfile);
         return 0;
     }
 
-    free(outfile);
+    if(outfile) free(outfile);
     return 1;
 error:
     fprintf(stderr, "Received an error in process!\n");
     bwClose(fp);
     bwCleanup();
     return -1;
+}
+
+void mbwfileinit(bigWigFile_t *ofp, bigWigFile_t *ifp, char* outfile, int zoomlevel){
+    if(bwInit(1<<17) != 0) {
+        fprintf(stderr, "Received an error in bwInit\n");
+        return;
+    }
+    ofp = bwOpen(outfile, NULL, "w");
+    ofp->type = ifp->type;
+    if(!ofp) {
+        fprintf(stderr, "An error occurred while opening mbw for writingn\n");
+        return;
+    }
+    //Allow up to 10 zoom levels, though fewer will be used in practice
+    if(bwCreateHdr(ofp, zoomlevel)) {
+        fprintf(stderr, "== bwCreateHdr ==\n");
+        return;
+    }
+
+    //Create the chromosome lists
+    ofp->cl = ifp->cl; //2
+    if(!ofp->cl) {
+        fprintf(stderr, "== bwCreateChromList ==\n");
+        return;
+    }
+
+    //Write the header
+    if(bwWriteHdr(ofp)) {
+        fprintf(stderr, "== bwWriteHdr ==\n");
+        return;
+    }
 }
 
 double *Sregionstats(bigWigFile_t *fp, char *chrom, int start, int end, int splitN, uint32_t movestep, char *method, uint8_t strand, uint8_t context){
@@ -1017,7 +1151,7 @@ double *Sregionstats(bigWigFile_t *fp, char *chrom, int start, int end, int spli
 double *Sregionstats_array(bigWigFile_t *fp, char *chrom, int start, int end, int splitN, uint32_t movestep, char *method, uint8_t strand){
     double *stats = NULL;
     assert(splitN>0);
-    int i=0;
+    //int i=0;
     if(strcmp(method, "mean")==0){
         stats = bwStats_array(fp, chrom, start, end, splitN, movestep, mean, strand);
     }else if(strcmp(method, "weighted")==0){
@@ -1027,7 +1161,7 @@ double *Sregionstats_array(bigWigFile_t *fp, char *chrom, int start, int end, in
 }
 
 //double *output = malloc(sizeof(double)*nBins*Tsize);
-double *Sregionstats_array_count(bigWigFile_t *fp, char *chrom, int start, int end, int splitN, uint32_t movestep, char *method, uint8_t strand, uint16_t *countC, uint16_t *countCT){
+void *Sregionstats_array_count(bigWigFile_t *fp, char *chrom, int start, int end, int splitN, uint32_t movestep, char *method, uint8_t strand, uint16_t *countC, uint16_t *countCT){
     assert(splitN>0);
     int i=0, Tsize = 4;
     for(i=0;i<splitN*Tsize;i++){
@@ -1050,7 +1184,7 @@ int calchromstats(char *inbmfile, char *method, int chromstep, int stepoverlap, 
     fp = bwOpen(inbmfile, NULL, "r");
     fp->type = fp->hdr->version;
 
-    int i = 0, j = 0, start = 0, end = chromstep;
+    int i = 0, start = 0, end = chromstep; //, j = 0
     char* region = malloc(sizeof(char)*1000);
     int splitN = 1, Tsize = 4;
     uint16_t *countC = malloc(sizeof(uint16_t)*splitN*Tsize);
@@ -1539,7 +1673,7 @@ int calprofile_gtf(char *inbmfile, int upstream, int downstream, double profiles
 
     FILE* Fgtffile=File_Open(gtffile,"r");
     char *PerLine = malloc(200);
-    int printL = 0;
+    //int printL = 0;
     char *chrom = malloc(100*sizeof(char));
     char *strand = malloc(2); int pstrand = 2; //.
     char *geneid = malloc(100*sizeof(char));
@@ -1713,7 +1847,7 @@ int calprofile(char *inbmfile, int upstream, int downstream, double profilestep,
 
     FILE* Fbedfile=File_Open(bedfile,"r");
     char *PerLine = malloc(200);
-    int printL = 0;
+    //int printL = 0;
     char *chrom = malloc(100*sizeof(char));
     char *strand = malloc(2); int pstrand = 2; //.
     int splitN = 1, i =0;
@@ -1890,7 +2024,7 @@ void delete_char2(char* str, char target,char target2){
 
 void calbody_print(bigWigFile_t *fp, char* chrom, int start, int end, int splitN, char* method, int pstrand, int format, char* geneid, uint8_t context, char* bodycase, char* strand, FILE* outfileF){
     double *stats = Sregionstats_array(fp, chrom, start, end, splitN, end-start, method, pstrand);
-    int i = 0;
+    //int i = 0;
     char* print_context = malloc(sizeof(char)*5);
     getcontext(context, print_context);
     if(stats) {
@@ -1941,7 +2075,7 @@ void calbody_print(bigWigFile_t *fp, char* chrom, int start, int end, int splitN
 
 void calregion_weighted_print(bigWigFile_t *fp, char* chrom, int start, int end, int splitN, char* method, int pstrand, int format, char* geneid, uint8_t context, char* bodycase, char* strand, FILE* outfileF_c, FILE* outfileF_cg, FILE* outfileF_chg, FILE* outfileF_chh, uint16_t *countC, uint16_t *countCT){
     Sregionstats_array_count(fp, chrom, start, end, splitN, end-start, method, pstrand, countC, countCT);
-    int i = 0;
+    //int i = 0;
     char* print_context = malloc(sizeof(char)*5);
     char* print_geneid = malloc(sizeof(char)*20);
     if(format == 1 || format == 2) {
@@ -1981,7 +2115,7 @@ void calregion_weighted_print(bigWigFile_t *fp, char* chrom, int start, int end,
 
 void calregion_print(bigWigFile_t *fp, char* chrom, int start, int end, int splitN, char* method, int pstrand, int format, char* geneid, uint8_t context, char* strand, FILE* outfileF){
     double *stats = Sregionstats_array(fp, chrom, start, end, splitN, end-start, method, pstrand);
-    int i = 0;
+    //int i = 0;
     char* print_context = malloc(sizeof(char)*5);
     getcontext(context, print_context);
     if(stats) {
@@ -2033,10 +2167,10 @@ int calregionstats_file(char *inbmfile, char *method, char *bedfile, int format,
 
     FILE* Fbedfile=File_Open(bedfile,"r");
     char *PerLine = malloc(200);
-    int printL = 0;
+    //int printL = 0;
     char *chrom = malloc(100*sizeof(char)); int start=0, end=0;
     char *strand = malloc(2); int pstrand = 2; //.
-    int splitN = 1, i =0, Tsize = 4;
+    int splitN = 1, Tsize = 4; //, i =0
     char *geneid = malloc(100*sizeof(char));
     uint16_t *countC = malloc(sizeof(uint16_t)*splitN*Tsize);
     uint16_t *countCT = malloc(sizeof(uint16_t)*splitN*Tsize);
@@ -2089,7 +2223,7 @@ int calregionstats(char *inbmfile, char *method, char *region, uint8_t pstrand, 
 
     char *substr= strtok(region, ";");
     char regions[1000][200] = {""};
-    int slen = 0, i =0, j = 0;
+    int slen = 0, i =0; //, j = 0
     
     while (substr != NULL) {
         strcpy(regions[slen++], substr);
@@ -2169,10 +2303,10 @@ int calbodystats_file(char *inbmfile, char *method, char *bedfile, int format, u
 
     FILE* Fbedfile=File_Open(bedfile,"r");
     char *PerLine = malloc(200);
-    int printL = 0;
+    //int printL = 0;
     char *chrom = malloc(100*sizeof(char)); int start=0, end=0;
     char *strand = malloc(2); int pstrand = 2; //.
-    int splitN = 1, i =0, Tsize = 4;
+    int splitN = 1, Tsize = 4; //, i =0
     char *geneid = malloc(100*sizeof(char));
     int upstream = 0, downstream = 0;
     uint16_t *countC = malloc(sizeof(uint16_t)*splitN*Tsize);
@@ -2228,7 +2362,7 @@ int calbodystats(char *inbmfile, char *method, char *region, uint8_t pstrand, ui
 
     char *substr= strtok(region, ";");
     char regions[1000][200] = {""};
-    int slen = 0, i =0, j = 0;
+    int slen = 0, i =0;//, j = 0
     
     while (substr != NULL) {
         strcpy(regions[slen++], substr);
@@ -2273,103 +2407,73 @@ int calbodystats(char *inbmfile, char *method, char *region, uint8_t pstrand, ui
     return 0;
 }
 
-int main_view_all(bigWigFile_t *ifp){
+int main_view_all(bigWigFile_t *ifp, FILE* outfileF, char *outformat, bigWigFile_t *ofp, char* filterchrom){
 
     int SEGlen = 1000000;
     int start = 0, end = SEGlen-1;
-    int i=0;
+    int i=0, printL = 0;
     char* region = malloc(sizeof(char)*1000);
+
+    char **chromsUse = malloc(sizeof(char*)*MAX_LINE_PRINT);
+    char **entryid = malloc(sizeof(char*)*MAX_LINE_PRINT);
+    uint32_t *chrLens = malloc(sizeof(uint32_t) * MAX_LINE_PRINT);
+    uint32_t *starts = malloc(sizeof(uint32_t) * MAX_LINE_PRINT);
+    uint32_t *ends = malloc(sizeof(uint32_t) * MAX_LINE_PRINT);
+    float *values = malloc(sizeof(float) * MAX_LINE_PRINT);
+    uint16_t *coverages = malloc(sizeof(uint16_t) * MAX_LINE_PRINT);
+    uint8_t *strands = malloc(sizeof(uint8_t) * MAX_LINE_PRINT);
+    uint8_t *contexts = malloc(sizeof(uint8_t) * MAX_LINE_PRINT);
+
     for(i=0;i<ifp->cl->nKeys;i++){
         char* chrom = (char*)ifp->cl->chrom[i];
         int len = (int)ifp->cl->len[i];
         start = 0, end = SEGlen-1;
-        //fprintf(stderr, "CCCC %s\t%ld\n", chrom, len);
+        if(filterchrom){
+            if(strcmp(chrom, filterchrom)!=0){
+                continue;
+            }
+        }
+        //fprintf(stderr, "process %s\t%ld\n", chrom, len);
         while(start<len){
             if(end>len){
                 end = len;
             }
             sprintf(region, "%s:%d-%d", chrom, start, end);
-            //fprintf(stderr, "ccx %s", region);
-            main_view(ifp, region);
+            //fprintf(stderr, "ccx %s\n", region);
+            printL = main_view_mbw(ifp, region, outfileF, outformat, ofp, chromsUse, starts, ends, values, coverages, strands, contexts, 
+                entryid);
+            if(strcmp(outformat, "mbw") == 0) {
+                if(start == 0 && printL>0){
+                    int response = bwAddIntervals(ofp, chromsUse, starts, ends, values, coverages, strands, contexts, 
+                    entryid, printL);
+                    if(response) {
+                        fprintf(stderr, "mbwAddIntervals 0\n");
+                        return -1;
+                    }
+                    printL = 0;
+                }else if(printL>0){
+                    if(bwAppendIntervals(ofp, starts, ends, values, coverages, strands, contexts, entryid, printL)) {
+                        fprintf(stderr, "mbwAppendIntervals 2\n");
+                        return -1;
+                    }
+                    printL = 0;
+                }
+            }
             start += SEGlen;
             end += SEGlen;
         }
     }
     free(region);
-}
-
-int main_view_file(bigWigFile_t *ifp, char *bedfile){
-    // read. test/example_output.bw
-    if(DEBUG>1) fprintf(stderr, "\nifp===-=== %d %d\n", ifp->type, ifp->hdr->version);
-    //ifp->type = type;
-    bwOverlappingIntervals_t *o;
-
-    if(DEBUG>1) fprintf(stderr, "xxx111-------- %s %d\n", bedfile, ifp->type);
-
-    FILE* Fbedfile=File_Open(bedfile,"r");
-    char *PerLine = malloc(200);
-    int printL = 0;
-    char *chrom = malloc(100*sizeof(char)); int start=0, end=0;
-    char *strand = malloc(2); int pstrand = 2; //.
-    int j = 0;
-    while(fgets(PerLine,200,Fbedfile)!=NULL){
-        if(PerLine[0] == '#') continue;
-        sscanf(PerLine, "%s%d%d%s", chrom, &start, &end, strand);
-        if(strand[0] == '+'){
-            pstrand = 0;
-        }else if(strand[0] == '-'){
-            pstrand = 1;
-        }else{
-            pstrand = 2;
-        }
-        //sscanf((const char *)regions[i], "%s:%d-%d", chrom, &start, &end);
-        if(DEBUG>1) fprintf(stderr, "slen chrom %s %d %d",  chrom, start, end);
-        o = bwGetOverlappingIntervals(ifp, chrom, start, end+1);
-        if(!o) goto error;
-        if(DEBUG>1) fprintf(stderr, "\no->l %ld %ld %d\n", o->l, o->m, ifp->type);
-        //fprintf(stderr, "--- version --- %d\n", ifp->hdr->version);
-        if(o->l) {
-            for(j=0; j<o->l; j++) {
-                //fprintf(stderr, "1\t%ld\t%ld\t%f\t%ld\t%d\t%d\n", o->start[i], o->end[i], o->value[i], o->coverage[i],
-                //o->strand[i], o->context[i]);   %"PRIu32"
-                if(pstrand!=2){
-                    if(ifp->hdr->version & BM_STRAND){
-                        if(o->strand[j] != pstrand){
-                            continue;
-                        }
-                    }
-                }
-                printf("%s\t%ld", chrom, o->start[j]);
-                if(ifp->hdr->version & BM_END) //ifp->type
-                    printf("\t%"PRIu32"", o->end[j]);
-                printf("\t%f", o->value[j]);
-                if(ifp->hdr->version & BM_COVER)
-                    printf("\t%"PRIu16"", o->coverage[j]);
-                if(ifp->hdr->version & BM_STRAND)
-                    printf("\t%s", strand_str[o->strand[j]]);
-                if(ifp->hdr->version & BM_CONTEXT)
-                    printf("\t%s", context_str[o->context[j]]);
-                if(ifp->hdr->version & BM_ID)
-                    printf("\t%s", o->entryid[j]);
-                printf("\n");
-            }
-        }
+    for(i =0; i < MAX_LINE_PRINT; i++){
+        free(chromsUse[i]); free(entryid[i]);
     }
-
-    fclose(Fbedfile);
-    free(chrom);
-    free(strand);
-    free(PerLine);
-
-    bwDestroyOverlappingIntervals(o);
-    return 0;
-
-error:
-    fprintf(stderr, "Received an error somewhere!\n");
-    return 1;
+    free(chromsUse); free(entryid); free(starts);
+    free(ends); free(values); free(coverages); free(strands); free(contexts);
 }
 
-int main_view(bigWigFile_t *ifp, char *region){
+int main_view_mbw(bigWigFile_t *ifp, char *region, FILE* outfileF, char *outformat, bigWigFile_t *ofp, \
+    char** chromsUse, uint32_t* starts, uint32_t* ends, float* values, uint16_t* coverages, uint8_t* strands, \
+    uint8_t* contexts, char** entryid){
     // read. test/example_output.bw
     if(DEBUG>1) fprintf(stderr, "\nifp===-=== %d %d\n", ifp->type, ifp->hdr->version);
     //ifp->type = type;
@@ -2386,6 +2490,189 @@ int main_view(bigWigFile_t *ifp, char *region){
     }
 
     char *chrom = malloc(100*sizeof(char)); int start=0, end=0;
+    char *tempstore = malloc(sizeof(char)*10000000);
+    char *tempchar = malloc(20);
+    int Nprint = 0;
+    //char *strand = malloc(100*sizeof(char)); int strand;
+    for(i=0;i<slen; i++){
+        chrom = strtok(regions[i], ",:-");
+        start = atoi(strtok(NULL,",:-"));
+        end = atoi(strtok(NULL,",:-")); // + 1;
+        //strand = strtok(NULL,",:-");
+        //sscanf((const char *)regions[i], "%s:%d-%d", chrom, &start, &end);
+        if(DEBUG>1) fprintf(stderr, "slen %d %d chrom %s %d %d %d", slen, i, chrom, start, end, slen);
+        o = bwGetOverlappingIntervals(ifp, chrom, start, end+1);
+        if(!o) goto error;
+        if(DEBUG>1) fprintf(stderr, "\no->l %ld %ld %d\n", o->l, o->m, ifp->type);
+        //fprintf(stderr, "--- version --- %d\n", ifp->hdr->version);
+        if(o->l) {
+            for(j=0; j<o->l; j++) {
+                if(ifp->hdr->version & BM_COVER){
+                    if(!(o->coverage[j]>=mincover && o->coverage[j]<=maxcover)){
+                        continue;
+                    }
+                }
+                if(filter_strand != 2 && ifp->hdr->version & BM_STRAND) {
+                    if(o->strand[j] != filter_strand){
+                        continue;
+                    }
+                }
+                if(filter_context!=0 && filter_context<4 && ifp->hdr->version & BM_CONTEXT){
+                    if(o->context[j] != filter_context){
+                        continue;
+                    }
+                }
+
+                if(strcmp(outformat, "mbw") == 0){
+                    chromsUse[Nprint] = strdup(chrom);
+                    starts[Nprint] = o->start[j];
+                    if(ifp->hdr->version & BM_END){
+                        ends[Nprint] = o->end[j];
+                    }else{
+                        ends[Nprint] = starts[Nprint] + 1;
+                    }
+                    values[Nprint] = o->value[j];
+                    if(ifp->hdr->version & BM_COVER) {
+                        coverages[Nprint] = o->coverage[j];
+                    }
+                    if(ifp->hdr->version & BM_STRAND){
+                        strands[Nprint] = o->strand[j];
+                    }
+                    if(ifp->hdr->version & BM_CONTEXT) {
+                        contexts[Nprint] = o->context[j];
+                    }
+                    if(ifp->hdr->version & BM_ID) {
+                        entryid[Nprint] = o->entryid[j];
+                    }
+                    Nprint++;
+                }else{
+                    //fprintf(stderr, "1\t%ld\t%ld\t%f\t%ld\t%d\t%d\n", o->start[i], o->end[i], o->value[i], o->coverage[i],
+                    //o->strand[i], o->context[i]);   %"PRIu32"
+                    sprintf(tempchar, "%s\t%ld", chrom, o->start[j]);
+                    strcat(tempstore, tempchar);
+                    if(ifp->hdr->version & BM_END) { //ifp->type
+                        sprintf(tempchar, "\t%"PRIu32"", o->end[j]);
+                        strcat(tempstore, tempchar);
+                    }
+                    sprintf(tempchar, "\t%f", o->value[j]);
+                    strcat(tempstore, tempchar);
+                    if(ifp->hdr->version & BM_COVER) {
+                        sprintf(tempchar, "\t%"PRIu16"", o->coverage[j]);
+                        strcat(tempstore, tempchar);
+                    }
+                    if(ifp->hdr->version & BM_STRAND){
+                        sprintf(tempchar, "\t%s", strand_str[o->strand[j]]);
+                        strcat(tempstore, tempchar);
+                    }
+                    if(ifp->hdr->version & BM_CONTEXT) {
+                        sprintf(tempchar, "\t%s", context_str[o->context[j]]);
+                        strcat(tempstore, tempchar);
+                    }
+                    if(ifp->hdr->version & BM_ID) {
+                        sprintf(tempchar, "\t%s", o->entryid[j]);
+                        strcat(tempstore, tempchar);
+                    }
+                    sprintf(tempchar, "\n");
+                    strcat(tempstore, tempchar);
+                    Nprint++;
+                    if(Nprint>10000) {
+                        if(strcmp(outformat, "txt") == 0) fprintf(outfileF,"%s",tempstore);
+                        else if(strcmp(outformat, "mbw") == 0) {
+                            //mbw out
+                        }
+                        Nprint = 0;
+                    }
+                }
+            }
+        }
+    }
+
+    if(Nprint>0) {
+        if(strcmp(outformat, "txt") == 0) {
+            fprintf(outfileF,"%s",tempstore);
+        } else if(strcmp(outformat, "mbw") == 0) {
+            ;//mbw out
+        }
+    }
+    //free(chrom);
+    free(tempchar);
+    free(tempstore);
+    bwDestroyOverlappingIntervals(o);
+    return Nprint;
+
+error:
+    fprintf(stderr, "No results found!\n");
+    return 0;
+}
+
+int main_view_file(bigWigFile_t *ifp, char *bedfile, FILE* outfileF, char *outformat, bigWigFile_t *ofp){
+    // read. test/example_output.bw
+    if(DEBUG>1) fprintf(stderr, "\nifp===-=== %d %d\n", ifp->type, ifp->hdr->version);
+    //ifp->type = type;
+    bwOverlappingIntervals_t *o;
+
+    if(DEBUG>1) fprintf(stderr, "xxx111-------- %s %d\n", bedfile, ifp->type);
+
+    FILE* Fbedfile=File_Open(bedfile,"r");
+    char *PerLine = malloc(200);
+    int printL = 0;
+    char *chrom = malloc(100*sizeof(char)); int start=0, end=0;
+    char *strand = malloc(2); int pstrand = 2; //.
+    unsigned int j = 0;
+    char *tempstore = malloc(sizeof(char)*10000000);
+    char *tempchar = malloc(20);
+    int Nprint = 0;
+    char* region = malloc(sizeof(char)*1000);
+    while(fgets(PerLine,200,Fbedfile)!=NULL){
+        if(PerLine[0] == '#') continue;
+        sscanf(PerLine, "%s%d%d%s", chrom, &start, &end, strand);
+        if(strand[0] == '+'){
+            pstrand = 0;
+        }else if(strand[0] == '-'){
+            pstrand = 1;
+        }else{
+            pstrand = 2;
+        }
+        //sscanf((const char *)regions[i], "%s:%d-%d", chrom, &start, &end);
+        if(DEBUG>1) fprintf(stderr, "slen chrom %s %d %d",  chrom, start, end);
+        sprintf(region, "%s:%d-%d", chrom, start, end);
+        //fprintf(stderr, "--- version --- %d\n", ifp->hdr->version);
+        main_view(ifp, region, outfileF, outformat, ofp);
+    }
+
+    fclose(Fbedfile);
+    free(chrom);
+    free(strand);
+    free(PerLine); free(region);
+
+    bwDestroyOverlappingIntervals(o);
+    return 0;
+
+error:
+    fprintf(stderr, "No results found!\n");
+    return 1;
+}
+
+int main_view(bigWigFile_t *ifp, char *region, FILE* outfileF, char *outformat, bigWigFile_t *ofp){
+    // read. test/example_output.bw
+    if(DEBUG>1) fprintf(stderr, "\nifp===-=== %d %d\n", ifp->type, ifp->hdr->version);
+    //ifp->type = type;
+    bwOverlappingIntervals_t *o;
+
+    if(DEBUG>1) fprintf(stderr, "xxx111-------- %s %d\n", region, ifp->type);
+    char *substr= strtok(region, ";");
+    char regions[1000][200] = {""};
+    int slen = 0, i =0, j = 0;
+    
+    while (substr != NULL) {
+        strcpy(regions[slen++], substr);
+        substr = strtok(NULL,";");
+    }
+
+    char *chrom = malloc(100*sizeof(char)); int start=0, end=0;
+    char *tempstore = malloc(sizeof(char)*10000000);
+    char *tempchar = malloc(20);
+    int Nprint = 0;
     //char *strand = malloc(100*sizeof(char)); int strand;
     for(i=0;i<slen; i++){
         chrom = strtok(regions[i], ",:-");
@@ -2417,33 +2704,63 @@ int main_view(bigWigFile_t *ifp, char *region){
                 }
                 //fprintf(stderr, "1\t%ld\t%ld\t%f\t%ld\t%d\t%d\n", o->start[i], o->end[i], o->value[i], o->coverage[i],
                 //o->strand[i], o->context[i]);   %"PRIu32"
-                printf("%s\t%ld", chrom, o->start[j]);
-                if(ifp->hdr->version & BM_END) //ifp->type
-                    printf("\t%"PRIu32"", o->end[j]);
-                printf("\t%f", o->value[j]);
-                if(ifp->hdr->version & BM_COVER)
-                    printf("\t%"PRIu16"", o->coverage[j]);
-                if(ifp->hdr->version & BM_STRAND)
-                    printf("\t%s", strand_str[o->strand[j]]);
-                if(ifp->hdr->version & BM_CONTEXT)
-                    printf("\t%s", context_str[o->context[j]]);
-                if(ifp->hdr->version & BM_ID)
-                    printf("\t%s", o->entryid[j]);
-                printf("\n");
+                sprintf(tempchar, "%s\t%ld", chrom, o->start[j]);
+                strcat(tempstore, tempchar);
+                if(ifp->hdr->version & BM_END) { //ifp->type
+                    sprintf(tempchar, "\t%"PRIu32"", o->end[j]);
+                    strcat(tempstore, tempchar);
+                }
+                sprintf(tempchar, "\t%f", o->value[j]);
+                strcat(tempstore, tempchar);
+                if(ifp->hdr->version & BM_COVER) {
+                    sprintf(tempchar, "\t%"PRIu16"", o->coverage[j]);
+                    strcat(tempstore, tempchar);
+                }
+                if(ifp->hdr->version & BM_STRAND){
+                    sprintf(tempchar, "\t%s", strand_str[o->strand[j]]);
+                    strcat(tempstore, tempchar);
+                }
+                if(ifp->hdr->version & BM_CONTEXT) {
+                    sprintf(tempchar, "\t%s", context_str[o->context[j]]);
+                    strcat(tempstore, tempchar);
+                }
+                if(ifp->hdr->version & BM_ID) {
+                    sprintf(tempchar, "\t%s", o->entryid[j]);
+                    strcat(tempstore, tempchar);
+                }
+                sprintf(tempchar, "\n");
+                strcat(tempstore, tempchar);
+                Nprint++;
+                if(Nprint>10000) {
+                    if(strcmp(outformat, "txt") == 0) fprintf(outfileF,"%s",tempstore);
+                    else if(strcmp(outformat, "mbw") == 0) {
+                        //mbw out
+                    }
+                    Nprint = 0;
+                }
             }
         }
     }
 
+    if(Nprint>0) {
+        if(strcmp(outformat, "txt") == 0) fprintf(outfileF,"%s",tempstore);
+        else if(strcmp(outformat, "mbw") == 0) {
+            //mbw out
+        }
+        Nprint = 0;
+    }
     //free(chrom);
+    free(tempchar);
+    free(tempstore);
     bwDestroyOverlappingIntervals(o);
     return 0;
 
 error:
-    fprintf(stderr, "Received an error somewhere!\n");
+    fprintf(stderr, "No results found!\n");
     return 1;
 }
 
-int main_view_bedfile(char *inbmF, char *bedfile, int type){
+int main_view_bedfile(char *inbmF, char *bedfile, int type, FILE* outfileF, char *outformat, bigWigFile_t *ofp){
     // read. test/example_output.bw
     bigWigFile_t *ifp = NULL;
     ifp = bwOpen(inbmF, NULL, "r");
@@ -2483,7 +2800,7 @@ int main_view_bedfile(char *inbmF, char *bedfile, int type){
     return 0;
 
 error:
-    fprintf(stderr, "Received an error somewhere!\n");
+    fprintf(stderr, "No results found!\n");
     bwClose(ifp);
     bwCleanup();
     return 1;
@@ -2569,7 +2886,7 @@ int bw_overlap_file_mul(char *inbmFs, char *bedfile){
     
     FILE* Fbedfile=File_Open(bedfile,"r");
     char *PerLine = malloc(200);
-    int printL = 0;
+    //int printL = 0;
     char *chrom = malloc(100*sizeof(char)); int start=0, end=0;
     char *strand = malloc(2); int pstrand = 2; //.
     int SEGlen = 1000000, nK = 0, j = 0;
@@ -2615,7 +2932,7 @@ int bw_overlap_file(char *inbmF1, char *inbmF2, char *bedfile){
     
     FILE* Fbedfile=File_Open(bedfile,"r");
     char *PerLine = malloc(200);
-    int printL = 0;
+    //int printL = 0;
     char *chrom = malloc(100*sizeof(char)); int start=0, end=0;
     char *strand = malloc(2); int pstrand = 2; //.
     while(fgets(PerLine,200,Fbedfile)!=NULL){
@@ -2980,4 +3297,86 @@ FILE* File_Open(const char* File_Name,const char* Mode)
 		exit(1);
 	}
 	else return Handle;
+}
+
+void bwPrintHdr(bigWigFile_t *bw) {
+    uint64_t i;
+    int64_t i64;
+    //fprintf(stderr, "Version:    %"PRIu16"\n", bw->hdr->version);
+    if(bw->hdr->version & BM_END) fprintf(stderr, "BM_END:    yes\n");
+    else fprintf(stderr, "BM_END:    no\n");
+    if(bw->hdr->version & BM_COVER) fprintf(stderr, "BM_COVER:    yes\n");
+    else fprintf(stderr, "BM_COVER:    no\n");
+    if(bw->hdr->version & BM_CONTEXT) fprintf(stderr, "BM_CONTEXT:    yes\n");
+    else fprintf(stderr, "BM_CONTEXT:    no\n");
+    if(bw->hdr->version & BM_STRAND) fprintf(stderr, "BM_STRAND:    yes\n");
+    else fprintf(stderr, "BM_STRAND:    no\n");
+    if(bw->hdr->version & BM_ID) fprintf(stderr, "BM_ID:    yes\n");
+    else fprintf(stderr, "BM_ID:    no\n");
+    fprintf(stderr, "Levels:     %"PRIu16"\n", bw->hdr->nLevels);
+    //fprintf(stderr, "ctOffset:   0x%"PRIx64"\n", bw->hdr->ctOffset);
+    //fprintf(stderr, "dataOffset: 0x%"PRIx64"\n", bw->hdr->dataOffset);
+    fprintf(stderr, "indexOffset:        0x%"PRIx64"\n", bw->hdr->indexOffset);
+    //fprintf(stderr, "sqlOffset:  0x%"PRIx64"\n", bw->hdr->sqlOffset);
+    //fprintf(stderr, "summaryOffset:      0x%"PRIx64"\n", bw->hdr->summaryOffset);
+    fprintf(stderr, "bufSize:    %"PRIu32"\n", bw->hdr->bufSize);
+    fprintf(stderr, "extensionOffset:    0x%"PRIx64"\n", bw->hdr->extensionOffset);
+
+    if(bw->hdr->nLevels) {
+        fprintf(stderr, "	i	level	data	index\n");
+    }
+    for(i=0; i<bw->hdr->nLevels; i++) {
+        fprintf(stderr, "\t%"PRIu64"\t%"PRIu32"\t%"PRIx64"\t%"PRIx64"\n", i, bw->hdr->zoomHdrs->level[i], bw->hdr->zoomHdrs->dataOffset[i], bw->hdr->zoomHdrs->indexOffset[i]);
+    }
+
+    fprintf(stderr, "nBasesCovered:      %"PRIu64"\n", bw->hdr->nBasesCovered);
+    fprintf(stderr, "minVal:     %f\n", bw->hdr->minVal);
+    fprintf(stderr, "maxVal:     %f\n", bw->hdr->maxVal);
+    //fprintf(stderr, "sumData:    %f\n", bw->hdr->sumData);
+    //fprintf(stderr, "sumSquared: %f\n", bw->hdr->sumSquared);
+
+    //Chromosome idx/name/length
+    if(bw->cl) {
+        fprintf(stderr, "Chromosome List\n");
+        fprintf(stderr, "  idx\tChrom\tLength (bases)\n");
+        for(i64=0; i64<bw->cl->nKeys; i64++) {
+            fprintf(stderr, "  %"PRIu64"\t%s\t%"PRIu32"\n", i64, bw->cl->chrom[i64], bw->cl->len[i64]);
+        }
+    }
+}
+
+void bwPrintIndexNode(bwRTreeNode_t *node, int level) {
+    uint16_t i;
+    if(!node) return;
+    for(i=0; i<node->nChildren; i++) {
+        if(node->isLeaf) {
+            printf("  %i\t%"PRIu32"\t%"PRIu32"\t%"PRIu32"\t%"PRIu32"\t0x%"PRIx64"\t%"PRIu64"\n", level,\
+                node->chrIdxStart[i], \
+                node->baseStart[i], \
+                node->chrIdxEnd[i], \
+                node->baseEnd[i], \
+                node->dataOffset[i], \
+                node->x.size[i]);
+        } else {
+            printf("  %i\t%"PRIu32"\t%"PRIu32"\t%"PRIu32"\t%"PRIu32"\t0x%"PRIx64"\tNA\n", level,\
+                node->chrIdxStart[i], \
+                node->baseStart[i], \
+                node->chrIdxEnd[i], \
+                node->baseEnd[i], \
+                node->dataOffset[i]);
+            bwPrintIndexNode(node->x.child[i], level+1);
+        }
+    }
+}
+
+void bwPrintIndexTree(bigWigFile_t *fp) {
+    printf("\nIndex tree:\n");
+    printf("nItems:\t%"PRIu64"\n", fp->idx->nItems);
+    printf("chrIdxStart:\t%"PRIu32"\n", fp->idx->chrIdxStart);
+    printf("baseStart:\t%"PRIu32"\n", fp->idx->baseStart);
+    printf("chrIdxEnd:\t%"PRIu32"\n", fp->idx->chrIdxEnd);
+    printf("baseEnd:\t%"PRIu32"\n", fp->idx->baseEnd);
+    printf("idxSize:\t%"PRIu64"\n", fp->idx->idxSize);
+    printf("  level\tchrIdxStart\tbaseStart\tchrIdxEnd\tbaseEnd\tchild\tsize\n");
+    bwPrintIndexNode(fp->idx->root, 0);
 }

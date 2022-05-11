@@ -36,6 +36,7 @@ extern "C"
 #include <iterator>
 #include "stddef.h"
 #include <map>
+//#include <omp.h>
 
 using std::string;
 using std::vector;
@@ -79,13 +80,13 @@ double loglikratio_test(double null_loglik, double full_loglik);
 int checkcomma(char* inbmfiles);
 
 #define MAX_LINE_PRINT 1000000
-const char* Help_String="bmDMR [options] -p <prefix of result> -1 [Sample1-methbw ..] -2 [sample2-methbw ..] \n"
+const char* Help_String="bmDMR [options] -p <prefix of result> -1 [Sample1-methbw,..] -2 [sample2-methbw,..] \n"
                 "\nExample:\n"
         		"\tbmDMR -1 s1.mbw -2 s2.mbw -p prefix --mindmc 5 --minstep 200\n"
                 "\nUsage:\n"
         		"\t-p            output file prefix\n"
-                "\t-1            sample1 methy mbw files, sperate by space.\n"
-                "\t-2            sample2 methy mbw files, sperate by space.\n"
+                "\t-1            sample1 methy mbw files, sperate by comma.\n"
+                "\t-2            sample2 methy mbw files, sperate by comma.\n"
                 "\t--mindmc      min dmc sites in dmr region. [default : 4]\n"
                 "\t--minstep     min step in bp [default : 100]\n"
                 "\t--maxdis      max length of dmr [default : 0]\n"
@@ -164,6 +165,9 @@ int main(int argc, char *argv[]) {
             strcpy(filtercontext, argv[++i]);
         }else if(strcmp(argv[i], "--element") == 0){
             geneid=true;
+        }else{
+            fprintf(stderr, "Error: unknown paramater %s\n", argv[i]);
+            exit(0);
         }
     }
 
@@ -175,13 +179,17 @@ int main(int argc, char *argv[]) {
     }else{
         static vector<PvalLocus> pvals;
         unsigned long NcountC = 0;
-        fprintf(stderr, "start overlap and calculate p-value for cytosine site\n");
+        fprintf(stderr, "start overlap and calculate p-value for cytosine site with cutoff %f %f %f\n", Pcutoff, fdr_cutoff, methdiff);
         if(checkcomma(inbmfile) || checkcomma(bmfile2)){
             fprintf(stderr, "with replication, run beta-bionormal test\n");
             bw_overlap_all_mul_sep(inbmfile, bmfile2, pstrand, pvals, NcountC, Pcutoff, methdiff, filtercontext);
         }else{
             fprintf(stderr, "without replication, run p-value test\n");
             bw_overlap_all(inbmfile, bmfile2, 1, 1, pstrand, pvals, NcountC, Pcutoff, methdiff, filtercontext);
+        }
+        if(pvals.size() == 0){
+            fprintf(stderr, "The size of meet pval cutoff is 0, so we exit now.\n");
+            exit(0);
         }
         fprintf(stderr, "end overlap and start calculate adjusted p-value %ld, %ld\n", pvals.size(), NcountC);
         ofstream OutFileAdjust;
@@ -288,6 +296,7 @@ int bw_overlap_all_mul_sep(char *inbmFs1, char *inbmFs2, uint8_t pstrand, vector
 }
 
 int bw_overlap_all_mul(char *inbmFs, uint8_t pstrand){
+    
     char *substr= strtok(inbmFs, ",");
     char infiles[1000][200] = {""};
     int sizeifp = 0, i = 0;
@@ -312,7 +321,7 @@ int bw_overlap_all_mul(char *inbmFs, uint8_t pstrand){
         char* chrom = (char*)ifps[0]->cl->chrom[i];
         int len = (int)ifps[0]->cl->len[i];
         start = 0, end = SEGlen-1;
-        fprintf(stderr, "CCCC %s\t%ld\t%d\n", chrom, len, sizeifp);
+        fprintf(stderr, "process %s\t%ld\t%d\n", chrom, len, sizeifp);
         while(start<len){
             if(end>len){
                 end = len;
@@ -332,6 +341,7 @@ int bw_overlap_all_mul(char *inbmFs, uint8_t pstrand){
 
 int bw_overlap_all(char *inbmF1, char *inbmF2, int n1, int n2, uint8_t pstrand, vector<PvalLocus> &pvals, unsigned long &NcountC,
     float Pcutoff, float methdiff, char* filtercontext){
+    
     if(n1<1 || n2<1){
         return -1;
     }
@@ -351,8 +361,9 @@ int bw_overlap_all(char *inbmF1, char *inbmF2, int n1, int n2, uint8_t pstrand, 
         char* chrom = (char*)ifp1->cl->chrom[i];
         int len = (int)ifp1->cl->len[i];
         start = 0, end = SEGlen-1;
-        fprintf(stderr, "CCCC %s\t%ld\n", chrom, len);
-        while(start<len){
+        fprintf(stderr, "process %s\t%ld\n", chrom, len);
+        while(start<len) {
+            end = start + SEGlen-1;
             if(end>len){
                 end = len;
             }
@@ -371,6 +382,9 @@ int bw_overlap_all(char *inbmF1, char *inbmF2, int n1, int n2, uint8_t pstrand, 
 
 int bw_overlap(bigWigFile_t *ifp1, bigWigFile_t *ifp2, char *chrom, int start, int end, uint8_t strand,vector<PvalLocus> &pvals,
     unsigned long &NcountC, float Pcutoff, float methdiff, unsigned long chrom_offset, char* filtercontext){
+    
+    //omp_set_num_threads(10);
+
     bwOverlappingIntervals_t *o1;
     bwOverlappingIntervals_t *o2;
 
@@ -389,6 +403,7 @@ int bw_overlap(bigWigFile_t *ifp1, bigWigFile_t *ifp2, char *chrom, int start, i
         };
         //fprintf(stderr, "--- version --- %d\n", ifp1->hdr->version);
         if(o1->l && o2->l) {
+            //#pragma omp parallel for
             for(j=0; j<o1->l; j++) {
                 if(strand!=2){
                     if(ifp1->hdr->version & BM_STRAND){
@@ -407,6 +422,7 @@ int bw_overlap(bigWigFile_t *ifp1, bigWigFile_t *ifp2, char *chrom, int start, i
                 //if(o1->start[j] == 2144615) {fprintf(stderr, "1111 %s %d\n", chrom, countM[o1->start[j]-start]);}
                 countM[o1->start[j]-start]++;
             }
+            //#pragma omp parallel for
             for(j=0; j<o2->l; j++) {
                 if(strand!=2){
                     if(ifp2->hdr->version & BM_STRAND){
@@ -432,14 +448,18 @@ int bw_overlap(bigWigFile_t *ifp1, bigWigFile_t *ifp2, char *chrom, int start, i
                         if(o1->start[j] != o2->start[k]){
                             continue;
                         }
+                        if(o2->start[k]>o1->start[j]) break;
+
                         //if(o2->start[k] == 2144615) {fprintf(stderr, "2222 %s\n", chrom);}
                         lociK = k;
                         cover1 = o1->coverage[j];
                         cover2 = o2->coverage[k];
                         countC1 = (int)((double)o1->value[j]*cover1 + 0.5);
                         countC2 = (int)((double)o2->value[k]*cover2 + 0.5);
-                        
-                        double pval = fishers_exact(countC1,cover1,countC2,cover2);
+                        double meth_diff=fabs(double(countC1)/cover1 - double(countC2)/cover2);
+                        double pval = 1;
+                        if(meth_diff>=methdiff)
+                            pval = fishers_exact(countC1,cover1,countC2,cover2);
 
                         if(pval>1 || pval<0) pval=1;
 
@@ -458,11 +478,13 @@ int bw_overlap(bigWigFile_t *ifp1, bigWigFile_t *ifp2, char *chrom, int start, i
                         else
                             plocus.name="";
                         plocus.pos = chrom_offset + 1 + plocus.position;
-                        double meth_diff=fabs(double(countC1)/cover1 - double(countC2)/cover2);
                         //meth_diff = fabs(meth_diff);
                         if(meth_diff>=methdiff && pval<=Pcutoff){
+                    //#pragma omp critical
                             pvals.push_back(plocus);
                         }
+                    //#pragma omp critical
+                        if(meth_diff>=methdiff)
                         NcountC++;
                     }
                 }
@@ -480,8 +502,9 @@ int bw_overlap(bigWigFile_t *ifp1, bigWigFile_t *ifp2, char *chrom, int start, i
 
 int bw_overlap_mul_calp(bigWigFile_t **ifp1s, int sizeifp, char *chrom, int start, int end, uint8_t strand, int Nsample1, Regression &full_regression, Regression &null_regression, vector<PvalLocus> &pvals, unsigned long &NcountC, \
     float Pcutoff, float methdiff, unsigned long chrom_offset, char *filtercontext){
+
     bwOverlappingIntervals_t *o1;
-    fprintf(stderr, "process region %s %d %d\n", chrom, start, end);
+    //fprintf(stderr, "process region %s %d %d\n", chrom, start, end);
     int slen = 1, i =0, j = 0;
     int* countM = (int *)malloc(sizeof(int)*(end-start+1));
     memset(countM, 0, sizeof(int)*(end-start+1)); // init 0
@@ -621,11 +644,13 @@ int bw_overlap_mul_calp(bigWigFile_t **ifp1s, int sizeifp, char *chrom, int star
                 fit(full_regression);
                 null_regression.props = full_regression.props;
                 fit(null_regression);
-                pval = loglikratio_test(null_regression.max_loglik, full_regression.max_loglik);
+                double meth_diff=fabs(double(countC1)/cover1 - double(countC2)/cover2);
+                if(meth_diff>=methdiff)
+                    pval = loglikratio_test(null_regression.max_loglik, full_regression.max_loglik);
+                else pval = 1;
                 // If error occured in the fitting algorithm (i.e. p-val is nan or -nan).
                 pval= ( (pval != pval) ? -1 : pval);
                 //fprintf(stderr, "%s %d %s %f\n", chrom, full_regression.props.position, full_regression.props.context.c_str(), pval);
-                double meth_diff=fabs(double(countC1)/cover1 - double(countC2)/cover2);
                 if(meth_diff>=methdiff && pval<=Pcutoff){
                     PvalLocus plocus;
                     plocus.raw_pval = pval;
@@ -663,7 +688,7 @@ int bw_overlap_mul_calp(bigWigFile_t **ifp1s, int sizeifp, char *chrom, int star
 
 int bw_overlap_mul(bigWigFile_t **ifp1s, int sizeifp, char *chrom, int start, int end, uint8_t strand, int Nsample1){
     bwOverlappingIntervals_t *o1;
-    fprintf(stderr, "process region %s %d %d\n", chrom, start, end);
+    //fprintf(stderr, "process region %s %d %d\n", chrom, start, end);
     int slen = 1, i =0, j = 0;
     int* countM = (int *)malloc(sizeof(int)*(end-start+1));
     memset(countM, 0, sizeof(int)*(end-start+1)); // init 0
@@ -840,11 +865,12 @@ void adjust(vector<PvalLocus> &loci, unsigned long NcountC) {
 
       for (size_t ind = 0; ind < loci.size(); ++ind) 
       {
-        const double current_score = loci[ind].raw_pval; 
+        const double current_score = loci[ind].raw_pval;
         //Assign a new one.
         //const double adjust_pval 
-        //loci[ind].adjust_pval = loci.size()*current_score/(ind + 1); 
-        loci[ind].adjust_pval = NcountC*current_score/(ind + 1 + NcountC - loci.size()); 
+        loci[ind].adjust_pval = loci.size()*current_score/(ind + 1); 
+        //loci[ind].adjust_pval = NcountC*current_score/(ind + 1 + NcountC - loci.size()); 
+        //loci[ind].adjust_pval = current_score*NcountC/(ind + 1);
         //= adjust_pval;
       }
 

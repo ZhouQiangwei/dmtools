@@ -543,7 +543,7 @@ int bwCreateHdr(bigWigFile_t *fp, int32_t maxZooms);
  * @return A pointer to a chromList_t or NULL on error.
  */
 chromList_t *bwCreateChromList(char **chroms, uint32_t *lengths, int64_t n);
-
+chromList_t *bwCreateChromList_ifp(bigWigFile_t *ibw);
 /*!
  * @brief Write a the header to a bigWig file.
  * You must have already opened the output file, created a header and a chromosome list.
