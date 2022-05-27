@@ -54,6 +54,7 @@ int main_view_file(bigWigFile_t *ifp, char *bedfile, FILE* outfileF, char *outfo
 void mbwfileinit(bigWigFile_t *ofp, bigWigFile_t *ifp, char* outfile, int zoomlevel);
 void bwPrintHdr(bigWigFile_t *bw);
 void bwPrintIndexNode(bwRTreeNode_t *node, int level);
+char *fastStrcat(char *s, char *t);
 
 #define MAX_LINE_PRINT 1000000
 #define MAX_BUFF_PRINT 20000000
@@ -281,11 +282,12 @@ int main(int argc, char *argv[]) {
         }else if(strcmp(mode, "chromstats") == 0){
            fprintf(stderr, "%s\n", Help_String_chromstats); 
         }else{
+            fprintf(stderr, "Please define correct mode!!!\n");
             fprintf(stderr, "%s\n", Help_String_main);
         }
         exit(0);
     }else{
-        fprintf(stderr, "Please define mode!!!\n");
+        //fprintf(stderr, "Please define mode!!!\n");
         fprintf(stderr, "%s\n", Help_String_main);
         exit(0);
     }
@@ -411,12 +413,12 @@ int main(int argc, char *argv[]) {
         FILE *methF = File_Open(methfile, "r"); 
         char *chrom = malloc(50); char *old_chrom = malloc(50);
         //int MAX_CHROM = 10000;
-        char *PerLine = malloc(200); 
+        char *PerLine = malloc(2000); 
         //char **chromsArray = malloc(sizeof(char*)*MAX_CHROM);
         unsigned long chrprintL = 0;
         if(strcmp(sortY, "Y") == 0){
             fprintf(stderr, "obtained chromosome order in meth ratio file ... \n");
-            while(fgets(PerLine,200,methF)!=0){
+            while(fgets(PerLine,2000,methF)!=0){
                 if(PerLine[0] == '#') continue; // remove header #
                 //fprintf(stderr, "%s\n", PerLine);
                 if(strcmp(mrformat, "methratio") == 0 || strcmp(mrformat, "bedmethyl") == 0 || strcmp(mrformat, "bedsimple") == 0){
@@ -437,7 +439,7 @@ int main(int argc, char *argv[]) {
         // open chrom size
         FILE* ChromF=File_Open(chromlenf,"r");
         int chrlen = 0, printL = 0, i = 0, inmr = 0, printedchr = 0;
-        while(fgets(PerLine,200,ChromF)!=NULL){
+        while(fgets(PerLine,2000,ChromF)!=NULL){
             if(PerLine[0] == '#') continue;
             sscanf(PerLine, "%s%d", chrom, &chrlen);
             //chrLens[printL]=chrlen;
@@ -500,7 +502,7 @@ int main(int argc, char *argv[]) {
         printL = 0;
         strcpy(context, pcontext);
         char *decide = malloc(10);
-        while(fgets(PerLine,200,methF)!=0){
+        while(fgets(PerLine,2000,methF)!=0){
             if(PerLine[0] == '#') continue; // remove header #
             //fprintf(stderr, "%s\n", PerLine);
             if(strcmp(mrformat, "methratio") == 0){
@@ -857,6 +859,7 @@ int main(int argc, char *argv[]) {
                     free(outfile_temp);
                 }
             }else{
+                print2one = 2;
                 outfp = stdout;
                 outfp_cg = stdout;
                 outfp_chg = stdout;
@@ -928,6 +931,7 @@ int main(int argc, char *argv[]) {
                     free(outfile_temp);
                 }
             }else{
+                print2one = 2;
                 outfp = stdout;
                 outfp_cg = stdout;
                 outfp_chg = stdout;
@@ -1001,6 +1005,7 @@ int main(int argc, char *argv[]) {
                     free(outfile_temp);
                 }
             }else{
+                print2one = 2;
                 outfp = stdout;
                 outfp_cg = stdout;
                 outfp_chg = stdout;
@@ -1045,6 +1050,7 @@ int main(int argc, char *argv[]) {
                 free(outfile_temp);
             }
         }else{
+            print2one = 2;
             outfp = stdout;
             outfp_cg = stdout;
             outfp_chg = stdout;
@@ -1086,6 +1092,7 @@ int main(int argc, char *argv[]) {
         return 0;
     }
 
+    fprintf(stderr, "Please provide correct mode, unvalid mode: %s", mode);
     if(outfile) free(outfile);
     return 1;
 error:
@@ -1394,10 +1401,10 @@ void profile_print_array_buffer(double *finalstats, int *finalcounts, bigWigFile
                 //getcontext(k, print_context);
                 if(geneid[0]) sprintf(storetemp, "%s:%d-%d-%s", chrom, start, end, geneid);
                 else sprintf(storetemp, "%s:%d-%d", chrom, start, end);
-                if(k==0) strcat(printbuffer_c, storetemp);
-                else if(k==1) strcat(printbuffer_cg, storetemp);
-                else if(k==2) strcat(printbuffer_chg, storetemp);
-                else if(k==3) strcat(printbuffer_chh, storetemp);
+                if(k==0) printbuffer_c = fastStrcat(printbuffer_c, storetemp);
+                else if(k==1) printbuffer_cg = fastStrcat(printbuffer_cg, storetemp);
+                else if(k==2) printbuffer_chg = fastStrcat(printbuffer_chg, storetemp);
+                else if(k==3) printbuffer_chh = fastStrcat(printbuffer_chh, storetemp);
                 //store for average mr
                 if(splitN>1){
                     for(i=j;i>=Tsize*(matrixX-1);){ //j-Tsize
@@ -1414,10 +1421,10 @@ void profile_print_array_buffer(double *finalstats, int *finalcounts, bigWigFile
                         }
                         if(mcount>0) sprintf(storetemp, "\t%.4lf", meth/mcount);
                         else strcpy(storetemp, "\tnan");
-                        if(k==0) strcat(printbuffer_c, storetemp);
-                        else if(k==1) strcat(printbuffer_cg, storetemp);
-                        else if(k==2) strcat(printbuffer_chg, storetemp);
-                        else if(k==3) strcat(printbuffer_chh, storetemp);
+                        if(k==0) printbuffer_c = fastStrcat(printbuffer_c, storetemp);
+                        else if(k==1) printbuffer_cg = fastStrcat(printbuffer_cg, storetemp);
+                        else if(k==2) printbuffer_chg = fastStrcat(printbuffer_chg, storetemp);
+                        else if(k==3) printbuffer_chh = fastStrcat(printbuffer_chh, storetemp);
 
                         i=i-Tsize*matrixX;
                     }
@@ -1435,17 +1442,16 @@ void profile_print_array_buffer(double *finalstats, int *finalcounts, bigWigFile
                     }
                     if(mcount>0) sprintf(storetemp, "\t%.4lf", meth/mcount);
                     else strcpy(storetemp, "\tnan");
-                    if(k==0) strcat(printbuffer_c, storetemp);
-                    else if(k==1) strcat(printbuffer_cg, storetemp);
-                    else if(k==2) strcat(printbuffer_chg, storetemp);
-                    else if(k==3) strcat(printbuffer_chh, storetemp);
-
+                    if(k==0) printbuffer_c = fastStrcat(printbuffer_c, storetemp);
+                    else if(k==1) printbuffer_cg = fastStrcat(printbuffer_cg, storetemp);
+                    else if(k==2) printbuffer_chg = fastStrcat(printbuffer_chg, storetemp);
+                    else if(k==3) printbuffer_chh = fastStrcat(printbuffer_chh, storetemp);
                 }
                 sprintf(storetemp, "\n");
-                if(k==0) strcat(printbuffer_c, storetemp);
-                else if(k==1) strcat(printbuffer_cg, storetemp);
-                else if(k==2) strcat(printbuffer_chg, storetemp);
-                else if(k==3) strcat(printbuffer_chh, storetemp);
+                if(k==0) printbuffer_c = fastStrcat(printbuffer_c, storetemp);
+                else if(k==1) printbuffer_cg = fastStrcat(printbuffer_cg, storetemp);
+                else if(k==2) printbuffer_chg = fastStrcat(printbuffer_chg, storetemp);
+                else if(k==3) printbuffer_chh = fastStrcat(printbuffer_chh, storetemp);
             }
         }else{ //+
             //0 C
@@ -1456,10 +1462,10 @@ void profile_print_array_buffer(double *finalstats, int *finalcounts, bigWigFile
                 //getcontext(j, print_context);
                 if(geneid[0]) sprintf(storetemp, "%s:%d-%d-%s", chrom, start, end, geneid);
                 else sprintf(storetemp, "%s:%d-%d", chrom, start, end);
-                if(j==0) strcat(printbuffer_c, storetemp);
-                else if(j==1) strcat(printbuffer_cg, storetemp);
-                else if(j==2) strcat(printbuffer_chg, storetemp);
-                else if(j==3) strcat(printbuffer_chh, storetemp);
+                if(j==0) printbuffer_c = fastStrcat(printbuffer_c, storetemp);
+                else if(j==1) printbuffer_cg = fastStrcat(printbuffer_cg, storetemp);
+                else if(j==2) printbuffer_chg = fastStrcat(printbuffer_chg, storetemp);
+                else if(j==3) printbuffer_chh = fastStrcat(printbuffer_chh, storetemp);
                 if(splitN>1){
                     for(i=j;i<total_splitN-Tsize*(matrixX-1);){//j+Tsize
                         meth = 0, mcount = 0;
@@ -1475,10 +1481,10 @@ void profile_print_array_buffer(double *finalstats, int *finalcounts, bigWigFile
                         }
                         if(mcount>0) sprintf(storetemp, "\t%.4lf", meth/mcount);
                         else strcpy(storetemp, "\tnan");
-                        if(j==0) strcat(printbuffer_c, storetemp);
-                        else if(j==1) strcat(printbuffer_cg, storetemp);
-                        else if(j==2) strcat(printbuffer_chg, storetemp);
-                        else if(j==3) strcat(printbuffer_chh, storetemp);
+                        if(j==0) printbuffer_c = fastStrcat(printbuffer_c, storetemp);
+                        else if(j==1) printbuffer_cg = fastStrcat(printbuffer_cg, storetemp);
+                        else if(j==2) printbuffer_chg = fastStrcat(printbuffer_chg, storetemp);
+                        else if(j==3) printbuffer_chh = fastStrcat(printbuffer_chh, storetemp);
 
                         i+=Tsize*matrixX;
                     }
@@ -1496,17 +1502,16 @@ void profile_print_array_buffer(double *finalstats, int *finalcounts, bigWigFile
                     }
                     if(mcount>0) sprintf(storetemp, "\t%.4lf", meth/mcount);
                     else strcpy(storetemp, "\tnan");
-                    if(j==0) strcat(printbuffer_c, storetemp);
-                    else if(j==1) strcat(printbuffer_cg, storetemp);
-                    else if(j==2) strcat(printbuffer_chg, storetemp);
-                    else if(j==3) strcat(printbuffer_chh, storetemp);
-
+                    if(j==0) printbuffer_c = fastStrcat(printbuffer_c, storetemp);
+                    else if(j==1) printbuffer_cg = fastStrcat(printbuffer_cg, storetemp);
+                    else if(j==2) printbuffer_chg = fastStrcat(printbuffer_chg, storetemp);
+                    else if(j==3) printbuffer_chh = fastStrcat(printbuffer_chh, storetemp);
                 }
                 sprintf(storetemp, "\n");
-                if(j==0) strcat(printbuffer_c, storetemp);
-                else if(j==1) strcat(printbuffer_cg, storetemp);
-                else if(j==2) strcat(printbuffer_chg, storetemp);
-                else if(j==3) strcat(printbuffer_chh, storetemp);
+                if(j==0) printbuffer_c = fastStrcat(printbuffer_c, storetemp);
+                else if(j==1) printbuffer_cg = fastStrcat(printbuffer_cg, storetemp);
+                else if(j==2) printbuffer_chg = fastStrcat(printbuffer_chg, storetemp);
+                else if(j==3) printbuffer_chh = fastStrcat(printbuffer_chh, storetemp);
             }
         }
     }
@@ -1543,10 +1548,10 @@ void profile_print_array_buffer1(double *finalstats, int *finalcounts, bigWigFil
                 //getcontext(k, print_context);
                 if(geneid[0]) sprintf(storetemp, "%s:%d-%d-%s", chrom, start, end, geneid);
                 else sprintf(storetemp, "%s:%d-%d", chrom, start, end);
-                if(k==0) strcat(printbuffer_c, storetemp);
-                else if(k==1) strcat(printbuffer_cg, storetemp);
-                else if(k==2) strcat(printbuffer_chg, storetemp);
-                else if(k==3) strcat(printbuffer_chh, storetemp);
+                if(k==0) printbuffer_c = fastStrcat(printbuffer_c, storetemp);
+                else if(k==1) printbuffer_cg = fastStrcat(printbuffer_cg, storetemp);
+                else if(k==2) printbuffer_chg = fastStrcat(printbuffer_chg, storetemp);
+                else if(k==3) printbuffer_chh = fastStrcat(printbuffer_chh, storetemp);
                 //store for average mr
                 if(splitN>1){
                     for(i=j;i>=Tsize*(matrixX-1);){ //j-Tsize
@@ -1563,10 +1568,10 @@ void profile_print_array_buffer1(double *finalstats, int *finalcounts, bigWigFil
                         }
                         if(mcount>0) sprintf(storetemp, "\t%.4lf", meth/mcount);
                         else strcpy(storetemp, "\tnan");
-                        if(k==0) strcat(printbuffer_c, storetemp);
-                        else if(k==1) strcat(printbuffer_cg, storetemp);
-                        else if(k==2) strcat(printbuffer_chg, storetemp);
-                        else if(k==3) strcat(printbuffer_chh, storetemp);
+                        if(k==0) printbuffer_c = fastStrcat(printbuffer_c, storetemp);
+                        else if(k==1) printbuffer_cg = fastStrcat(printbuffer_cg, storetemp);
+                        else if(k==2) printbuffer_chg = fastStrcat(printbuffer_chg, storetemp);
+                        else if(k==3) printbuffer_chh = fastStrcat(printbuffer_chh, storetemp);
 
                         i=i-Tsize*matrixX;
                     }
@@ -1584,17 +1589,17 @@ void profile_print_array_buffer1(double *finalstats, int *finalcounts, bigWigFil
                     }
                     if(mcount>0) sprintf(storetemp, "\t%.4lf", meth/mcount);
                     else strcpy(storetemp, "\tnan");
-                    if(k==0) strcat(printbuffer_c, storetemp);
-                    else if(k==1) strcat(printbuffer_cg, storetemp);
-                    else if(k==2) strcat(printbuffer_chg, storetemp);
-                    else if(k==3) strcat(printbuffer_chh, storetemp);
+                    if(k==0) printbuffer_c = fastStrcat(printbuffer_c, storetemp);
+                    else if(k==1) printbuffer_cg = fastStrcat(printbuffer_cg, storetemp);
+                    else if(k==2) printbuffer_chg = fastStrcat(printbuffer_chg, storetemp);
+                    else if(k==3) printbuffer_chh = fastStrcat(printbuffer_chh, storetemp);
 
                 }
                 sprintf(storetemp, "\n");
-                if(k==0) strcat(printbuffer_c, storetemp);
-                else if(k==1) strcat(printbuffer_cg, storetemp);
-                else if(k==2) strcat(printbuffer_chg, storetemp);
-                else if(k==3) strcat(printbuffer_chh, storetemp);
+                if(k==0) printbuffer_c = fastStrcat(printbuffer_c, storetemp);
+                else if(k==1) printbuffer_cg = fastStrcat(printbuffer_cg, storetemp);
+                else if(k==2) printbuffer_chg = fastStrcat(printbuffer_chg, storetemp);
+                else if(k==3) printbuffer_chh = fastStrcat(printbuffer_chh, storetemp);
             }
         }else{ //+
             //0 C
@@ -1605,10 +1610,10 @@ void profile_print_array_buffer1(double *finalstats, int *finalcounts, bigWigFil
                 //getcontext(j, print_context);
                 if(geneid[0]) sprintf(storetemp, "%s:%d-%d-%s", chrom, start, end, geneid);
                 else sprintf(storetemp, "%s:%d-%d", chrom, start, end);
-                if(j==0) strcat(printbuffer_c, storetemp);
-                else if(j==1) strcat(printbuffer_cg, storetemp);
-                else if(j==2) strcat(printbuffer_chg, storetemp);
-                else if(j==3) strcat(printbuffer_chh, storetemp);
+                if(j==0) printbuffer_c = fastStrcat(printbuffer_c, storetemp);
+                else if(j==1) printbuffer_cg = fastStrcat(printbuffer_cg, storetemp);
+                else if(j==2) printbuffer_chg = fastStrcat(printbuffer_chg, storetemp);
+                else if(j==3) printbuffer_chh = fastStrcat(printbuffer_chh, storetemp);
                 if(splitN>1){
                     for(i=j;i<total_splitN-Tsize*(matrixX-1);){//j+Tsize
                         meth = 0, mcount = 0;
@@ -1624,10 +1629,10 @@ void profile_print_array_buffer1(double *finalstats, int *finalcounts, bigWigFil
                         }
                         if(mcount>0) sprintf(storetemp, "\t%.4lf", meth/mcount);
                         else strcpy(storetemp, "\tnan");
-                        if(j==0) strcat(printbuffer_c, storetemp);
-                        else if(j==1) strcat(printbuffer_cg, storetemp);
-                        else if(j==2) strcat(printbuffer_chg, storetemp);
-                        else if(j==3) strcat(printbuffer_chh, storetemp);
+                        if(j==0) printbuffer_c = fastStrcat(printbuffer_c, storetemp);
+                        else if(j==1) printbuffer_cg = fastStrcat(printbuffer_cg, storetemp);
+                        else if(j==2) printbuffer_chg = fastStrcat(printbuffer_chg, storetemp);
+                        else if(j==3) printbuffer_chh = fastStrcat(printbuffer_chh, storetemp);
 
                         i+=Tsize*matrixX;
                     }
@@ -1645,17 +1650,17 @@ void profile_print_array_buffer1(double *finalstats, int *finalcounts, bigWigFil
                     }
                     if(mcount>0) sprintf(storetemp, "\t%.4lf", meth/mcount);
                     else strcpy(storetemp, "\tnan");
-                    if(j==0) strcat(printbuffer_c, storetemp);
-                    else if(j==1) strcat(printbuffer_cg, storetemp);
-                    else if(j==2) strcat(printbuffer_chg, storetemp);
-                    else if(j==3) strcat(printbuffer_chh, storetemp);
+                    if(j==0) printbuffer_c = fastStrcat(printbuffer_c, storetemp);
+                    else if(j==1) printbuffer_cg = fastStrcat(printbuffer_cg, storetemp);
+                    else if(j==2) printbuffer_chg = fastStrcat(printbuffer_chg, storetemp);
+                    else if(j==3) printbuffer_chh = fastStrcat(printbuffer_chh, storetemp);
 
                 }
                 sprintf(storetemp, "\n");
-                if(j==0) strcat(printbuffer_c, storetemp);
-                else if(j==1) strcat(printbuffer_cg, storetemp);
-                else if(j==2) strcat(printbuffer_chg, storetemp);
-                else if(j==3) strcat(printbuffer_chh, storetemp);
+                if(j==0) printbuffer_c = fastStrcat(printbuffer_c, storetemp);
+                else if(j==1) printbuffer_cg = fastStrcat(printbuffer_cg, storetemp);
+                else if(j==2) printbuffer_chg = fastStrcat(printbuffer_chg, storetemp);
+                else if(j==3) printbuffer_chh = fastStrcat(printbuffer_chh, storetemp);
             }
         }
     }
@@ -1672,7 +1677,7 @@ int calprofile_gtf(char *inbmfile, int upstream, int downstream, double profiles
     fp->type = fp->hdr->version;
 
     FILE* Fgtffile=File_Open(gtffile,"r");
-    char *PerLine = malloc(200);
+    char *PerLine = malloc(2000);
     //int printL = 0;
     char *chrom = malloc(100*sizeof(char));
     char *strand = malloc(2); int pstrand = 2; //.
@@ -1696,8 +1701,12 @@ int calprofile_gtf(char *inbmfile, int upstream, int downstream, double profiles
     char* storebuffer_cg = malloc(sizeof(char)*MAX_BUFF_PRINT);
     char* storebuffer_chg = malloc(sizeof(char)*MAX_BUFF_PRINT);
     char* storebuffer_chh = malloc(sizeof(char)*MAX_BUFF_PRINT);
+    //char *storebuffer_c_tmp = storebuffer_c;
+    //char *storebuffer_cg_tmp = storebuffer_cg;
+    //char *storebuffer_chg_tmp = storebuffer_chg;
+    //char *storebuffer_chh_tmp = storebuffer_chh;
     uint32_t Nprocess = 0;
-    while(fgets(PerLine,200,Fgtffile)!=NULL){
+    while(fgets(PerLine,2000,Fgtffile)!=NULL){
         if(PerLine[0] == '#') continue;
         if(format == 1){
             sscanf(PerLine, "%s\t%*s\t%*s\t%d\t%d\t%*s\t%s\t%*s\t%*s%s", chrom, &start, &end, strand, geneid);
@@ -1735,6 +1744,10 @@ int calprofile_gtf(char *inbmfile, int upstream, int downstream, double profiles
                 fprintf(outfileF_chh,"%s",storebuffer_chh);
                 storebuffer_chh[0] = '\0';
                 stored_buffer = 0;
+                //storebuffer_c_tmp = storebuffer_c;
+                //storebuffer_cg_tmp = storebuffer_cg;
+                //storebuffer_chg_tmp = storebuffer_chg;
+                //storebuffer_chh_tmp = storebuffer_chh;
             }
         }else if(profilemode == 1) { // gene tss mode
             if(strand[0] == '+' || strand[0] == '.') {
@@ -1846,7 +1859,7 @@ int calprofile(char *inbmfile, int upstream, int downstream, double profilestep,
     fp->type = fp->hdr->version;
 
     FILE* Fbedfile=File_Open(bedfile,"r");
-    char *PerLine = malloc(200);
+    char *PerLine = malloc(2000);
     //int printL = 0;
     char *chrom = malloc(100*sizeof(char));
     char *strand = malloc(2); int pstrand = 2; //.
@@ -1870,7 +1883,7 @@ int calprofile(char *inbmfile, int upstream, int downstream, double profilestep,
     char* storebuffer_chg = malloc(sizeof(char)*MAX_BUFF_PRINT);
     char* storebuffer_chh = malloc(sizeof(char)*MAX_BUFF_PRINT);
     uint16_t Nprocess = 0;
-    while(fgets(PerLine,200,Fbedfile)!=NULL){
+    while(fgets(PerLine,2000,Fbedfile)!=NULL){
         if(PerLine[0] == '#') continue;
         sscanf(PerLine, "%s%d%d%s", chrom, &start, &end, strand);
         if(end-start < splitN) continue;
@@ -2077,12 +2090,12 @@ void calregion_weighted_print(bigWigFile_t *fp, char* chrom, int start, int end,
     Sregionstats_array_count(fp, chrom, start, end, splitN, end-start, method, pstrand, countC, countCT);
     //int i = 0;
     char* print_context = malloc(sizeof(char)*5);
-    char* print_geneid = malloc(sizeof(char)*20);
+    char* print_geneid = malloc(sizeof(char)*200);
     if(format == 1 || format == 2) {
         strcpy(print_geneid, "\t");
         strcat(print_geneid, geneid);
     }else{
-        strcpy(print_geneid, "");
+        sprintf(print_geneid, "\t%s:%d-%d", chrom, start, end);
     }
     getcontext(context, print_context);
     if(countCT && countC) {
@@ -2136,7 +2149,7 @@ void calregion_print(bigWigFile_t *fp, char* chrom, int start, int end, int spli
             }else if(!isnan(stats[context])) { //print_context
                 fprintf(outfileF, "%s\t%d\t%c\t%f\t%s\n", chrom, start, strand[0], stats[context], geneid);
             }
-        }else{ //bed
+        }else{ //bed or region
             if(context >= 4){
                 if(!isnan(stats[0])) { //C
                     fprintf(outfileF, "%s\t%d\t%c\t%f\n", chrom, start, strand[0], stats[0]);
@@ -2166,15 +2179,15 @@ int calregionstats_file(char *inbmfile, char *method, char *bedfile, int format,
     fp->type = fp->hdr->version;
 
     FILE* Fbedfile=File_Open(bedfile,"r");
-    char *PerLine = malloc(200);
+    char *PerLine = malloc(2000);
     //int printL = 0;
     char *chrom = malloc(100*sizeof(char)); int start=0, end=0;
     char *strand = malloc(2); int pstrand = 2; //.
     int splitN = 1, Tsize = 4; //, i =0
-    char *geneid = malloc(100*sizeof(char));
+    char *geneid = malloc(200*sizeof(char));
     uint16_t *countC = malloc(sizeof(uint16_t)*splitN*Tsize);
     uint16_t *countCT = malloc(sizeof(uint16_t)*splitN*Tsize);
-    while(fgets(PerLine,200,Fbedfile)!=NULL){
+    while(fgets(PerLine,2000,Fbedfile)!=NULL){
         if(PerLine[0] == '#') continue;
         if(format == 0){
             sscanf(PerLine, "%s%d%d%s", chrom, &start, &end, strand);
@@ -2187,7 +2200,10 @@ int calregionstats_file(char *inbmfile, char *method, char *bedfile, int format,
         }else{
             fprintf(stderr, "\nE: unexpected file format!!!\n");
         }
-        
+        if(end<start){
+            fprintf(stderr, "Warning, chromosome start bigger than end, %s %d %d", chrom, start, end);
+            continue;
+        }
         //fprintf(stderr, "%s\n", PerLine);
         //fprintf(stderr, "%s%d%d%s", chrom, start, end, strand);
         if(strand[0] == '+'){
@@ -2253,7 +2269,7 @@ int calregionstats(char *inbmfile, char *method, char *region, uint8_t pstrand, 
             if(printcoverage == 0){
                 calregion_print(fp, chrom, start, end, splitN, method, my_pstrand, 0, "", context, strandstr, outfileF);
             }else{
-                calregion_weighted_print(fp, chrom, start, end, splitN, method, pstrand, 0, "", context, "", strandstr, outfileF_c, outfileF_cg, outfileF_chg, outfileF_chh, countC, countCT);
+                calregion_weighted_print(fp, chrom, start, end, splitN, method, my_pstrand, 0, "", context, "", strandstr, outfileF_c, outfileF_cg, outfileF_chg, outfileF_chh, countC, countCT);
             }
         }else{
             if(pstrand>2){
@@ -2302,29 +2318,32 @@ int calbodystats_file(char *inbmfile, char *method, char *bedfile, int format, u
     fp->type = fp->hdr->version;
 
     FILE* Fbedfile=File_Open(bedfile,"r");
-    char *PerLine = malloc(200);
+    char *PerLine = malloc(2000);
     //int printL = 0;
     char *chrom = malloc(100*sizeof(char)); int start=0, end=0;
     char *strand = malloc(2); int pstrand = 2; //.
     int splitN = 1, Tsize = 4; //, i =0
-    char *geneid = malloc(100*sizeof(char));
+    char *geneid = malloc(200*sizeof(char));
     int upstream = 0, downstream = 0;
     uint16_t *countC = malloc(sizeof(uint16_t)*splitN*Tsize);
     uint16_t *countCT = malloc(sizeof(uint16_t)*splitN*Tsize);
-    while(fgets(PerLine,200,Fbedfile)!=NULL){
+    while(fgets(PerLine,2000,Fbedfile)!=NULL){
         if(PerLine[0] == '#') continue;
-        if(format == 0){
+        if(format == 0){ //bed
             sscanf(PerLine, "%s%d%d%s", chrom, &start, &end, strand);
         }else if(format == 1){
             sscanf(PerLine, "%s\t%*s\t%*s\t%d\t%d\t%*s\t%s\t%*s\t%*s%s", chrom, &start, &end, strand, geneid);
             delete_char2(geneid, '"', ';');
-        }else if(format == 2){
+        }else if(format == 2){ //gff
             sscanf(PerLine, "%s\t%*s\t%*s\t%d\t%d\t%*s\t%s\t%*s\t%*[^=]=%[^;\n\t]", chrom, &start, &end, strand, geneid);
             delete_char2(geneid, '"', ';');
         }else{
             fprintf(stderr, "\nE: unexpected file format!!!\n");
         }
-        
+        if(end<start){
+            fprintf(stderr, "Warning, chromosome start bigger than end, %s %d %d", chrom, start, end);
+            continue;
+        }
         //fprintf(stderr, "%s\n", PerLine);
         //fprintf(stderr, "%s%d%d%s", chrom, start, end, strand);
         if(strand[0] == '+'){
@@ -2491,7 +2510,7 @@ int main_view_mbw(bigWigFile_t *ifp, char *region, FILE* outfileF, char *outform
 
     char *chrom = malloc(100*sizeof(char)); int start=0, end=0;
     char *tempstore = malloc(sizeof(char)*10000000);
-    char *tempchar = malloc(20);
+    char *tempchar = malloc(30);
     int Nprint = 0;
     //char *strand = malloc(100*sizeof(char)); int strand;
     for(i=0;i<slen; i++){
@@ -2549,31 +2568,31 @@ int main_view_mbw(bigWigFile_t *ifp, char *region, FILE* outfileF, char *outform
                     //fprintf(stderr, "1\t%ld\t%ld\t%f\t%ld\t%d\t%d\n", o->start[i], o->end[i], o->value[i], o->coverage[i],
                     //o->strand[i], o->context[i]);   %"PRIu32"
                     sprintf(tempchar, "%s\t%ld", chrom, o->start[j]);
-                    strcat(tempstore, tempchar);
+                    tempstore = fastStrcat(tempstore, tempchar);
                     if(ifp->hdr->version & BM_END) { //ifp->type
                         sprintf(tempchar, "\t%"PRIu32"", o->end[j]);
-                        strcat(tempstore, tempchar);
+                        tempstore = fastStrcat(tempstore, tempchar);
                     }
                     sprintf(tempchar, "\t%f", o->value[j]);
-                    strcat(tempstore, tempchar);
+                    tempstore = fastStrcat(tempstore, tempchar);
                     if(ifp->hdr->version & BM_COVER) {
                         sprintf(tempchar, "\t%"PRIu16"", o->coverage[j]);
-                        strcat(tempstore, tempchar);
+                        tempstore = fastStrcat(tempstore, tempchar);
                     }
                     if(ifp->hdr->version & BM_STRAND){
                         sprintf(tempchar, "\t%s", strand_str[o->strand[j]]);
-                        strcat(tempstore, tempchar);
+                        tempstore = fastStrcat(tempstore, tempchar);
                     }
                     if(ifp->hdr->version & BM_CONTEXT) {
                         sprintf(tempchar, "\t%s", context_str[o->context[j]]);
-                        strcat(tempstore, tempchar);
+                        tempstore = fastStrcat(tempstore, tempchar);
                     }
                     if(ifp->hdr->version & BM_ID) {
                         sprintf(tempchar, "\t%s", o->entryid[j]);
-                        strcat(tempstore, tempchar);
+                        tempstore = fastStrcat(tempstore, tempchar);
                     }
                     sprintf(tempchar, "\n");
-                    strcat(tempstore, tempchar);
+                    tempstore = fastStrcat(tempstore, tempchar);
                     Nprint++;
                     if(Nprint>10000) {
                         if(strcmp(outformat, "txt") == 0) fprintf(outfileF,"%s",tempstore);
@@ -2614,7 +2633,7 @@ int main_view_file(bigWigFile_t *ifp, char *bedfile, FILE* outfileF, char *outfo
     if(DEBUG>1) fprintf(stderr, "xxx111-------- %s %d\n", bedfile, ifp->type);
 
     FILE* Fbedfile=File_Open(bedfile,"r");
-    char *PerLine = malloc(200);
+    char *PerLine = malloc(2000);
     int printL = 0;
     char *chrom = malloc(100*sizeof(char)); int start=0, end=0;
     char *strand = malloc(2); int pstrand = 2; //.
@@ -2623,9 +2642,13 @@ int main_view_file(bigWigFile_t *ifp, char *bedfile, FILE* outfileF, char *outfo
     char *tempchar = malloc(20);
     int Nprint = 0;
     char* region = malloc(sizeof(char)*1000);
-    while(fgets(PerLine,200,Fbedfile)!=NULL){
+    while(fgets(PerLine,2000,Fbedfile)!=NULL){
         if(PerLine[0] == '#') continue;
         sscanf(PerLine, "%s%d%d%s", chrom, &start, &end, strand);
+        if(end<start){
+            fprintf(stderr, "Warning, chromosome start bigger than end, %s %d %d", chrom, start, end);
+            continue;
+        }
         if(strand[0] == '+'){
             pstrand = 0;
         }else if(strand[0] == '-'){
@@ -2705,31 +2728,31 @@ int main_view(bigWigFile_t *ifp, char *region, FILE* outfileF, char *outformat, 
                 //fprintf(stderr, "1\t%ld\t%ld\t%f\t%ld\t%d\t%d\n", o->start[i], o->end[i], o->value[i], o->coverage[i],
                 //o->strand[i], o->context[i]);   %"PRIu32"
                 sprintf(tempchar, "%s\t%ld", chrom, o->start[j]);
-                strcat(tempstore, tempchar);
+                tempstore = fastStrcat(tempstore, tempchar);
                 if(ifp->hdr->version & BM_END) { //ifp->type
                     sprintf(tempchar, "\t%"PRIu32"", o->end[j]);
-                    strcat(tempstore, tempchar);
+                    tempstore = fastStrcat(tempstore, tempchar);
                 }
                 sprintf(tempchar, "\t%f", o->value[j]);
-                strcat(tempstore, tempchar);
+                tempstore = fastStrcat(tempstore, tempchar);
                 if(ifp->hdr->version & BM_COVER) {
                     sprintf(tempchar, "\t%"PRIu16"", o->coverage[j]);
-                    strcat(tempstore, tempchar);
+                    tempstore = fastStrcat(tempstore, tempchar);
                 }
                 if(ifp->hdr->version & BM_STRAND){
                     sprintf(tempchar, "\t%s", strand_str[o->strand[j]]);
-                    strcat(tempstore, tempchar);
+                    tempstore = fastStrcat(tempstore, tempchar);
                 }
                 if(ifp->hdr->version & BM_CONTEXT) {
                     sprintf(tempchar, "\t%s", context_str[o->context[j]]);
-                    strcat(tempstore, tempchar);
+                    tempstore = fastStrcat(tempstore, tempchar);
                 }
                 if(ifp->hdr->version & BM_ID) {
                     sprintf(tempchar, "\t%s", o->entryid[j]);
-                    strcat(tempstore, tempchar);
+                    tempstore = fastStrcat(tempstore, tempchar);
                 }
                 sprintf(tempchar, "\n");
-                strcat(tempstore, tempchar);
+                tempstore = fastStrcat(tempstore, tempchar);
                 Nprint++;
                 if(Nprint>10000) {
                     if(strcmp(outformat, "txt") == 0) fprintf(outfileF,"%s",tempstore);
@@ -2773,11 +2796,15 @@ int main_view_bedfile(char *inbmF, char *bedfile, int type, FILE* outfileF, char
     int i =0, j = 0;
     
     char *chrom = malloc(100*sizeof(char)); int start=0, end=0;
-    char region[100];
-    while (fgets(region,100,BedF)!=0){
+    char region[200];
+    while (fgets(region,200,BedF)!=0){
         chrom = strtok(region, ":-");
         start = atoi(strtok(NULL,":-"));
         end = atoi(strtok(NULL,":-"));
+        if(end<start){
+            fprintf(stderr, "Warning, chromosome start bigger than end, %s %d %d", chrom, start, end);
+            continue;
+        }
         //sscanf((const char *)regions[i], "%s:%d-%d", chrom, &start, &end);
         if(DEBUG>1) fprintf(stderr, "slen %d chrom %s %d %d", i, chrom, start, end);
         o = bwGetOverlappingIntervals(ifp, chrom, start, end+1);
@@ -2885,14 +2912,18 @@ int bw_overlap_file_mul(char *inbmFs, char *bedfile){
     }
     
     FILE* Fbedfile=File_Open(bedfile,"r");
-    char *PerLine = malloc(200);
+    char *PerLine = malloc(2000);
     //int printL = 0;
     char *chrom = malloc(100*sizeof(char)); int start=0, end=0;
     char *strand = malloc(2); int pstrand = 2; //.
     int SEGlen = 1000000, nK = 0, j = 0;
-    while(fgets(PerLine,200,Fbedfile)!=NULL){
+    while(fgets(PerLine,2000,Fbedfile)!=NULL){
         if(PerLine[0] == '#') continue;
         sscanf(PerLine, "%s%d%d%s", chrom, &start, &end, strand);
+        if(end<start){
+            fprintf(stderr, "Warning, chromosome start bigger than end, %s %d %d", chrom, start, end);
+            continue;
+        }
         if(strand[0] == '+'){
             pstrand = 0;
         }else if(strand[0] == '-'){
@@ -2931,13 +2962,17 @@ int bw_overlap_file(char *inbmF1, char *inbmF2, char *bedfile){
 
     
     FILE* Fbedfile=File_Open(bedfile,"r");
-    char *PerLine = malloc(200);
+    char *PerLine = malloc(2000);
     //int printL = 0;
     char *chrom = malloc(100*sizeof(char)); int start=0, end=0;
     char *strand = malloc(2); int pstrand = 2; //.
-    while(fgets(PerLine,200,Fbedfile)!=NULL){
+    while(fgets(PerLine,2000,Fbedfile)!=NULL){
         if(PerLine[0] == '#') continue;
         sscanf(PerLine, "%s%d%d%s", chrom, &start, &end, strand);
+        if(end<start){
+            fprintf(stderr, "Warning, chromosome start bigger than end, %s %d %d", chrom, start, end);
+            continue;
+        }
         if(strand[0] == '+'){
             pstrand = 0;
         }else if(strand[0] == '-'){
@@ -3379,4 +3414,23 @@ void bwPrintIndexTree(bigWigFile_t *fp) {
     printf("idxSize:\t%"PRIu64"\n", fp->idx->idxSize);
     printf("  level\tchrIdxStart\tbaseStart\tchrIdxEnd\tbaseEnd\tchild\tsize\n");
     bwPrintIndexNode(fp->idx->root, 0);
+}
+
+char *fastStrcat(char *s, char *t)
+{
+	assert(s != NULL && t != NULL);
+
+	while (*s != '\0')
+		s++;
+
+	//while ((*s++ = *t++) != '\0');
+	while(1){
+		if(*t == '\0'){ //  || *t == '\n'  || *t == '\r'
+			*s++ = '\0';
+			break;
+		}
+		*s++ = *t++;
+	}
+
+	return --s;
 }
