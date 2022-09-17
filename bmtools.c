@@ -23,6 +23,7 @@
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>
+#include <pthread.h>
 
 FILE* File_Open(const char* File_Name,const char* Mode);
 char *strand_str[] = {"+", "-", "."};
@@ -173,6 +174,7 @@ const char* Help_String_profile="Command Format :  bmtools profile [opnions] -i 
         "\t--gff                 gff file for view, format: chrom * * start end * strand * xx=geneid.\n"
 		"\t [profile] mode paramaters, options\n"
         "\t-o                    output file [stdout]\n"
+        "\t-p                    [int] threads\n"
         "\t--regionextend        region extend for upstream and downstram, [2000]\n"
         "\t--profilestep         [double] step mean bin size for chromosome region, default: 0.02 (2%)\n"
         "\t--profilemovestep     [double] step move, default: 0.01, if no overlap, please define same as --profilestep\n"
@@ -205,6 +207,7 @@ uint8_t filter_strand = 2;
 int mincover = 0;
 int maxcover = 10000;
 int printcoverage = 0; // print countC and countCT instead of methratio
+int NTHREAD = 10;
 
 int main(int argc, char *argv[]) {
     bigWigFile_t *fp = NULL;
@@ -333,6 +336,8 @@ int main(int argc, char *argv[]) {
             strcpy(filterchrom, argv[++i]);
         }else if(strcmp(argv[i], "--stepmove") == 0){
             stepoverlap = atoi(argv[++i]);
+        }else if(strcmp(argv[i], "-p") == 0){
+            NTHREAD = atoi(argv[++i]);
         }else if(strcmp(argv[i], "--profilestep") == 0){
             profilestep = atof(argv[++i]);
             assert(profilestep>0 && profilestep<1);
@@ -368,7 +373,7 @@ int main(int argc, char *argv[]) {
             bedfile = malloc(100);
             strcpy(bedfile, argv[++i]);
         }else if(strcmp(argv[i], "--gtf") == 0){
-            gfffile = malloc(100);
+            gtffile = malloc(100);
             strcpy(gtffile, argv[++i]);
         }else if(strcmp(argv[i], "--gff") == 0){
             gfffile = malloc(100);
@@ -1085,9 +1090,8 @@ int main(int argc, char *argv[]) {
             fprintf(stderr, "\nplease provide -r, --bed, --gtf or --gff!!!\n");
         }
         
-        fclose(outfp);
+        fclose(outfp); fclose(outfp_aver);
         if(outfile && print2one == 0) { fclose(outfp_cg); fclose(outfp_chg); fclose(outfp_chh); }
-        fclose(outfp_aver); 
         if(outfile) free(outfile);
         return 0;
     }
@@ -1277,9 +1281,252 @@ void getcontext(uint8_t context, char* str_context){
     else strcpy(str_context, "Cx");
 }
 
-void profile_print_array(double *finalstats, int *finalcounts, bigWigFile_t *fp, char *chrom, int start, int end, int splitN, double profilemovestep, char *method, uint8_t strand, char* geneid, uint8_t context, FILE* outfileF){
-    double *stats = Sregionstats_array(fp, chrom, start, end, splitN, (int)((end-start)*profilemovestep), "weighted", strand);
-    int i,j,k; int Tsize = 4; int total_splitN = splitN*Tsize;
+double *finalstats;
+int *finalcounts;
+FILE* outfileF;
+
+typedef struct {
+    bigWigFile_t *fp;
+    char *chrom;
+    int start;
+    int end;
+    int splitN;
+    double profilemovestep;
+    double bodyprofilemovestep;
+    char *method;
+    uint8_t strand;
+    char* geneid;
+    uint8_t context;
+    int processtart;
+    int processend;
+    int bodysplitN;
+    int matrixX;
+    char* printbuffer_c;
+    char* printbuffer_cg;
+    char* printbuffer_chg;
+    char* printbuffer_chh;
+} ProfileARGS;
+
+void profile_print_array(void *arg){
+    int stored_buffer = 0;
+    char* chrom = ((ProfileARGS*)arg)->chrom;
+    int start = ((ProfileARGS*)arg)->start;
+    int end = ((ProfileARGS*)arg)->end;
+    int splitN = ((ProfileARGS*)arg)->splitN;
+    double profilemovestep = ((ProfileARGS*)arg)->profilemovestep;
+    char* method = ((ProfileARGS*)arg)->method;
+    char* geneid = ((ProfileARGS*)arg)->geneid;
+    uint8_t strand = ((ProfileARGS*)arg)->strand;
+    uint8_t context = ((ProfileARGS*)arg)->context;
+    int bodysplitN = ((ProfileARGS*)arg)->bodysplitN;
+    int processtart = ((ProfileARGS*)arg)->processtart;
+    int processend = ((ProfileARGS*)arg)->processend;
+    double bodyprofilemovestep = ((ProfileARGS*)arg)->bodyprofilemovestep;
+    int matrixX = ((ProfileARGS*)arg)->matrixX;
+    char* printbuffer_c = ((ProfileARGS*)arg)->printbuffer_c;
+    char* printbuffer_cg = ((ProfileARGS*)arg)->printbuffer_cg;
+    char* printbuffer_chg = ((ProfileARGS*)arg)->printbuffer_chg;
+    char* printbuffer_chh = ((ProfileARGS*)arg)->printbuffer_chh;
+
+    //fprintf(stderr, "%s %d %d\n", chrom, start, end);
+    
+    double *stats_up = Sregionstats_array(((ProfileARGS*)arg)->fp, chrom, processtart, start, splitN, (int)((start-processtart)*profilemovestep), "weighted", strand);
+    double *stats_body = Sregionstats_array(((ProfileARGS*)arg)->fp, chrom, start, end, bodysplitN, (int)((end-start)*bodyprofilemovestep), "weighted", strand);
+    double *stats_down = Sregionstats_array(((ProfileARGS*)arg)->fp, chrom, end, processend, splitN, (int)((processend-end)*profilemovestep), "weighted", strand);
+    int i,j,k,m; int Tsize = 4;
+    int total_splitN_flank = splitN*Tsize;
+    int total_splitN_body = bodysplitN*Tsize;
+    //fprintf(stderr, "size %d %d\n", total_splitN_flank, total_splitN_body);
+    int valid = 0;
+    double *stats = malloc(sizeof(double)*(total_splitN_flank*2+total_splitN_body));
+    if(stats_up && stats_body && stats_down){
+        for(i=0;i<total_splitN_flank;i++){
+            if(!isnan(stats_up[i])) {
+                valid = 1;
+                break;
+            }
+            if(!isnan(stats_down[i])) {
+                valid = 1;
+                break;
+            }
+        }
+        for(i=0;i<total_splitN_body;i++){
+            if(!isnan(stats_body[i])) {
+                valid = 1;
+                break;
+            }
+        }
+    }
+    if(stats_up && stats_body && stats_down){
+        for(i=0;i<total_splitN_flank;i++){
+            stats[i] = stats_up[i];
+            stats[i+total_splitN_flank+total_splitN_body] = stats_down[i];
+        }
+        for(i=0;i<total_splitN_body;i++){
+            stats[i+total_splitN_flank] = stats_body[i];
+            //strtod("NaN", NULL);
+        }
+    }
+    
+    if(valid == 0) return;
+    stored_buffer++;
+    int total_splitN = total_splitN_flank*2+total_splitN_body;
+    char* print_context = malloc(sizeof(char)*5);
+    char* storetemp = malloc(sizeof(char)*100);
+    float meth = 0; int mcount = 0;
+    if(stats) {
+        if(strand == 1) {// -
+            for(j=total_splitN-Tsize, k=0; j<total_splitN; j++,k++){
+                if(!(context>=4 || k==context)){
+                    continue;
+                }
+                //getcontext(k, print_context);
+                if(geneid[0]) sprintf(storetemp, "%s:%d-%d-%s", chrom, start, end, geneid);
+                else sprintf(storetemp, "%s:%d-%d", chrom, start, end);
+                if(k==0) printbuffer_c = fastStrcat(printbuffer_c, storetemp);
+                else if(k==1) printbuffer_cg = fastStrcat(printbuffer_cg, storetemp);
+                else if(k==2) printbuffer_chg = fastStrcat(printbuffer_chg, storetemp);
+                else if(k==3) printbuffer_chh = fastStrcat(printbuffer_chh, storetemp);
+                //store for average mr
+                if(splitN>1){
+                    for(i=j;i>=Tsize*(matrixX-1);){ //j-Tsize
+                        meth = 0, mcount = 0;
+                        for(m=0;m<matrixX;m++){
+                            //fprintf(stderr, "%d, %d, %d %d %d\n", strand, i, total_splitN, j-i+m*Tsize+k, i-m*Tsize);
+                            if(!isnan(stats[i-m*Tsize])) {
+                                meth+=stats[i-m*Tsize];
+                                mcount++;
+
+                                finalstats[j-i+m*Tsize+k] += stats[i-m*Tsize];
+                                finalcounts[j-i+m*Tsize+k]++;
+                            }
+                        }
+                        if(mcount>0) sprintf(storetemp, "\t%.4lf", meth/mcount);
+                        else strcpy(storetemp, "\tnan");
+                        if(k==0) printbuffer_c = fastStrcat(printbuffer_c, storetemp);
+                        else if(k==1) printbuffer_cg = fastStrcat(printbuffer_cg, storetemp);
+                        else if(k==2) printbuffer_chg = fastStrcat(printbuffer_chg, storetemp);
+                        else if(k==3) printbuffer_chh = fastStrcat(printbuffer_chh, storetemp);
+
+                        i=i-Tsize*matrixX;
+                    }
+                    // i >= 0
+                    meth = 0, mcount = 0;
+                    for(;i>=0;){
+                        if(!isnan(stats[i])) {
+                            meth+=stats[i];
+                            mcount++;
+
+                            finalstats[j+k-i] += stats[i];
+                            finalcounts[j+k-i]++;
+                        }
+                        i=i-Tsize;
+                    }
+                    if(mcount>0) sprintf(storetemp, "\t%.4lf", meth/mcount);
+                    else strcpy(storetemp, "\tnan");
+                    if(k==0) printbuffer_c = fastStrcat(printbuffer_c, storetemp);
+                    else if(k==1) printbuffer_cg = fastStrcat(printbuffer_cg, storetemp);
+                    else if(k==2) printbuffer_chg = fastStrcat(printbuffer_chg, storetemp);
+                    else if(k==3) printbuffer_chh = fastStrcat(printbuffer_chh, storetemp);
+                }
+                sprintf(storetemp, "\n");
+                if(k==0) printbuffer_c = fastStrcat(printbuffer_c, storetemp);
+                else if(k==1) printbuffer_cg = fastStrcat(printbuffer_cg, storetemp);
+                else if(k==2) printbuffer_chg = fastStrcat(printbuffer_chg, storetemp);
+                else if(k==3) printbuffer_chh = fastStrcat(printbuffer_chh, storetemp);
+            }
+        }else{ //+
+            //0 C
+            for(j=0; j<Tsize; j++){
+                if(!(context>=4 || j==context)){
+                    continue;
+                }
+                //getcontext(j, print_context);
+                if(geneid[0]) sprintf(storetemp, "%s:%d-%d-%s", chrom, start, end, geneid);
+                else sprintf(storetemp, "%s:%d-%d", chrom, start, end);
+                if(j==0) printbuffer_c = fastStrcat(printbuffer_c, storetemp);
+                else if(j==1) printbuffer_cg = fastStrcat(printbuffer_cg, storetemp);
+                else if(j==2) printbuffer_chg = fastStrcat(printbuffer_chg, storetemp);
+                else if(j==3) printbuffer_chh = fastStrcat(printbuffer_chh, storetemp);
+                if(splitN>1){
+                    for(i=j;i<total_splitN-Tsize*(matrixX-1);){//j+Tsize
+                        meth = 0, mcount = 0;
+                        for(m=0;m<matrixX;m++){
+                            //fprintf(stderr, "%d %d %d\n", strand, i+m*Tsize, m);
+                            if(!isnan(stats[i+m*Tsize])) {
+                                meth+=stats[i+m*Tsize];
+                                mcount++;
+
+                                finalstats[i+m*Tsize] += stats[i+m*Tsize];
+                                finalcounts[i+m*Tsize]++;
+                            }
+                        }
+                        if(mcount>0) sprintf(storetemp, "\t%.4lf", meth/mcount);
+                        else strcpy(storetemp, "\tnan");
+                        if(j==0) printbuffer_c = fastStrcat(printbuffer_c, storetemp);
+                        else if(j==1) printbuffer_cg = fastStrcat(printbuffer_cg, storetemp);
+                        else if(j==2) printbuffer_chg = fastStrcat(printbuffer_chg, storetemp);
+                        else if(j==3) printbuffer_chh = fastStrcat(printbuffer_chh, storetemp);
+
+                        i+=Tsize*matrixX;
+                    }
+                    // i < total_splitN
+                    meth = 0, mcount = 0;
+                    for(;i<total_splitN;){
+                        if(!isnan(stats[i])) {
+                            meth+=stats[i];
+                            mcount++;
+
+                            finalstats[i] += stats[i];
+                            finalcounts[i]++;
+                        }
+                        i=i+Tsize;
+                    }
+                    if(mcount>0) sprintf(storetemp, "\t%.4lf", meth/mcount);
+                    else strcpy(storetemp, "\tnan");
+                    if(j==0) printbuffer_c = fastStrcat(printbuffer_c, storetemp);
+                    else if(j==1) printbuffer_cg = fastStrcat(printbuffer_cg, storetemp);
+                    else if(j==2) printbuffer_chg = fastStrcat(printbuffer_chg, storetemp);
+                    else if(j==3) printbuffer_chh = fastStrcat(printbuffer_chh, storetemp);
+                }
+                sprintf(storetemp, "\n");
+                if(j==0) printbuffer_c = fastStrcat(printbuffer_c, storetemp);
+                else if(j==1) printbuffer_cg = fastStrcat(printbuffer_cg, storetemp);
+                else if(j==2) printbuffer_chg = fastStrcat(printbuffer_chg, storetemp);
+                else if(j==3) printbuffer_chh = fastStrcat(printbuffer_chh, storetemp);
+            }
+        }
+    }
+    //fprintf(stderr, "%s %d\n", printbuffer, strlen(printbuffer));
+    free(print_context);
+    free(storetemp);
+    return;
+}
+
+void profile_print_array_mp(void *arg){
+    int stored_buffer = 0;
+    char* chrom = ((ProfileARGS*)arg)->chrom;
+    //int start = ((ProfileARGS*)arg)->start;
+    //int end = ((ProfileARGS*)arg)->end;
+    int splitN = ((ProfileARGS*)arg)->splitN;
+    double profilemovestep = ((ProfileARGS*)arg)->profilemovestep;
+    char* method = ((ProfileARGS*)arg)->method;
+    char* geneid = ((ProfileARGS*)arg)->geneid;
+    uint8_t strand = ((ProfileARGS*)arg)->strand;
+    uint8_t context = ((ProfileARGS*)arg)->context;
+    int bodysplitN = ((ProfileARGS*)arg)->bodysplitN;
+    int processtart = ((ProfileARGS*)arg)->processtart;
+    int processend = ((ProfileARGS*)arg)->processend;
+    double bodyprofilemovestep = ((ProfileARGS*)arg)->bodyprofilemovestep;
+    int matrixX = ((ProfileARGS*)arg)->matrixX;
+    char* printbuffer_c = ((ProfileARGS*)arg)->printbuffer_c;
+    char* printbuffer_cg = ((ProfileARGS*)arg)->printbuffer_cg;
+    char* printbuffer_chg = ((ProfileARGS*)arg)->printbuffer_chg;
+    char* printbuffer_chh = ((ProfileARGS*)arg)->printbuffer_chh;
+
+    double *stats = Sregionstats_array(((ProfileARGS*)arg)->fp, chrom, processtart, processend, splitN, (int)((processend-processtart)*profilemovestep), "weighted", strand);
+    int i,j,k,m; int Tsize = 4;
+    int total_splitN = splitN*Tsize;
     int valid = 0;
     if(stats){
         for(i=0;i<total_splitN;i++){
@@ -1289,63 +1536,142 @@ void profile_print_array(double *finalstats, int *finalcounts, bigWigFile_t *fp,
             }
         }
     }
+
     if(valid == 0) return;
+    stored_buffer++;
     char* print_context = malloc(sizeof(char)*5);
+    char* storetemp = malloc(sizeof(char)*100);
+    float meth = 0; int mcount = 0;
     if(stats) {
         if(strand == 1) {// -
             for(j=total_splitN-Tsize, k=0; j<total_splitN; j++,k++){
                 if(!(context>=4 || k==context)){
                     continue;
                 }
-                getcontext(k, print_context);
-                if(geneid[0]) fprintf(outfileF, "%s:%d-%d-%s\t%s\t%f", chrom, start, end, geneid, print_context, stats[j]);
-                else fprintf(outfileF, "%s:%d-%d\t%s\t%f", chrom, start, end, print_context, stats[j]);
+                //getcontext(k, print_context);
+                if(geneid[0]) sprintf(storetemp, "%s:%d-%d-%s", chrom, processtart, processend, geneid);
+                else sprintf(storetemp, "%s:%d-%d", chrom, processtart, processend);
+                if(k==0) printbuffer_c = fastStrcat(printbuffer_c, storetemp);
+                else if(k==1) printbuffer_cg = fastStrcat(printbuffer_cg, storetemp);
+                else if(k==2) printbuffer_chg = fastStrcat(printbuffer_chg, storetemp);
+                else if(k==3) printbuffer_chh = fastStrcat(printbuffer_chh, storetemp);
                 //store for average mr
-                if(!isnan(stats[j])) {
-                    finalstats[k] += stats[j];
-                    finalcounts[k]++;
-                }
                 if(splitN>1){
-                    for(i=j-Tsize;i>=0;){
-                        fprintf(outfileF, "\t%f", stats[i]);
+                    for(i=j;i>=Tsize*(matrixX-1);){ //j-Tsize
+                        meth = 0, mcount = 0;
+                        for(m=0;m<matrixX;m++){
+                            //fprintf(stderr, "%d, %d, %d %d %d\n", strand, i, total_splitN, j-i+m*Tsize+k, i-m*Tsize);
+                            if(!isnan(stats[i-m*Tsize])) {
+                                meth+=stats[i-m*Tsize];
+                                mcount++;
+
+                                finalstats[j-i+m*Tsize+k] += stats[i-m*Tsize];
+                                finalcounts[j-i+m*Tsize+k]++;
+                            }
+                        }
+                        if(mcount>0) sprintf(storetemp, "\t%.4lf", meth/mcount);
+                        else strcpy(storetemp, "\tnan");
+                        if(k==0) printbuffer_c = fastStrcat(printbuffer_c, storetemp);
+                        else if(k==1) printbuffer_cg = fastStrcat(printbuffer_cg, storetemp);
+                        else if(k==2) printbuffer_chg = fastStrcat(printbuffer_chg, storetemp);
+                        else if(k==3) printbuffer_chh = fastStrcat(printbuffer_chh, storetemp);
+
+                        i=i-Tsize*matrixX;
+                    }
+                    // i >= 0
+                    meth = 0, mcount = 0;
+                    for(;i>=0;){
                         if(!isnan(stats[i])) {
-                            finalstats[total_splitN-i] += stats[i];
-                            finalcounts[total_splitN-i]++;
+                            meth+=stats[i];
+                            mcount++;
+
+                            finalstats[j+k-i] += stats[i];
+                            finalcounts[j+k-i]++;
                         }
                         i=i-Tsize;
                     }
+                    if(mcount>0) sprintf(storetemp, "\t%.4lf", meth/mcount);
+                    else strcpy(storetemp, "\tnan");
+                    if(k==0) printbuffer_c = fastStrcat(printbuffer_c, storetemp);
+                    else if(k==1) printbuffer_cg = fastStrcat(printbuffer_cg, storetemp);
+                    else if(k==2) printbuffer_chg = fastStrcat(printbuffer_chg, storetemp);
+                    else if(k==3) printbuffer_chh = fastStrcat(printbuffer_chh, storetemp);
+
                 }
-                fprintf(outfileF, "\n");
+                sprintf(storetemp, "\n");
+                if(k==0) printbuffer_c = fastStrcat(printbuffer_c, storetemp);
+                else if(k==1) printbuffer_cg = fastStrcat(printbuffer_cg, storetemp);
+                else if(k==2) printbuffer_chg = fastStrcat(printbuffer_chg, storetemp);
+                else if(k==3) printbuffer_chh = fastStrcat(printbuffer_chh, storetemp);
             }
-        }else{
+        }else{ //+
             //0 C
             for(j=0; j<Tsize; j++){
                 if(!(context>=4 || j==context)){
                     continue;
                 }
-                getcontext(j, print_context);
-                if(geneid[0]) fprintf(outfileF, "%s:%d-%d-%s\t%s\t%f", chrom, start, end, geneid, print_context, stats[j]);
-                else fprintf(outfileF, "%s:%d-%d\t%s\t%f", chrom, start, end, print_context, stats[j]);
-                if(!isnan(stats[j])) {
-                    finalstats[j] += stats[j];
-                    finalcounts[j]++;
-                }
+                //getcontext(j, print_context);
+                if(geneid[0]) sprintf(storetemp, "%s:%d-%d-%s", chrom, processtart, processend, geneid);
+                else sprintf(storetemp, "%s:%d-%d", chrom, processtart, processend);
+                if(j==0) printbuffer_c = fastStrcat(printbuffer_c, storetemp);
+                else if(j==1) printbuffer_cg = fastStrcat(printbuffer_cg, storetemp);
+                else if(j==2) printbuffer_chg = fastStrcat(printbuffer_chg, storetemp);
+                else if(j==3) printbuffer_chh = fastStrcat(printbuffer_chh, storetemp);
                 if(splitN>1){
-                    for(i=j+Tsize;i<total_splitN;){
-                        fprintf(outfileF, "\t%f", stats[i]);
+                    for(i=j;i<total_splitN-Tsize*(matrixX-1);){//j+Tsize
+                        meth = 0, mcount = 0;
+                        for(m=0;m<matrixX;m++){
+                            //fprintf(stderr, "%d %d %d\n", strand, i+m*Tsize, m);
+                            if(!isnan(stats[i+m*Tsize])) {
+                                meth+=stats[i+m*Tsize];
+                                mcount++;
+
+                                finalstats[i+m*Tsize] += stats[i+m*Tsize];
+                                finalcounts[i+m*Tsize]++;
+                            }
+                        }
+                        if(mcount>0) sprintf(storetemp, "\t%.4lf", meth/mcount);
+                        else strcpy(storetemp, "\tnan");
+                        if(j==0) printbuffer_c = fastStrcat(printbuffer_c, storetemp);
+                        else if(j==1) printbuffer_cg = fastStrcat(printbuffer_cg, storetemp);
+                        else if(j==2) printbuffer_chg = fastStrcat(printbuffer_chg, storetemp);
+                        else if(j==3) printbuffer_chh = fastStrcat(printbuffer_chh, storetemp);
+
+                        i+=Tsize*matrixX;
+                    }
+                    // i < total_splitN
+                    meth = 0, mcount = 0;
+                    for(;i<total_splitN;){
                         if(!isnan(stats[i])) {
+                            meth+=stats[i];
+                            mcount++;
+
                             finalstats[i] += stats[i];
                             finalcounts[i]++;
                         }
-                        i+=Tsize;
+                        i=i+Tsize;
                     }
+                    if(mcount>0) sprintf(storetemp, "\t%.4lf", meth/mcount);
+                    else strcpy(storetemp, "\tnan");
+                    if(j==0) printbuffer_c = fastStrcat(printbuffer_c, storetemp);
+                    else if(j==1) printbuffer_cg = fastStrcat(printbuffer_cg, storetemp);
+                    else if(j==2) printbuffer_chg = fastStrcat(printbuffer_chg, storetemp);
+                    else if(j==3) printbuffer_chh = fastStrcat(printbuffer_chh, storetemp);
+
                 }
-                fprintf(outfileF, "\n");
+                sprintf(storetemp, "\n");
+                if(j==0) printbuffer_c = fastStrcat(printbuffer_c, storetemp);
+                else if(j==1) printbuffer_cg = fastStrcat(printbuffer_cg, storetemp);
+                else if(j==2) printbuffer_chg = fastStrcat(printbuffer_chg, storetemp);
+                else if(j==3) printbuffer_chh = fastStrcat(printbuffer_chh, storetemp);
             }
         }
     }
+    //fprintf(stderr, "%s %d\n", printbuffer, strlen(printbuffer));
     free(print_context);
+    free(storetemp);
 }
+
 uint32_t stored_buffer = 0;
 void profile_print_array_buffer(double *finalstats, int *finalcounts, bigWigFile_t *fp, char *chrom, int processtart, int start, int end, int processend, int splitN, int bodysplitN, double profilemovestep, double bodyprofilemovestep, char *method, uint8_t strand, char* geneid, uint8_t context, char* printbuffer_c, char* printbuffer_cg, char* printbuffer_chg, char* printbuffer_chh, int matrixX){
     double *stats_up = Sregionstats_array(fp, chrom, processtart, start, splitN, (int)((start-processtart)*profilemovestep), "weighted", strand);
@@ -1680,7 +2006,8 @@ int calprofile_gtf(char *inbmfile, int upstream, int downstream, double profiles
     char *PerLine = malloc(2000);
     //int printL = 0;
     char *chrom = malloc(100*sizeof(char));
-    char *strand = malloc(2); int pstrand = 2; //.
+    char *strand = malloc(2); 
+    int pstrand = 2; //.
     char *geneid = malloc(100*sizeof(char));
     int splitN = 1, i =0;
     splitN = ceil(1.0/profilestep); //*3
@@ -1694,18 +2021,41 @@ int calprofile_gtf(char *inbmfile, int upstream, int downstream, double profiles
     }
     //aver
     int Tsize = 4;
-    double *finalstats = calloc(Total_splitN*Tsize, sizeof(double));
-    int *finalcounts = calloc(Total_splitN*Tsize, sizeof(int));
+    finalstats = calloc(Total_splitN*Tsize, sizeof(double));
+    finalcounts = calloc(Total_splitN*Tsize, sizeof(int));
     int start=0, end=0, middle = 0, processtart = 0, processend = 0;
-    char* storebuffer_c = malloc(sizeof(char)*MAX_BUFF_PRINT);
-    char* storebuffer_cg = malloc(sizeof(char)*MAX_BUFF_PRINT);
-    char* storebuffer_chg = malloc(sizeof(char)*MAX_BUFF_PRINT);
-    char* storebuffer_chh = malloc(sizeof(char)*MAX_BUFF_PRINT);
-    //char *storebuffer_c_tmp = storebuffer_c;
-    //char *storebuffer_cg_tmp = storebuffer_cg;
-    //char *storebuffer_chg_tmp = storebuffer_chg;
-    //char *storebuffer_chh_tmp = storebuffer_chh;
+    //char* storebuffer_c = malloc(sizeof(char)*MAX_BUFF_PRINT);
+    //char* storebuffer_cg = malloc(sizeof(char)*MAX_BUFF_PRINT);
+    //char* storebuffer_chg = malloc(sizeof(char)*MAX_BUFF_PRINT);
+    //char* storebuffer_chh = malloc(sizeof(char)*MAX_BUFF_PRINT);
     uint32_t Nprocess = 0;
+    //NTHREAD = 10
+    int prothreads = 0, ithread = 0;
+    ProfileARGS *profileArgs = malloc(sizeof(ProfileARGS)*NTHREAD);
+    //bigWigFile_t **fps = malloc(sizeof(bigWigFile_t*)*NTHREAD);
+    for(ithread=0; ithread<NTHREAD; ithread++){
+        if(profilemode>0){
+            profileArgs[ithread].splitN = splitN*2;
+        }else{
+            profileArgs[ithread].splitN = splitN;
+        }
+        profileArgs[ithread].bodysplitN = bodysplitN;
+        profileArgs[ithread].bodyprofilemovestep = bodyprofilemovestep;
+        profileArgs[ithread].profilemovestep = profilemovestep;
+        profileArgs[ithread].matrixX = matrixX;
+        profileArgs[ithread].method = "weighted";
+        profileArgs[ithread].fp = NULL;
+        profileArgs[ithread].fp = bwOpen(inbmfile, NULL, "r");
+        profileArgs[ithread].fp->type = profileArgs[ithread].fp->hdr->version;
+        profileArgs[ithread].printbuffer_c = malloc(sizeof(char)*MAX_BUFF_PRINT);
+        profileArgs[ithread].printbuffer_cg = malloc(sizeof(char)*MAX_BUFF_PRINT);
+        profileArgs[ithread].printbuffer_chg = malloc(sizeof(char)*MAX_BUFF_PRINT);
+        profileArgs[ithread].printbuffer_chh = malloc(sizeof(char)*MAX_BUFF_PRINT);
+        profileArgs[ithread].geneid = malloc(100*sizeof(char));
+        profileArgs[ithread].chrom = malloc(100*sizeof(char));
+    }
+    pthread_t* Threads=(pthread_t*) malloc(sizeof(pthread_t)*NTHREAD);
+
     while(fgets(PerLine,2000,Fgtffile)!=NULL){
         if(PerLine[0] == '#') continue;
         if(format == 1){
@@ -1729,26 +2079,34 @@ int calprofile_gtf(char *inbmfile, int upstream, int downstream, double profiles
         }else{
             pstrand = 2;
         }
+
+        strcpy(profileArgs[prothreads].chrom, chrom);
+        profileArgs[prothreads].start = start;
+        profileArgs[prothreads].end = end;
+        profileArgs[prothreads].strand = pstrand;
+        strcpy(profileArgs[prothreads].geneid, geneid);
+        profileArgs[prothreads].context = context;
         if(profilemode == 0){ // gene flanks mode
             if(start > upstream) processtart = start-upstream;
             else processtart = 0;
             processend = end+downstream;
-            profile_print_array_buffer(finalstats, finalcounts, fp, chrom, processtart, start, end, processend, splitN, bodysplitN, profilemovestep, bodyprofilemovestep, "weighted", pstrand, geneid, context, storebuffer_c, storebuffer_cg, storebuffer_chg, storebuffer_chh, matrixX);
-            if(stored_buffer>MAX_BUFF_PRINT/10000){
-                fprintf(outfileF_c,"%s",storebuffer_c);
-                storebuffer_c[0] = '\0';
-                fprintf(outfileF_cg,"%s",storebuffer_cg);
-                storebuffer_cg[0] = '\0';
-                fprintf(outfileF_chg,"%s",storebuffer_chg);
-                storebuffer_chg[0] = '\0';
-                fprintf(outfileF_chh,"%s",storebuffer_chh);
-                storebuffer_chh[0] = '\0';
-                stored_buffer = 0;
-                //storebuffer_c_tmp = storebuffer_c;
-                //storebuffer_cg_tmp = storebuffer_cg;
-                //storebuffer_chg_tmp = storebuffer_chg;
-                //storebuffer_chh_tmp = storebuffer_chh;
+            profileArgs[prothreads].processtart = processtart;
+            profileArgs[prothreads].processend = processend;
+            
+            //fprintf(stderr, "TT %s %d %d %d\n", chrom, start, end, prothreads);
+            //profile_print_array(&profileArgs);
+            int r=pthread_create(&Threads[prothreads],NULL,profile_print_array,(void*) &profileArgs[prothreads]);
+            if(r) {printf("Launch_Threads():Cannot create thread..\n");exit(-1);}
+            
+            prothreads++;
+            if(prothreads>=NTHREAD){
+                for (ithread=0;ithread<NTHREAD;ithread++)
+                {
+                    pthread_join(Threads[ithread],NULL);
+                }
+                prothreads = 0;
             }
+            //profile_print_array_buffer(finalstats, finalcounts, fp, chrom, processtart, start, end, processend, splitN, bodysplitN, profilemovestep, bodyprofilemovestep, "weighted", pstrand, geneid, context, storebuffer_c, storebuffer_cg, storebuffer_chg, storebuffer_chh, matrixX);
         }else if(profilemode == 1) { // gene tss mode
             if(strand[0] == '+' || strand[0] == '.') {
                 if(start > upstream) processtart = start- upstream;
@@ -1759,18 +2117,7 @@ int calprofile_gtf(char *inbmfile, int upstream, int downstream, double profiles
                 else processtart = 0;
                 processend = end+downstream;
             }
-            profile_print_array_buffer1(finalstats, finalcounts, fp, chrom, processtart, processend, splitN*2, profilemovestep, "weighted", pstrand, geneid, context, storebuffer_c, storebuffer_cg, storebuffer_chg, storebuffer_chh, matrixX);
-            if(stored_buffer>MAX_BUFF_PRINT/10000){
-                fprintf(outfileF_c,"%s",storebuffer_c);
-                storebuffer_c[0] = '\0';
-                fprintf(outfileF_cg,"%s",storebuffer_cg);
-                storebuffer_cg[0] = '\0';
-                fprintf(outfileF_chg,"%s",storebuffer_chg);
-                storebuffer_chg[0] = '\0';
-                fprintf(outfileF_chh,"%s",storebuffer_chh);
-                storebuffer_chh[0] = '\0';
-                stored_buffer = 0;
-            }
+            //profile_print_array_buffer1(finalstats, finalcounts, fp, chrom, processtart, processend, splitN*2, profilemovestep, "weighted", pstrand, geneid, context, storebuffer_c, storebuffer_cg, storebuffer_chg, storebuffer_chh, matrixX);
         }else if(profilemode == 2) { // gene tts mode
             if(strand[0] == '+' || strand[0] == '.') {
                 if(end > upstream) processtart = end - upstream;
@@ -1781,47 +2128,46 @@ int calprofile_gtf(char *inbmfile, int upstream, int downstream, double profiles
                 else processtart = 0;
                 processend = start+downstream;
             }
-            profile_print_array_buffer1(finalstats, finalcounts, fp, chrom, processtart, processend, splitN*2, profilemovestep, "weighted", pstrand, geneid, context, storebuffer_c, storebuffer_cg, storebuffer_chg, storebuffer_chh, matrixX);
-            if(stored_buffer>MAX_BUFF_PRINT/10000){
-                fprintf(outfileF_c,"%s",storebuffer_c);
-                storebuffer_c[0] = '\0';
-                fprintf(outfileF_cg,"%s",storebuffer_cg);
-                storebuffer_cg[0] = '\0';
-                fprintf(outfileF_chg,"%s",storebuffer_chg);
-                storebuffer_chg[0] = '\0';
-                fprintf(outfileF_chh,"%s",storebuffer_chh);
-                storebuffer_chh[0] = '\0';
-                stored_buffer = 0;
-            }
+            //profile_print_array_buffer1(finalstats, finalcounts, fp, chrom, processtart, processend, splitN*2, profilemovestep, "weighted", pstrand, geneid, context, storebuffer_c, storebuffer_cg, storebuffer_chg, storebuffer_chh, matrixX);
         }else if(profilemode == 3){ //center mode
             middle = (int)((start+end)/2);
             if(middle>upstream) processtart = middle - upstream;
             else processtart = 0;
             processend = middle + downstream;
-            profile_print_array_buffer1(finalstats, finalcounts, fp, chrom, processtart, processend, splitN*2, profilemovestep, "weighted", pstrand, geneid, context, storebuffer_c, storebuffer_cg, storebuffer_chg, storebuffer_chh, matrixX);
-            if(stored_buffer>MAX_BUFF_PRINT/10000){
-                fprintf(outfileF_c,"%s",storebuffer_c);
-                storebuffer_c[0] = '\0';
-                fprintf(outfileF_cg,"%s",storebuffer_cg);
-                storebuffer_cg[0] = '\0';
-                fprintf(outfileF_chg,"%s",storebuffer_chg);
-                storebuffer_chg[0] = '\0';
-                fprintf(outfileF_chh,"%s",storebuffer_chh);
-                storebuffer_chh[0] = '\0';
-                stored_buffer = 0;
+            //profile_print_array_buffer1(finalstats, finalcounts, fp, chrom, processtart, processend, splitN*2, profilemovestep, "weighted", pstrand, geneid, context, storebuffer_c, storebuffer_cg, storebuffer_chg, storebuffer_chh, matrixX);
+        }
+        if(profilemode>0){
+            profileArgs[prothreads].processtart = processtart;
+            profileArgs[prothreads].processend = processend;
+
+            //fprintf(stderr, "TT %s %d %d %d\n", chrom, start, end, prothreads);
+            int r=pthread_create(&Threads[prothreads],NULL,profile_print_array_mp,(void*) &profileArgs[prothreads]);
+            if(r) {printf("Launch_Threads():Cannot create thread..\n");exit(-1);}
+            
+            prothreads++;
+            if(prothreads>=NTHREAD){
+                for (ithread=0;ithread<NTHREAD;ithread++)
+                {
+                    pthread_join(Threads[ithread],NULL);
+                }
+                prothreads = 0;
             }
+        }
+        // print result
+        for (ithread=0;ithread<NTHREAD;ithread++)
+        {
+            fprintf(outfileF_c,"%s",profileArgs[ithread].printbuffer_c);
+            profileArgs[ithread].printbuffer_c[0] = '\0';
+            fprintf(outfileF_cg,"%s",profileArgs[ithread].printbuffer_cg);
+            profileArgs[ithread].printbuffer_cg[0] = '\0';
+            fprintf(outfileF_chg,"%s",profileArgs[ithread].printbuffer_chg);
+            profileArgs[ithread].printbuffer_chg[0] = '\0';
+            fprintf(outfileF_chh,"%s",profileArgs[ithread].printbuffer_chh);
+            profileArgs[ithread].printbuffer_chh[0] = '\0';
+            stored_buffer = 0;
         }
     }
 
-    //print last buffer gtf
-    if(stored_buffer>0){
-        fprintf(stderr, "print last buffer matrix\n");
-        fprintf(outfileF_c,"%s",storebuffer_c);
-        fprintf(outfileF_cg,"%s",storebuffer_cg);
-        fprintf(outfileF_chg,"%s",storebuffer_chg);
-        fprintf(outfileF_chh,"%s",storebuffer_chh);
-        free(storebuffer_c); free(storebuffer_cg); free(storebuffer_chg); free(storebuffer_chh);
-    }
     fprintf(stderr, "print aver matrix\n");
     //print aver
     char* print_context = malloc(sizeof(char)*5);
@@ -1848,7 +2194,18 @@ int calprofile_gtf(char *inbmfile, int upstream, int downstream, double profiles
     fclose(Fgtffile);
     free(chrom); free(PerLine); free(strand); free(geneid); 
     bwClose(fp);
+    for(ithread=0; ithread<NTHREAD; ithread++){
+        //bwClose(profileArgs[ithread].fp);
+        free(profileArgs[ithread].printbuffer_c);
+        free(profileArgs[ithread].printbuffer_cg);
+        free(profileArgs[ithread].printbuffer_chg);
+        free(profileArgs[ithread].printbuffer_chh);
+        free(profileArgs[ithread].geneid);
+        free(profileArgs[ithread].chrom);
+    }
+    free(profileArgs);
     bwCleanup();
+    fprintf(stderr, "done free!\n");
 }
 
 int calprofile(char *inbmfile, int upstream, int downstream, double profilestep, double profilemovestep, double bodyprofilestep, double bodyprofilemovestep, char *bedfile, uint8_t context, FILE* outfileF_c, FILE* outfileF_cg, FILE* outfileF_chg, FILE* outfileF_chh, FILE* outfileF_aver, int profilemode, int matrixX){
@@ -1875,14 +2232,37 @@ int calprofile(char *inbmfile, int upstream, int downstream, double profilestep,
     }
     //aver
     int Tsize = 4;
-    double *finalstats = calloc(Total_splitN*Tsize, sizeof(double));
-    int *finalcounts = calloc(Total_splitN*Tsize, sizeof(int));
+    finalstats = calloc(Total_splitN*Tsize, sizeof(double));
+    finalcounts = calloc(Total_splitN*Tsize, sizeof(int));
     int start=0, end=0, middle = 0, processtart = 0, processend = 0;
-    char* storebuffer_c = malloc(sizeof(char)*MAX_BUFF_PRINT);
-    char* storebuffer_cg = malloc(sizeof(char)*MAX_BUFF_PRINT);
-    char* storebuffer_chg = malloc(sizeof(char)*MAX_BUFF_PRINT);
-    char* storebuffer_chh = malloc(sizeof(char)*MAX_BUFF_PRINT);
     uint16_t Nprocess = 0;
+
+    //int NTHREAD = 10
+    int prothreads = 0, ithread = 0;
+    ProfileARGS *profileArgs = malloc(sizeof(ProfileARGS)*NTHREAD);
+    //bigWigFile_t **fps = malloc(sizeof(bigWigFile_t*)*NTHREAD);
+    for(ithread=0; ithread<NTHREAD; ithread++){
+        if(profilemode>0){
+            profileArgs[ithread].splitN = splitN*2;
+        }else{
+            profileArgs[ithread].splitN = splitN;
+        }
+        profileArgs[ithread].bodysplitN = bodysplitN;
+        profileArgs[ithread].bodyprofilemovestep = bodyprofilemovestep;
+        profileArgs[ithread].profilemovestep = profilemovestep;
+        profileArgs[ithread].matrixX = matrixX;
+        profileArgs[ithread].method = "weighted";
+        profileArgs[ithread].fp = NULL;
+        profileArgs[ithread].fp = bwOpen(inbmfile, NULL, "r");
+        profileArgs[ithread].fp->type = profileArgs[ithread].fp->hdr->version;
+        profileArgs[ithread].printbuffer_c = malloc(sizeof(char)*MAX_BUFF_PRINT);
+        profileArgs[ithread].printbuffer_cg = malloc(sizeof(char)*MAX_BUFF_PRINT);
+        profileArgs[ithread].printbuffer_chg = malloc(sizeof(char)*MAX_BUFF_PRINT);
+        profileArgs[ithread].printbuffer_chh = malloc(sizeof(char)*MAX_BUFF_PRINT);
+        profileArgs[ithread].chrom = malloc(100*sizeof(char));
+    }
+    pthread_t* Threads=(pthread_t*) malloc(sizeof(pthread_t)*NTHREAD);
+
     while(fgets(PerLine,2000,Fbedfile)!=NULL){
         if(PerLine[0] == '#') continue;
         sscanf(PerLine, "%s%d%d%s", chrom, &start, &end, strand);
@@ -1897,22 +2277,35 @@ int calprofile(char *inbmfile, int upstream, int downstream, double profilestep,
         }else{
             pstrand = 2;
         }
+        strcpy(profileArgs[prothreads].chrom, chrom);
+        profileArgs[prothreads].start = start;
+        profileArgs[prothreads].end = end;
+        profileArgs[prothreads].strand = pstrand;
+        profileArgs[prothreads].geneid = "";
+        profileArgs[prothreads].context = context;
+
         if(profilemode == 0){ // gene flanks mode
             if(start > upstream) processtart = start-upstream;
             else processtart = 0;
             processend = end+downstream;
-            profile_print_array_buffer(finalstats, finalcounts, fp, chrom, processtart, start, end, processend, splitN, bodysplitN, profilemovestep, bodyprofilemovestep, "weighted", pstrand, "", context, storebuffer_c, storebuffer_cg, storebuffer_chg, storebuffer_chh, matrixX);
-            if(stored_buffer>MAX_BUFF_PRINT/10000){
-                fprintf(outfileF_c,"%s",storebuffer_c);
-                storebuffer_c[0] = '\0';
-                fprintf(outfileF_cg,"%s",storebuffer_cg);
-                storebuffer_cg[0] = '\0';
-                fprintf(outfileF_chg,"%s",storebuffer_chg);
-                storebuffer_chg[0] = '\0';
-                fprintf(outfileF_chh,"%s",storebuffer_chh);
-                storebuffer_chh[0] = '\0';
-                stored_buffer = 0;
+            
+            profileArgs[prothreads].processtart = processtart;
+            profileArgs[prothreads].processend = processend;
+            
+            //fprintf(stderr, "TT %s %d %d %d\n", chrom, start, end, prothreads);
+            //profile_print_array(&profileArgs);
+            int r=pthread_create(&Threads[prothreads],NULL,profile_print_array,(void*) &profileArgs[prothreads]);
+            if(r) {printf("Launch_Threads():Cannot create thread..\n");exit(-1);}
+            
+            prothreads++;
+            if(prothreads>=NTHREAD){
+                for (ithread=0;ithread<NTHREAD;ithread++)
+                {
+                    pthread_join(Threads[ithread],NULL);
+                }
+                prothreads = 0;
             }
+            //profile_print_array_buffer(finalstats, finalcounts, fp, chrom, processtart, start, end, processend, splitN, bodysplitN, profilemovestep, bodyprofilemovestep, "weighted", pstrand, "", context, storebuffer_c, storebuffer_cg, storebuffer_chg, storebuffer_chh, matrixX);
         }else if(profilemode == 1) { // gene tss mode
             if(strand[0] == '+' || strand[0] == '.') {
                 if(start > upstream) processtart = start- upstream;
@@ -1923,18 +2316,7 @@ int calprofile(char *inbmfile, int upstream, int downstream, double profilestep,
                 else processtart = 0;
                 processend = end+downstream;
             }
-            profile_print_array_buffer1(finalstats, finalcounts, fp, chrom, processtart, processend, Total_splitN, profilemovestep, "weighted", pstrand, "", context, storebuffer_c, storebuffer_cg, storebuffer_chg, storebuffer_chh, matrixX);
-            if(stored_buffer>MAX_BUFF_PRINT/10000){
-                fprintf(outfileF_c,"%s",storebuffer_c);
-                storebuffer_c[0] = '\0';
-                fprintf(outfileF_cg,"%s",storebuffer_cg);
-                storebuffer_cg[0] = '\0';
-                fprintf(outfileF_chg,"%s",storebuffer_chg);
-                storebuffer_chg[0] = '\0';
-                fprintf(outfileF_chh,"%s",storebuffer_chh);
-                storebuffer_chh[0] = '\0';
-                stored_buffer = 0;
-            }
+            //profile_print_array_buffer1(finalstats, finalcounts, fp, chrom, processtart, processend, Total_splitN, profilemovestep, "weighted", pstrand, "", context, storebuffer_c, storebuffer_cg, storebuffer_chg, storebuffer_chh, matrixX);
         }else if(profilemode == 2) { // gene tts mode
             if(strand[0] == '+' || strand[0] == '.') {
                 if(end > upstream) processtart = end - upstream;
@@ -1945,47 +2327,46 @@ int calprofile(char *inbmfile, int upstream, int downstream, double profilestep,
                 else processtart = 0;
                 processend = start+downstream;
             }
-            profile_print_array_buffer1(finalstats, finalcounts, fp, chrom, processtart, processend, Total_splitN, profilemovestep, "weighted", pstrand, "", context, storebuffer_c, storebuffer_cg, storebuffer_chg, storebuffer_chh, matrixX);
-            if(stored_buffer>MAX_BUFF_PRINT/10000){
-                fprintf(outfileF_c,"%s",storebuffer_c);
-                storebuffer_c[0] = '\0';
-                fprintf(outfileF_cg,"%s",storebuffer_cg);
-                storebuffer_cg[0] = '\0';
-                fprintf(outfileF_chg,"%s",storebuffer_chg);
-                storebuffer_chg[0] = '\0';
-                fprintf(outfileF_chh,"%s",storebuffer_chh);
-                storebuffer_chh[0] = '\0';
-                stored_buffer = 0;
-            }
+            //profile_print_array_buffer1(finalstats, finalcounts, fp, chrom, processtart, processend, Total_splitN, profilemovestep, "weighted", pstrand, "", context, storebuffer_c, storebuffer_cg, storebuffer_chg, storebuffer_chh, matrixX);
         }else if(profilemode == 3){ //center mode
             middle = (int)((start+end)/2);
             if(middle>upstream) processtart = middle - upstream;
             else processtart = 0;
             processend = middle + downstream;
-            profile_print_array_buffer1(finalstats, finalcounts, fp, chrom, processtart, processend, Total_splitN, profilemovestep, "weighted", pstrand, "", context, storebuffer_c, storebuffer_cg, storebuffer_chg, storebuffer_chh, matrixX);
-            if(stored_buffer>MAX_BUFF_PRINT/10000){
-                fprintf(outfileF_c,"%s",storebuffer_c);
-                storebuffer_c[0] = '\0';
-                fprintf(outfileF_cg,"%s",storebuffer_cg);
-                storebuffer_cg[0] = '\0';
-                fprintf(outfileF_chg,"%s",storebuffer_chg);
-                storebuffer_chg[0] = '\0';
-                fprintf(outfileF_chh,"%s",storebuffer_chh);
-                storebuffer_chh[0] = '\0';
-                stored_buffer = 0;
+            //profile_print_array_buffer1(finalstats, finalcounts, fp, chrom, processtart, processend, Total_splitN, profilemovestep, "weighted", pstrand, "", context, storebuffer_c, storebuffer_cg, storebuffer_chg, storebuffer_chh, matrixX);
+        }
+        if(profilemode>0){
+            profileArgs[prothreads].processtart = processtart;
+            profileArgs[prothreads].processend = processend;
+
+            //fprintf(stderr, "TT %s %d %d %d\n", chrom, start, end, prothreads);
+            int r=pthread_create(&Threads[prothreads],NULL,profile_print_array_mp,(void*) &profileArgs[prothreads]);
+            if(r) {printf("Launch_Threads():Cannot create thread..\n");exit(-1);}
+            
+            prothreads++;
+            if(prothreads>=NTHREAD){
+                for (ithread=0;ithread<NTHREAD;ithread++)
+                {
+                    pthread_join(Threads[ithread],NULL);
+                }
+                prothreads = 0;
             }
+        }
+        // print result
+        for (ithread=0;ithread<NTHREAD;ithread++)
+        {
+            fprintf(outfileF_c,"%s",profileArgs[ithread].printbuffer_c);
+            profileArgs[ithread].printbuffer_c[0] = '\0';
+            fprintf(outfileF_cg,"%s",profileArgs[ithread].printbuffer_cg);
+            profileArgs[ithread].printbuffer_cg[0] = '\0';
+            fprintf(outfileF_chg,"%s",profileArgs[ithread].printbuffer_chg);
+            profileArgs[ithread].printbuffer_chg[0] = '\0';
+            fprintf(outfileF_chh,"%s",profileArgs[ithread].printbuffer_chh);
+            profileArgs[ithread].printbuffer_chh[0] = '\0';
+            stored_buffer = 0;
         }
     }
 
-    //print last buffer
-    if(stored_buffer>0){
-        fprintf(stderr, "print last buffer matrix\n");
-        fprintf(outfileF_c,"%s\n",storebuffer_c);
-        fprintf(outfileF_cg,"%s",storebuffer_cg);
-        fprintf(outfileF_chg,"%s",storebuffer_chg);
-        fprintf(outfileF_chh,"%s",storebuffer_chh);
-        free(storebuffer_c); free(storebuffer_cg); free(storebuffer_chg); free(storebuffer_chh);
-    }
     fprintf(stderr, "print aver matrix\n");
     //print aver
     char* print_context = malloc(sizeof(char)*5);
@@ -2006,6 +2387,8 @@ int calprofile(char *inbmfile, int upstream, int downstream, double profilestep,
         }
         fprintf(outfileF_aver, "\n");
     }
+
+    fprintf(stderr, "free and close file\n");
     free(print_context);
     free(finalstats); free(finalcounts);
 
@@ -2013,6 +2396,15 @@ int calprofile(char *inbmfile, int upstream, int downstream, double profilestep,
     bwCleanup();
     fclose(Fbedfile);
     free(chrom); free(PerLine); free(strand);
+    for(ithread=0; ithread<NTHREAD; ithread++){
+        //bwClose(profileArgs[ithread].fp);
+        free(profileArgs[ithread].printbuffer_c);
+        free(profileArgs[ithread].printbuffer_cg);
+        free(profileArgs[ithread].printbuffer_chg);
+        free(profileArgs[ithread].printbuffer_chh);
+        free(profileArgs[ithread].chrom);
+    }
+    free(profileArgs);
 }
 
 void delete_char(char str[],char target){
@@ -2452,13 +2844,13 @@ int main_view_all(bigWigFile_t *ifp, FILE* outfileF, char *outformat, bigWigFile
                 continue;
             }
         }
-        //fprintf(stderr, "process %s\t%ld\n", chrom, len);
+        fprintf(stderr, "process %s\t%ld\n", chrom, len);
         while(start<len){
             if(end>len){
                 end = len;
             }
-            sprintf(region, "%s:%d-%d", chrom, start, end);
-            //fprintf(stderr, "ccx %s\n", region);
+            sprintf(region, "%s:%d-%d\n", chrom, start, end);
+//            fprintf(stderr, "ccx %s\n", region);
             printL = main_view_mbw(ifp, region, outfileF, outformat, ofp, chromsUse, starts, ends, values, coverages, strands, contexts, 
                 entryid);
             if(strcmp(outformat, "mbw") == 0) {
@@ -2482,6 +2874,8 @@ int main_view_all(bigWigFile_t *ifp, FILE* outfileF, char *outformat, bigWigFile
             end += SEGlen;
         }
     }
+//    fprintf(stderr, "\nWWW0W\n");
+
     free(region);
     for(i =0; i < MAX_LINE_PRINT; i++){
         free(chromsUse[i]); free(entryid[i]);
@@ -2509,7 +2903,8 @@ int main_view_mbw(bigWigFile_t *ifp, char *region, FILE* outfileF, char *outform
     }
 
     char *chrom = malloc(100*sizeof(char)); int start=0, end=0;
-    char *tempstore = malloc(sizeof(char)*10000000);
+    char *pszBuf = malloc(sizeof(char)*10000000);
+    char *tempstore = pszBuf;
     char *tempchar = malloc(30);
     int Nprint = 0;
     //char *strand = malloc(100*sizeof(char)); int strand;
@@ -2523,7 +2918,7 @@ int main_view_mbw(bigWigFile_t *ifp, char *region, FILE* outfileF, char *outform
         o = bwGetOverlappingIntervals(ifp, chrom, start, end+1);
         if(!o) goto error;
         if(DEBUG>1) fprintf(stderr, "\no->l %ld %ld %d\n", o->l, o->m, ifp->type);
-        //fprintf(stderr, "--- version --- %d\n", ifp->hdr->version);
+        //fprintf(stderr, "--- version --- %d %d\n", ifp->hdr->version, o->l);
         if(o->l) {
             for(j=0; j<o->l; j++) {
                 if(ifp->hdr->version & BM_COVER){
@@ -2566,7 +2961,7 @@ int main_view_mbw(bigWigFile_t *ifp, char *region, FILE* outfileF, char *outform
                     Nprint++;
                 }else{
                     //fprintf(stderr, "1\t%ld\t%ld\t%f\t%ld\t%d\t%d\n", o->start[i], o->end[i], o->value[i], o->coverage[i],
-                    //o->strand[i], o->context[i]);   %"PRIu32"
+                    //o->strand[i], o->context[i]);   //%"PRIu32"
                     sprintf(tempchar, "%s\t%ld", chrom, o->start[j]);
                     tempstore = fastStrcat(tempstore, tempchar);
                     if(ifp->hdr->version & BM_END) { //ifp->type
@@ -2595,7 +2990,7 @@ int main_view_mbw(bigWigFile_t *ifp, char *region, FILE* outfileF, char *outform
                     tempstore = fastStrcat(tempstore, tempchar);
                     Nprint++;
                     if(Nprint>10000) {
-                        if(strcmp(outformat, "txt") == 0) fprintf(outfileF,"%s",tempstore);
+                        if(strcmp(outformat, "txt") == 0) fprintf(outfileF,"%s",pszBuf);
                         else if(strcmp(outformat, "mbw") == 0) {
                             //mbw out
                         }
@@ -2608,14 +3003,14 @@ int main_view_mbw(bigWigFile_t *ifp, char *region, FILE* outfileF, char *outform
 
     if(Nprint>0) {
         if(strcmp(outformat, "txt") == 0) {
-            fprintf(outfileF,"%s",tempstore);
+            fprintf(outfileF,"%s",pszBuf);
         } else if(strcmp(outformat, "mbw") == 0) {
             ;//mbw out
         }
     }
     //free(chrom);
     free(tempchar);
-    free(tempstore);
+    free(pszBuf);
     bwDestroyOverlappingIntervals(o);
     return Nprint;
 
@@ -2693,7 +3088,8 @@ int main_view(bigWigFile_t *ifp, char *region, FILE* outfileF, char *outformat, 
     }
 
     char *chrom = malloc(100*sizeof(char)); int start=0, end=0;
-    char *tempstore = malloc(sizeof(char)*10000000);
+    char *pszBuf = malloc(sizeof(char)*10000000);
+    char *tempstore = pszBuf;
     char *tempchar = malloc(20);
     int Nprint = 0;
     //char *strand = malloc(100*sizeof(char)); int strand;
@@ -2755,7 +3151,7 @@ int main_view(bigWigFile_t *ifp, char *region, FILE* outfileF, char *outformat, 
                 tempstore = fastStrcat(tempstore, tempchar);
                 Nprint++;
                 if(Nprint>10000) {
-                    if(strcmp(outformat, "txt") == 0) fprintf(outfileF,"%s",tempstore);
+                    if(strcmp(outformat, "txt") == 0) fprintf(outfileF,"%s",pszBuf);
                     else if(strcmp(outformat, "mbw") == 0) {
                         //mbw out
                     }
@@ -2766,7 +3162,7 @@ int main_view(bigWigFile_t *ifp, char *region, FILE* outfileF, char *outformat, 
     }
 
     if(Nprint>0) {
-        if(strcmp(outformat, "txt") == 0) fprintf(outfileF,"%s",tempstore);
+        if(strcmp(outformat, "txt") == 0) fprintf(outfileF,"%s",pszBuf);
         else if(strcmp(outformat, "mbw") == 0) {
             //mbw out
         }
@@ -2774,7 +3170,7 @@ int main_view(bigWigFile_t *ifp, char *region, FILE* outfileF, char *outformat, 
     }
     //free(chrom);
     free(tempchar);
-    free(tempstore);
+    free(pszBuf);
     bwDestroyOverlappingIntervals(o);
     return 0;
 
@@ -3365,6 +3761,7 @@ void bwPrintHdr(bigWigFile_t *bw) {
     }
 
     fprintf(stderr, "nBasesCovered:      %"PRIu64"\n", bw->hdr->nBasesCovered);
+    fprintf(stderr, "sumData:      %f\n", bw->hdr->sumData);
     fprintf(stderr, "minVal:     %f\n", bw->hdr->minVal);
     fprintf(stderr, "maxVal:     %f\n", bw->hdr->maxVal);
     //fprintf(stderr, "sumData:    %f\n", bw->hdr->sumData);

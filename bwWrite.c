@@ -403,8 +403,8 @@ static int flushBuffer(bigWigFile_t *fp) {
 static void updateStats(bigWigFile_t *fp, uint32_t span, float val) {
     if(val < fp->hdr->minVal) fp->hdr->minVal = val;
     else if(val > fp->hdr->maxVal) fp->hdr->maxVal = val;
-    fp->hdr->nBasesCovered += span;
-    fp->hdr->sumData += span*val;
+    fp->hdr->nBasesCovered += 1; //span; //uncorrect for DNA meth
+    fp->hdr->sumData += val; //span*val;
     fp->hdr->sumSquared += span*pow(val,2);
 
     fp->writeBuffer->nEntries++;
