@@ -181,6 +181,8 @@ typedef struct {
     double maxVal; /**<The maximum value in the file.*/
     double sumData; /**<The sum of all values in the file.*/
     double sumSquared; /**<The sum of the squared values in the file.*/
+//    uint32_t *pcoverage; /*The coverage of all postive strand cytosines.*/
+//    uint32_t *ncoverage; /*The coverage of all negative strand cytosines.*/
 } bigWigHdr_t;
 
 //Should probably replace this with a hash
@@ -191,6 +193,8 @@ typedef struct {
     int64_t nKeys; /**<The number of chromosomes */
     char **chrom; /**<A list of null terminated chromosomes */
     uint32_t *len; /**<The lengths of each chromosome */
+//    uint32_t *NmethC; /*The number of C of each chromosome*/
+//    uint32_t *NmethCover; /*The number of cover of each chromosome*/
 } chromList_t;
 
 //TODO remove from bigWig.h
