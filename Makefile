@@ -5,7 +5,7 @@
 CPP = $(shell pwd)
 SOURCES = $(wildcard *.cpp)
 OBJECTS = $(patsubst %.cpp,%.o,$(SOURCES))
-PROGS = bmtools bmDMR
+PROGS = bam2bm bmtools bmDMR
 
 CC = gcc
 AR = ar
@@ -17,7 +17,7 @@ CFLAGS = -g -w -O3 -Wsign-compare
 ## -fopenmp for multi-threads
 LIBS = -lm -lz
 EXTRA_CFLAGS_PIC = -fpic
-LDFLAGS =
+LDFLAGS = htslib/libhts.a -lz -lpthread -llzma -lbz2 -lcurl
 LDLIBS =
 INCLUDES = 
 
@@ -45,7 +45,7 @@ libdir = $(exec_prefix)/lib
 
 .SUFFIXES: .c .o .pico
 
-all: lib $(PROGS)
+all: libs lib $(PROGS)
 
 lib: lib-static lib-shared
 
@@ -86,11 +86,14 @@ test/testWrite: libBigWig.a
 	$(CC) -o $@ -I. $(CFLAGS) test/testWrite.c libBigWig.a $(LIBS)
 
 bmtools: libBigWig.so
-	$(CC) -o $@ -I. -L. $(CFLAGS) bmtools.c -lBigWig $(LIBS) -Wl,-rpath $(CPP)
+	$(CC) -o $@ -I. -L. $(CFLAGS) bmtools.c -lBigWig $(LIBS) -Wl,-rpath $(CPP) -lpthread
 
 bmDMR:
 	g++ $(CFLAGS) -c -o regression.o regression.cpp
 	g++ $(CFLAGS) -o bmDMR bmDMR.cpp regression.o -I. -L. -lBigWig -Wl,-rpath $(CPP) -lgsl -lgslcblas -lm -lz
+
+bam2bm:
+	g++ $(CFLAGS) bam2bm.cpp -o bam2bm -m64 -I. -L. -lz -lBigWig -Wl,-rpath $(CPP) $(LDFLAGS)
 
 test/exampleWrite: libBigWig.so
 	$(CC) -o $@ -I. -L. $(CFLAGS) test/exampleWrite.c -lBigWig $(LIBS) -Wl,-rpath .
@@ -101,16 +104,20 @@ test/testBigBed: libBigWig.a
 test/testIterator: libBigWig.a
 	$(CC) -o $@ -I. $(CFLAGS) test/testIterator.c libBigWig.a $(LIBS)
 
-install: bmtools bmDMR
+install: bam2bm bmtools bmDMR
 
 test: test/testLocal test/testRemote test/testWrite test/testLocal bmtools test/exampleWrite test/testRemoteManyContigs test/testBigBed test/testIterator
 	./test/test.py
 
 clean:
-	rm -f *.o libBigWig.a libBigWig.so *.pico test/testLocal test/testRemote test/testWrite bmtools bmDMR test/exampleWrite test/testRemoteManyContigs test/testBigBed test/testIterator example_output.bw
+	rm -f *.o libBigWig.a libBigWig.so *.pico test/testLocal test/testRemote test/testWrite bmtools bmDMR bam2bm test/exampleWrite test/testRemoteManyContigs test/testBigBed test/testIterator example_output.bw
+	make clean -C htslib
 
 install-old: libBigWig.a libBigWig.so
 	install -d $(prefix)/lib $(prefix)/include
 	install libBigWig.a $(prefix)/lib
 	install libBigWig.so $(prefix)/lib
 	install *.h $(prefix)/include
+
+libs:
+	make -C htslib

@@ -56,12 +56,15 @@ void mbwfileinit(bigWigFile_t *ofp, bigWigFile_t *ifp, char* outfile, int zoomle
 void bwPrintHdr(bigWigFile_t *bw);
 void bwPrintIndexNode(bwRTreeNode_t *node, int level);
 char *fastStrcat(char *s, char *t);
+void onlyexecuteCMD(const char *cmd, const char *errorinfor);
+size_t get_executable_path( char* processdir,char* processname, size_t len);
 
 #define MAX_LINE_PRINT 1000000
 #define MAX_BUFF_PRINT 20000000
 const char* Help_String_main="Command Format :  bmtools <mode> [opnions]\n"
 		"\nUsage:\n"
-        "\t  [mode]         mr2mbw view viewheader overlap regionstats bodystats profile chromstats\n\n"
+        "\t  [mode]         bam2bm mr2mbw view viewheader overlap regionstats bodystats profile chromstats\n\n"
+        "\t  bam2bm         calculate DNA methylation (BM format) with BAM file\n"
         "\t  mr2mbw         convert txt meth file to mbw format\n"
         "\t  view           mbw format to txt meth\n"
         "\t  viewheader     view header of mbw file\n"
@@ -69,10 +72,29 @@ const char* Help_String_main="Command Format :  bmtools <mode> [opnions]\n"
         "\t  regionstats    calculate DNA methylation level of per region\n"
         "\t  bodystats      calculate DNA methylation level of body, upstream and downstream.\n"
         "\t  profile        calculate DNA methylation profile\n"
-        "\t  chromstats     calculate DNA methylation level across chromosome\n";
+        "\t  chromstats     calculate DNA methylation level across chromosome\n"
+        "\t  addzm          add or change zoom levels for mbw format, need for browser visulization\n";
+
+const char* Help_String_bam2bm="Command Format :  bmtools bam2bm [options] -g genome.fa -i/-b <SamfileSorted/BamfileSorted> -m <methratio bm outfile prefix>\n"
+		"\nUsage: bmtools bam2bm -g genome.fa -b align.sort.bam -m meth.bm\n"
+        "\t [bam2bm] mode paramaters, required\n"
+		"\t-g|--genome           genome fasta file\n"
+		"\t-b|--binput           Bam format file, sorted by chrom.\n"
+        "\t-m|--methratio        Prefix of methratio.mbw output file\n"
+		"\t [bam2bm] mode paramaters, options\n"
+        "\t-n|--Nmismatch        Number of mismatches, default 0.06 percentage of read length. [0-1]\n"
+		"\t-Q                    caculate the methratio while read QulityScore >= Q. default:20\n"
+		"\t-c|--coverage         >= <INT> coverage. default:4\n"
+		"\t--maxcoverage         <= <INT> coverage. default:500\n"
+		"\t-nC		             >= <INT> nCs per region. default:1\n"
+		"\t-r|--remove_dup       REMOVE_DUP, default:false\n"
+        "\t--mrtxt               print prefix.methratio.txt file\n"
+        "\t--zl                  The maximum number of zoom levels. [0-10], default: 2\n"
+        "\t-i|--input            Sam format file, sorted by chrom.\n"
+        "\t-h|--help";
 
 const char* Help_String_mr2mbw="Command Format :  bmtools mr2mbw [opnions] -g genome.fa.fai -m methratio.txt -o outmeth.mbw\n"
-		"\nUsage: bmtools mr2mbw -C -S --Cx -E -g genome.fa.fai -m meth.txt -o meth.mbw\n"
+		"\nUsage: bmtools mr2mbw -C -S --Cx -g genome.fa.fai -m meth.txt -o meth.mbw\n"
         "\t [mr2mbw] mode paramaters, required\n"
 		"\t-g                    chromosome size file.\n"
         "\t-m                    methratio file\n"
@@ -85,10 +107,11 @@ const char* Help_String_mr2mbw="Command Format :  bmtools mr2mbw [opnions] -g ge
         "\t--Id                  print ID\n"
         "\t--CF                  coverage filter, >=[int], default 4.\n"
         "\t--sort Y/N            make chromsize file and meth file in same coordinate, default Y\n"
-        "\t--zl                  The maximum number of zoom levels. [1-10]\n"
-        "\t-f                    file format. methratio, bedmethyl or bedsimple [default methratio]\n"
+        "\t--zl                  The maximum number of zoom levels. [0-10]\n"
+        "\t-f                    file format. methratio, bedmethyl, bismark or bedsimple [default methratio]\n"
         "\t  methratio           chrom start strand context meth_reads cover\n"
         "\t  bedmethyl           chrom start end name * strand * * * coverage meth_reads\n"
+        "\t  bismark             chrom start strand coverC coverT context\n"
         "\t  bedsimple           chrom start end id strand context meth_reads coverage\n"
         "\t--pcontext            CG/CHG/CHH/C, needed when bedmethyl format, default C\n"
         "\t--context             CG/CHG/CHH/ALL, only convert provide context in methratio file or bedsimple, default ALL\n"
@@ -101,6 +124,23 @@ const char* Help_String_view="Command Format :  bmtools view [opnions] -i meth.m
         "\t-i                    input mbigwig file\n"
         "\t [view] mode paramaters, options\n"
         "\t-o                    output file [stdout]\n"
+        "\t-r                    region for view, can be seperated by semicolon. chr1:1-2900;chr2:1-200;\n"
+        "\t--bed                 bed file for view, format: chrom start end (strand).\n"
+        "\t--strand              [0/1/2] strand for show, 0 represent '+' positive strand, 1 '-' negative strand, 2 '.' all information\n"
+        "\t--context             [0/1/2/3] context for show, 0 represent 'C/ALL' context, 1 'CG' context, 2 'CHG' context, 3 'CHH' context.\n"
+        "\t--mincover            >= minumum coverage show, default: 0\n"
+        "\t--maxcover            <= maximum coverage show, default: 10000\n"
+        "\t--outformat           txt or mbw format\n"
+        "\t--zl                  The maximum number of zoom levels. [0-10], valid for mbw out\n"
+		"\t-h|--help";
+
+const char* Help_String_addzm="Command Format :  bmtools addzm [opnions] -i meth.mbw -o meth.zm2.mbw\n"
+		"\nUsage: add zoom levels for mbw\n"
+        "\t [addzm] mode paramaters, required\n"
+        "\t-i                    input mbigwig file\n"
+        "\t [addzm] mode paramaters, options\n"
+        "\t-o                    output mbw file\n"
+        "\t--zl                  The maximum number of zoom levels. [0-10], valid for mbw out\n"
         "\t-r                    region for view, can be seperated by semicolon. chr1:1-2900;chr2:1-200;\n"
         "\t--bed                 bed file for view, format: chrom start end (strand).\n"
         "\t--strand              [0/1/2] strand for show, 0 represent '+' positive strand, 1 '-' negative strand, 2 '.' all information\n"
@@ -255,7 +295,7 @@ int main(int argc, char *argv[]) {
     double profilestep = 0.02, profilemovestep = 0.01;
     double bodyprofilestep = 0.02, bodyprofilemovestep = 0.01;
     unsigned int mcover_cutoff = 4; unsigned long TotalC = 0;
-    int zoomlevel = 5;
+    int zoomlevel = 2;
     char *sortY = malloc(10); strcpy(sortY, "Y");
     char* outfile = NULL;
     int profilemode = 0; //0 gene and flanks, 1 center and flanks, 2 tss and flanks
@@ -284,6 +324,10 @@ int main(int argc, char *argv[]) {
            fprintf(stderr, "%s\n", Help_String_profile); 
         }else if(strcmp(mode, "chromstats") == 0){
            fprintf(stderr, "%s\n", Help_String_chromstats); 
+        }else if(strcmp(mode, "bam2bm") == 0){
+           fprintf(stderr, "%s\n", Help_String_bam2bm); 
+        }else if(strcmp(mode, "addzm") == 0){
+           fprintf(stderr, "%s\n", Help_String_addzm); 
         }else{
             fprintf(stderr, "Please define correct mode!!!\n");
             fprintf(stderr, "%s\n", Help_String_main);
@@ -294,122 +338,142 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "%s\n", Help_String_main);
         exit(0);
     }
-    for(i=0; i< argc; i++){
-        if(strcmp(argv[i], "-g") == 0){
-            strcpy(chromlenf, argv[++i]);
-            chromlenf_yes++;
-        }else if(strcmp(argv[i], "-C") == 0){
-            write_type |= BM_COVER;
-        }else if(strcmp(argv[i], "-S") == 0){
-            write_type |= BM_STRAND;
-        }else if(strcmp(argv[i], "--Cx") == 0){
-            write_type |= BM_CONTEXT;
-        }else if(strcmp(argv[i], "--Id") == 0){
-            write_type |= BM_ID;
-        }else if(strcmp(argv[i], "-E") == 0){
-            write_type |= BM_END;
-        }else if(strcmp(argv[i], "-m") == 0){
-            strcpy(methfile, argv[++i]);
-        }else if(strcmp(argv[i], "--outmbw") == 0){
-            outbmfile = malloc(100);
-            strcpy(outbmfile, argv[++i]);
-        }else if(strcmp(argv[i], "--outformat") == 0){
-            strcpy(outformat, argv[++i]);
-        }else if(strcmp(argv[i], "-i") == 0){
-            strcpy(inbmfile, argv[++i]);
-        }else if(strcmp(argv[i], "--CF") == 0){
-            mcover_cutoff = atoi(argv[++i]);
-        }else if(strcmp(argv[i], "--bmfiles") == 0){
-            strcpy(inbmfiles, argv[++i]);
-            inbm_mul = 1;
-        }else if(strcmp(argv[i], "-i2") == 0){
-            strcpy(bmfile2, argv[++i]);
-        }else if(strcmp(argv[i], "-r") == 0){
-            region = malloc(1000);
-            strcpy(region, argv[++i]);
-        }else if(strcmp(argv[i], "--method") == 0){
-            strcpy(method, argv[++i]);
-        }else if(strcmp(argv[i], "--chromstep") == 0){
-            chromstep = atoi(argv[++i]);
-        }else if(strcmp(argv[i], "--chrom") == 0){
-            filterchrom = malloc(200);
-            strcpy(filterchrom, argv[++i]);
-        }else if(strcmp(argv[i], "--stepmove") == 0){
-            stepoverlap = atoi(argv[++i]);
-        }else if(strcmp(argv[i], "-p") == 0){
-            NTHREAD = atoi(argv[++i]);
-        }else if(strcmp(argv[i], "--profilestep") == 0){
-            profilestep = atof(argv[++i]);
-            assert(profilestep>0 && profilestep<1);
-        }else if(strcmp(argv[i], "--regionextend") == 0){
-            regionextend = atoi(argv[++i]);
-            assert(regionextend>0);
-        }else if(strcmp(argv[i], "--profilemovestep") == 0){
-            profilemovestep = atof(argv[++i]);
-        }else if(strcmp(argv[i], "--profilemode") == 0){
-            profilemode = atoi(argv[++i]);
-            assert(profilemode>=0 && profilemode<4);
-            if(profilemode == 0){
-                strcpy(profilemode_str, ".across");
-            }else if(profilemode == 1){
-                strcpy(profilemode_str, ".tss");
-            }else if(profilemode == 2){
-                strcpy(profilemode_str, ".tts");
-            }else if(profilemode == 3){
-                strcpy(profilemode_str, ".center");
-            }
-        }else if(strcmp(argv[i], "--print2one") == 0){
-            print2one = atoi(argv[++i]);
-        }else if(strcmp(argv[i], "--printcoverage") == 0){
-            printcoverage = atoi(argv[++i]);
-        }else if(strcmp(argv[i], "--bodyX") == 0){
-            bodyX = atof(argv[++i]);
-        }else if(strcmp(argv[i], "--matrixX") == 0){
-            matrixX = atoi(argv[++i]);
-            assert(matrixX>=1);
-        }else if(strcmp(argv[i], "--fstrand") == 0 || strcmp(argv[i], "--strand") == 0){
-            filter_strand = atoi(argv[++i]);
-        }else if(strcmp(argv[i], "--bed") == 0){
-            bedfile = malloc(100);
-            strcpy(bedfile, argv[++i]);
-        }else if(strcmp(argv[i], "--gtf") == 0){
-            gtffile = malloc(100);
-            strcpy(gtffile, argv[++i]);
-        }else if(strcmp(argv[i], "--gff") == 0){
-            gfffile = malloc(100);
-            strcpy(gfffile, argv[++i]);
-        }else if(strcmp(argv[i], "-f") == 0){
-            strcpy(mrformat, argv[++i]);
-        }else if(strcmp(argv[i], "--pcontext") == 0){
-            strcpy(pcontext, argv[++i]);
-        }else if(strcmp(argv[i], "--context") == 0){
-            filter_context = atoi(argv[++i]);
-        }else if(strcmp(argv[i], "--sort") == 0){
-            strcpy(sortY, argv[++i]);
-        }else if(strcmp(argv[i], "--zl") == 0){
-            zoomlevel = atoi(argv[++i]);
-        }else if(strcmp(argv[i], "--fcontext") == 0){
-            strcpy(filtercontext, argv[++i]);
-        }else if(strcmp(argv[i], "--regionextend") == 0){
-            regionextend = atoi(argv[++i]);
-        }else if(strcmp(argv[i], "--mincover") == 0){
-            mincover = atoi(argv[++i]);
-        }else if(strcmp(argv[i], "--maxcover") == 0){
-            maxcover = atoi(argv[++i]);
-        }else if(strcmp(argv[i], "-o") == 0 || strcmp(argv[i], "--out") == 0){
-            if(strcmp(mode, "mr2mbw") == 0){
-                if(!outbmfile){
-                    outbmfile = malloc(100);
-                    strcpy(outbmfile, argv[++i]);
+    char bam2bm_paras[1024];
+    if(strcmp(mode, "bam2bm") == 0){
+        for(i=1; i< argc; i++){
+            strcat(bam2bm_paras, argv[i]);
+            strcat(bam2bm_paras, " ");
+        }
+    }else{
+        for(i=1; i< argc; i++){
+            if(strcmp(argv[i], "-g") == 0){
+                strcpy(chromlenf, argv[++i]);
+                chromlenf_yes++;
+            }else if(strcmp(argv[i], "-C") == 0){
+                write_type |= BM_COVER;
+            }else if(strcmp(argv[i], "-S") == 0){
+                write_type |= BM_STRAND;
+            }else if(strcmp(argv[i], "--Cx") == 0){
+                write_type |= BM_CONTEXT;
+            }else if(strcmp(argv[i], "--Id") == 0){
+                write_type |= BM_ID;
+            }else if(strcmp(argv[i], "-E") == 0){
+                write_type |= BM_END;
+            }else if(strcmp(argv[i], "-m") == 0){
+                strcpy(methfile, argv[++i]);
+            }else if(strcmp(argv[i], "--outmbw") == 0){
+                outbmfile = malloc(100);
+                strcpy(outbmfile, argv[++i]);
+            }else if(strcmp(argv[i], "--outformat") == 0){
+                strcpy(outformat, argv[++i]);
+            }else if(strcmp(argv[i], "-i") == 0){
+                strcpy(inbmfile, argv[++i]);
+            }else if(strcmp(argv[i], "--CF") == 0){
+                mcover_cutoff = atoi(argv[++i]);
+            }else if(strcmp(argv[i], "--bmfiles") == 0){
+                strcpy(inbmfiles, argv[++i]);
+                inbm_mul = 1;
+            }else if(strcmp(argv[i], "-i2") == 0){
+                strcpy(bmfile2, argv[++i]);
+            }else if(strcmp(argv[i], "-r") == 0){
+                region = malloc(1000);
+                strcpy(region, argv[++i]);
+            }else if(strcmp(argv[i], "--method") == 0){
+                strcpy(method, argv[++i]);
+            }else if(strcmp(argv[i], "--chromstep") == 0){
+                chromstep = atoi(argv[++i]);
+            }else if(strcmp(argv[i], "--chrom") == 0){
+                filterchrom = malloc(200);
+                strcpy(filterchrom, argv[++i]);
+            }else if(strcmp(argv[i], "--stepmove") == 0){
+                stepoverlap = atoi(argv[++i]);
+            }else if(strcmp(argv[i], "-p") == 0){
+                NTHREAD = atoi(argv[++i]);
+            }else if(strcmp(argv[i], "--profilestep") == 0){
+                profilestep = atof(argv[++i]);
+                assert(profilestep>0 && profilestep<1);
+            }else if(strcmp(argv[i], "--regionextend") == 0){
+                regionextend = atoi(argv[++i]);
+                assert(regionextend>0);
+            }else if(strcmp(argv[i], "--profilemovestep") == 0){
+                profilemovestep = atof(argv[++i]);
+            }else if(strcmp(argv[i], "--profilemode") == 0){
+                profilemode = atoi(argv[++i]);
+                assert(profilemode>=0 && profilemode<4);
+                if(profilemode == 0){
+                    strcpy(profilemode_str, ".across");
+                }else if(profilemode == 1){
+                    strcpy(profilemode_str, ".tss");
+                }else if(profilemode == 2){
+                    strcpy(profilemode_str, ".tts");
+                }else if(profilemode == 3){
+                    strcpy(profilemode_str, ".center");
                 }
-            }else{
-                outfile = malloc(sizeof(char)*100);
-                strcpy(outfile, argv[++i]);
+            }else if(strcmp(argv[i], "--print2one") == 0){
+                print2one = atoi(argv[++i]);
+            }else if(strcmp(argv[i], "--printcoverage") == 0){
+                printcoverage = atoi(argv[++i]);
+            }else if(strcmp(argv[i], "--bodyX") == 0){
+                bodyX = atof(argv[++i]);
+            }else if(strcmp(argv[i], "--matrixX") == 0){
+                matrixX = atoi(argv[++i]);
+                assert(matrixX>=1);
+            }else if(strcmp(argv[i], "--fstrand") == 0 || strcmp(argv[i], "--strand") == 0){
+                filter_strand = atoi(argv[++i]);
+            }else if(strcmp(argv[i], "--bed") == 0){
+                bedfile = malloc(100);
+                strcpy(bedfile, argv[++i]);
+            }else if(strcmp(argv[i], "--gtf") == 0){
+                gtffile = malloc(100);
+                strcpy(gtffile, argv[++i]);
+            }else if(strcmp(argv[i], "--gff") == 0){
+                gfffile = malloc(100);
+                strcpy(gfffile, argv[++i]);
+            }else if(strcmp(argv[i], "-f") == 0){
+                strcpy(mrformat, argv[++i]);
+            }else if(strcmp(argv[i], "--pcontext") == 0){
+                strcpy(pcontext, argv[++i]);
+            }else if(strcmp(argv[i], "--context") == 0){
+                filter_context = atoi(argv[++i]);
+            }else if(strcmp(argv[i], "--sort") == 0){
+                strcpy(sortY, argv[++i]);
+            }else if(strcmp(argv[i], "--zl") == 0){
+                zoomlevel = atoi(argv[++i]);
+            }else if(strcmp(argv[i], "--fcontext") == 0){
+                strcpy(filtercontext, argv[++i]);
+            }else if(strcmp(argv[i], "--regionextend") == 0){
+                regionextend = atoi(argv[++i]);
+            }else if(strcmp(argv[i], "--mincover") == 0){
+                mincover = atoi(argv[++i]);
+            }else if(strcmp(argv[i], "--maxcover") == 0){
+                maxcover = atoi(argv[++i]);
+            }else if(strcmp(argv[i], "-o") == 0 || strcmp(argv[i], "--out") == 0){
+                if(strcmp(mode, "mr2mbw") == 0){
+                    if(!outbmfile){
+                        outbmfile = malloc(100);
+                        strcpy(outbmfile, argv[++i]);
+                    }
+                }else{
+                    outfile = malloc(sizeof(char)*100);
+                    strcpy(outfile, argv[++i]);
+                }
             }
         }
     }
 
-    if(strcmp(mode, "mr2mbw") == 0){
+    if(strcmp(mode, "bam2bm") == 0){
+        fprintf(stderr, "calculate DNA methylation level with bm format\n");
+        //exe location
+        char processname[1024];
+        char abspathtmp[1024];
+        get_executable_path(abspathtmp, processname, sizeof(abspathtmp));
+        char cmd[1024];
+        strcat(cmd, "bam2bm ");
+        strcat(cmd, bam2bm_paras);
+        onlyexecuteCMD(cmd, Help_String_bam2bm);
+        return;
+    }
+    else if(strcmp(mode, "mr2mbw") == 0){
         fprintf(stderr, "mr file format %s\n", mrformat);
         if(chromlenf_yes==0){
             fprintf(stderr, "please provide chrome size file with -g paramater\n");
@@ -426,7 +490,7 @@ int main(int argc, char *argv[]) {
             while(fgets(PerLine,2000,methF)!=0){
                 if(PerLine[0] == '#') continue; // remove header #
                 //fprintf(stderr, "%s\n", PerLine);
-                if(strcmp(mrformat, "methratio") == 0 || strcmp(mrformat, "bedmethyl") == 0 || strcmp(mrformat, "bedsimple") == 0){
+                if(strcmp(mrformat, "methratio") == 0 || strcmp(mrformat, "bedmethyl") == 0 || strcmp(mrformat, "bedsimple") == 0 || strcmp(mrformat, "bismark") == 0){
                     sscanf(PerLine, "%s", chrom);
                 }else{
                     fprintf(stderr, "Unexpected mr file format!!!\n");
@@ -503,7 +567,7 @@ int main(int argc, char *argv[]) {
         methF = File_Open(methfile, "r");
         strcpy(old_chrom, "NN"); 
         char *strand = malloc(2), *context = malloc(10), *nameid = malloc(100);
-        unsigned start=0, end = 0; unsigned int coverC,coverage=0; float value=0;
+        unsigned start=0, end = 0; unsigned int coverC, coverT, coverage=0; float value=0;
         printL = 0;
         strcpy(context, pcontext);
         char *decide = malloc(10);
@@ -531,6 +595,11 @@ int main(int argc, char *argv[]) {
                 sscanf(PerLine, "%s%u%u%s%s%s%u%u", chrom, &start, &end, nameid, strand, context, &coverC, &coverage);
                 sprintf(decide, "%0.001f", ((double) coverC/ coverage) );
                 value = atof(decide);
+            }else if(strcmp(mrformat, "bismark") == 0){
+                //<chromosome> <position> <strand> <count methylated> <count unmethylated> <C-context> <trinucleotide context>
+                sscanf(PerLine, "%s%u%s%u%u%s", chrom, &start, strand, &coverC, &coverT, context);
+                coverage = coverC + coverT;
+                value = ((double) coverC/ coverage);
             }else{
                 fprintf(stderr, "Unexpected mr file format!!!\n");
                 exit(0);
@@ -582,7 +651,7 @@ int main(int argc, char *argv[]) {
                 }else if(strcmp(context, "CHH") == 0){
                     contexts[printL] = 3;
                 }
-                if(DEBUG>-1) fprintf(stderr,"%d XXX %s %d %d %f %d %d %d\n", printL, chromsUse[printL], starts[printL], ends[printL], values[printL], coverages[printL], strands[printL], context[printL]);
+                if(DEBUG>-1) fprintf(stderr,"## %d start %s %d %d %f %d %d %d\n", printL, chromsUse[printL], starts[printL], ends[printL], values[printL], coverages[printL], strands[printL], context[printL]);
                 int response = bwAddIntervals(fp, chromsUse, starts, ends, values, coverages, strands, contexts, 
                 entryid, 1);
                 fprintf(stderr, "Processing %s chromosome.\n", chrom);
@@ -707,7 +776,10 @@ int main(int argc, char *argv[]) {
     */
 
     // read bm file, view
-    if(strcmp(mode, "view")==0){
+    if(strcmp(mode, "view")==0 || strcmp(mode, "addzm")==0){
+        if(strcmp(mode, "addzm")==0){
+            strcpy(outformat, "mbw");
+        }
         if(DEBUG>0) fprintf(stderr, "bm view\n");
         //char region[] = "chr1:0-100,chr1:16766-16830";
         uint32_t type = BMtype(inbmfile, NULL);
@@ -727,29 +799,29 @@ int main(int argc, char *argv[]) {
             //mbwfileinit(ofp, ifp, outfile, zoomlevel); // why not valid????
             if(bwInit(1<<17) != 0) {
                 fprintf(stderr, "Received an error in bwInit\n");
-                return;
+                return 0;
             }
             ofp = bwOpen(outfile, NULL, "w");
             ofp->type = ifp->type;
             if(!ofp) {
                 fprintf(stderr, "An error occurred while opening mbw for writingn\n");
-                return;
+                return 0;
             }
             //Allow up to 10 zoom levels, though fewer will be used in practice
             if(bwCreateHdr(ofp, zoomlevel)) {
                 fprintf(stderr, "== bwCreateHdr ==\n");
-                return;
+                return 0;
             }
             //Create the chromosome lists
             ofp->cl = bwCreateChromList_ifp(ifp); //2
             if(!ofp->cl) {
                 fprintf(stderr, "== bwCreateChromList ==\n");
-                return;
+                return 0;
             }
             //Write the header
             if(bwWriteHdr(ofp)) {
                 fprintf(stderr, "== bwWriteHdr ==\n");
-                return;
+                return 0;
             }
         }
         
@@ -1172,7 +1244,7 @@ double *Sregionstats_array(bigWigFile_t *fp, char *chrom, int start, int end, in
 }
 
 //double *output = malloc(sizeof(double)*nBins*Tsize);
-void *Sregionstats_array_count(bigWigFile_t *fp, char *chrom, int start, int end, int splitN, uint32_t movestep, char *method, uint8_t strand, uint16_t *countC, uint16_t *countCT){
+void Sregionstats_array_count(bigWigFile_t *fp, char *chrom, int start, int end, int splitN, uint32_t movestep, char *method, uint8_t strand, uint16_t *countC, uint16_t *countCT){
     assert(splitN>0);
     int i=0, Tsize = 4;
     for(i=0;i<splitN*Tsize;i++){
@@ -3005,7 +3077,7 @@ int main_view_mbw(bigWigFile_t *ifp, char *region, FILE* outfileF, char *outform
         if(strcmp(outformat, "txt") == 0) {
             fprintf(outfileF,"%s",pszBuf);
         } else if(strcmp(outformat, "mbw") == 0) {
-            ;//mbw out
+            ;//mbw out, just skip
         }
     }
     //free(chrom);
@@ -3830,4 +3902,35 @@ char *fastStrcat(char *s, char *t)
 	}
 
 	return --s;
+}
+
+void onlyexecuteCMD(const char *cmd, const char *errorinfor)
+{
+    char ps[1024]={0};
+    FILE *ptr;
+    strcpy(ps, cmd);
+    //fprintf(stderr, "[MM] %s\n", cmd);
+    ptr=popen(ps, "w");
+
+    if(ptr==NULL)
+    {
+        fprintf(stderr, "\n%s\n", errorinfor);
+        exit(0);
+    }
+    pclose(ptr);
+    ptr = NULL;
+}
+
+size_t get_executable_path( char* processdir,char* processname, size_t len)
+{
+	char* path_end;
+	if(readlink("/proc/self/exe", processdir,len) <=0)
+		return -1;
+	path_end = strrchr(processdir, '/');
+	if(path_end == NULL)
+		return -1;
+	++path_end;
+	strcpy(processname, path_end);
+	*path_end = '\0';
+	return (size_t)(path_end - processdir);
 }
