@@ -17,7 +17,7 @@ CFLAGS = -g -w -O3 -Wsign-compare
 ## -fopenmp for multi-threads
 LIBS = -lm -lz
 EXTRA_CFLAGS_PIC = -fpic
-LDFLAGS = htslib/libhts.a -lz -lpthread -llzma -lbz2 -lcurl
+LDFLAGS_SUB = htslib/libhts.a -lz -lpthread -llzma -lbz2 -lcurl
 LDLIBS =
 INCLUDES = 
 
@@ -93,7 +93,7 @@ bmDMR:
 	g++ $(CFLAGS) -o bmDMR bmDMR.cpp regression.o -I. -L. -lBigWig -Wl,-rpath $(CPP) -lgsl -lgslcblas -lm -lz
 
 bam2bm:
-	g++ $(CFLAGS) bam2bm.cpp -o bam2bm -m64 -I. -L. -lz -lBigWig -Wl,-rpath $(CPP) $(LDFLAGS)
+	g++ $(CFLAGS) bam2bm.cpp -o bam2bm -m64 -I. -L. -lz -lBigWig -Wl,-rpath $(CPP) $(LDFLAGS_SUB)
 
 test/exampleWrite: libBigWig.so
 	$(CC) -o $@ -I. -L. $(CFLAGS) test/exampleWrite.c -lBigWig $(LIBS) -Wl,-rpath .
