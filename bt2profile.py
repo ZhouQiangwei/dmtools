@@ -29,17 +29,20 @@ def readfile(filename):
     with open(filename, 'r') as fig:
         for line in fig:
             data = line.split()
-            if nline == 0:
+            if data[0] == 'CG':
                 y.append(list(map(float,data[1:])))
-                myaver = np.array(list(map(float,data[1:])))
-            elif nline == 1:
+                #myaver = np.array(list(map(float,data[1:])))
+            elif data[0] == 'CHG':
                 z.append(list(map(float,data[1:])))
-                myaver+=np.array(list(map(float,data[1:])))
-            elif nline == 2:
+                #myaver+=np.array(list(map(float,data[1:])))
+            elif data[0] == 'CHH':
+            #elif nline == 2:
                 k.append(list(map(float,data[1:])))
-                myaver+=np.array(list(map(float,data[1:])))
-                myaver=myaver/3
-                averm.append(list(myaver))
+                #myaver+=np.array(list(map(float,data[1:])))
+                #myaver=myaver/3
+                #averm.append(list(myaver))
+            elif data[0] == 'C':
+                averm.append(list(map(float,data[1:])))
             nline=nline+1
  
 ######################################################

@@ -191,6 +191,12 @@ int main(int argc, char* argv[])
 		"\t-nC		             >= <INT> nCs per region. default:1\n"
 		"\t-r|--remove_dup       REMOVE_DUP, default:false\n"
         "\t--mrtxt               print prefix.methratio.txt file\n"
+        "\t [BM format] paramaters\n"
+        "\t-C                    print coverage\n"
+        "\t-S                    print strand\n"
+        "\t--Cx                  print context\n"
+        "\t-E                    print end\n"
+        "\t--Id                  print ID\n"
         "\t--zl                  The maximum number of zoom levels. [1-10], default: 2\n"
         "\t-i|--input            Sam format file, sorted by chrom.\n"
         "\t-h|--help";
@@ -220,7 +226,7 @@ int main(int argc, char* argv[])
 //	int Par_Count=0;
 	std::string CMD;
 	int AlignSum = 0;
-	uint32_t write_type = 0xf1ff; //0x8000;
+	uint32_t write_type = 0x8000; //0xf1ff
 	int chrlenf = -1;
 	string chrsizefile;
 	int zoomlevel = 2;
@@ -253,15 +259,15 @@ int main(int argc, char* argv[])
 				fprintf(stderr, "\nError defined mismatch paramater, should be 0-1.\n");
 			}
 		}else if(strcmp(argv[i], "-C") == 0){
-            write_type ^= BM_COVER;
+            write_type |= BM_COVER;
         }else if(strcmp(argv[i], "-S") == 0){
-            write_type ^= BM_STRAND;
+            write_type |= BM_STRAND;
         }else if(strcmp(argv[i], "--Cx") == 0){
-            write_type ^= BM_CONTEXT;
+            write_type |= BM_CONTEXT;
         }else if(strcmp(argv[i], "--Id") == 0){
-            write_type ^= BM_ID;
+            write_type |= BM_ID;
         }else if(strcmp(argv[i], "-E") == 0){
-            write_type ^= BM_END;
+            write_type |= BM_END;
         }
 		else if(!strcmp(argv[i], "-R") || !strcmp(argv[i], "--Regions"))
 		{

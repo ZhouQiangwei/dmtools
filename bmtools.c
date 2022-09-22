@@ -2975,7 +2975,7 @@ int main_view_mbw(bigWigFile_t *ifp, char *region, FILE* outfileF, char *outform
     }
 
     char *chrom = malloc(100*sizeof(char)); int start=0, end=0;
-    char *pszBuf = malloc(sizeof(char)*10000000);
+    char *pszBuf = malloc(sizeof(char)*40000000);
     char *tempstore = pszBuf;
     char *tempchar = malloc(30);
     int Nprint = 0;
@@ -3160,7 +3160,7 @@ int main_view(bigWigFile_t *ifp, char *region, FILE* outfileF, char *outformat, 
     }
 
     char *chrom = malloc(100*sizeof(char)); int start=0, end=0;
-    char *pszBuf = malloc(sizeof(char)*10000000);
+    char *pszBuf = malloc(sizeof(char)*40000000);
     char *tempstore = pszBuf;
     char *tempchar = malloc(20);
     int Nprint = 0;
