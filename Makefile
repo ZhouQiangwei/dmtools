@@ -49,14 +49,14 @@ all: libs lib $(PROGS)
 
 lib: lib-static lib-shared
 
-lib-static: libBigWig.a
+lib-static: libBinaMeth.a
 
-lib-shared: libBigWig.so
+lib-shared: libBinaMeth.so
 
 doc:
 	doxygen
 
-OBJS = io.o bwValues.o bwRead.o bwStats.o bwWrite.o
+OBJS = io.o bmValues.o bmRead.o bmStats.o bmWrite.o
 
 .c.o:
 	$(CC) -I. $(CFLAGS) $(INCLUDES) -c -o $@ $<
@@ -64,45 +64,45 @@ OBJS = io.o bwValues.o bwRead.o bwStats.o bwWrite.o
 .c.pico:
 	$(CC) -I. $(CFLAGS) $(INCLUDES) $(EXTRA_CFLAGS_PIC) -c -o $@ $<
 
-libBigWig.a: $(OBJS)
+libBinaMeth.a: $(OBJS)
 	-@rm -f $@
 	$(AR) -rcs $@ $(OBJS)
 	$(RANLIB) $@
 
-libBigWig.so: $(OBJS:.o=.pico)
+libBinaMeth.so: $(OBJS:.o=.pico)
 	$(CC) -shared -o $@ $(OBJS:.o=.pico) $(LDLIBS) $(LIBS)
 #$(CC) -shared $(LDFLAGS) -o $@ $(OBJS:.o=.pico) $(LDLIBS) $(LIBS)
 
-test/testLocal: libBigWig.a
-	$(CC) -o $@ -I. $(CFLAGS) test/testLocal.c libBigWig.a $(LIBS)
+test/testLocal: libBinaMeth.a
+	$(CC) -o $@ -I. $(CFLAGS) test/testLocal.c libBinaMeth.a $(LIBS)
 
-test/testRemoteManyContigs: libBigWig.a
-	$(CC) -o $@ -I. $(CFLAGS) test/testRemoteManyContigs.c libBigWig.a $(LIBS)
+test/testRemoteManyContigs: libBinaMeth.a
+	$(CC) -o $@ -I. $(CFLAGS) test/testRemoteManyContigs.c libBinaMeth.a $(LIBS)
 
-test/testRemote: libBigWig.a
-	$(CC) -o $@ -I. $(CFLAGS) test/testRemote.c libBigWig.a $(LIBS)
+test/testRemote: libBinaMeth.a
+	$(CC) -o $@ -I. $(CFLAGS) test/testRemote.c libBinaMeth.a $(LIBS)
 
-test/testWrite: libBigWig.a
-	$(CC) -o $@ -I. $(CFLAGS) test/testWrite.c libBigWig.a $(LIBS)
+test/testWrite: libBinaMeth.a
+	$(CC) -o $@ -I. $(CFLAGS) test/testWrite.c libBinaMeth.a $(LIBS)
 
-bmtools: libBigWig.so
-	$(CC) -o $@ -I. -L. $(CFLAGS) bmtools.c -lBigWig $(LIBS) -Wl,-rpath $(CPP) -lpthread
+bmtools: libBinaMeth.so
+	$(CC) -o $@ -I. -L. $(CFLAGS) bmtools.c -lBinaMeth $(LIBS) -Wl,-rpath $(CPP) -lpthread
 
 bmDMR:
 	g++ $(CFLAGS) -c -o regression.o regression.cpp
-	g++ $(CFLAGS) -o bmDMR bmDMR.cpp regression.o -I. -L. -lBigWig -Wl,-rpath $(CPP) -lgsl -lgslcblas -lm -lz
+	g++ $(CFLAGS) -o bmDMR bmDMR.cpp regression.o -I. -L. -lBinaMeth -Wl,-rpath $(CPP) -lgsl -lgslcblas -lm -lz
 
 bam2bm:
-	g++ $(CFLAGS) bam2bm.cpp -o bam2bm -m64 -I. -L. -lz -lBigWig -Wl,-rpath $(CPP) $(LDFLAGS_SUB)
+	g++ $(CFLAGS) bam2bm.cpp -o bam2bm -m64 -I. -L. -lz -lBinaMeth -Wl,-rpath $(CPP) $(LDFLAGS_SUB)
 
-test/exampleWrite: libBigWig.so
-	$(CC) -o $@ -I. -L. $(CFLAGS) test/exampleWrite.c -lBigWig $(LIBS) -Wl,-rpath .
+test/exampleWrite: libBinaMeth.so
+	$(CC) -o $@ -I. -L. $(CFLAGS) test/exampleWrite.c -lBinaMeth $(LIBS) -Wl,-rpath .
 
-test/testBigBed: libBigWig.a
-	$(CC) -o $@ -I. $(CFLAGS) test/testBigBed.c libBigWig.a $(LIBS)
+test/testBigBed: libBinaMeth.a
+	$(CC) -o $@ -I. $(CFLAGS) test/testBigBed.c libBinaMeth.a $(LIBS)
 
-test/testIterator: libBigWig.a
-	$(CC) -o $@ -I. $(CFLAGS) test/testIterator.c libBigWig.a $(LIBS)
+test/testIterator: libBinaMeth.a
+	$(CC) -o $@ -I. $(CFLAGS) test/testIterator.c libBinaMeth.a $(LIBS)
 
 install: bam2bm bmtools bmDMR
 
@@ -110,13 +110,13 @@ test: test/testLocal test/testRemote test/testWrite test/testLocal bmtools test/
 	./test/test.py
 
 clean:
-	rm -f *.o libBigWig.a libBigWig.so *.pico test/testLocal test/testRemote test/testWrite bmtools bmDMR bam2bm test/exampleWrite test/testRemoteManyContigs test/testBigBed test/testIterator example_output.bw
+	rm -f *.o libBinaMeth.a libBinaMeth.so *.pico test/testLocal test/testRemote test/testWrite bmtools bmDMR bam2bm test/exampleWrite test/testRemoteManyContigs test/testBigBed test/testIterator example_output.bw
 	make clean -C htslib
 
-install-old: libBigWig.a libBigWig.so
+install-old: libBinaMeth.a libBinaMeth.so
 	install -d $(prefix)/lib $(prefix)/include
-	install libBigWig.a $(prefix)/lib
-	install libBigWig.so $(prefix)/lib
+	install libBinaMeth.a $(prefix)/lib
+	install libBinaMeth.so $(prefix)/lib
 	install *.h $(prefix)/include
 
 libs:

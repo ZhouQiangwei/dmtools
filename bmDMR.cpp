@@ -5,12 +5,12 @@
 * ./exampleWrite mr2mbw -g ~/practice/Genome/hg38/hg38.chr.fa.len -E -C -m test.f -S --Cx -o test.bm -r chr1:0-100,chr1:16766-16890
 * g++ test/bmDMR.cpp -o bmDMR -I. -L. -lBigWig -Wl,-rpath /public/home/qwzhou/software_devp/batmeth2-bwa/src/bmtools/ -lgsl -lgslcblas -lm -lz
 */
-#include "bigWig.h"
+#include "binaMeth.h"
 #ifdef __cplusplus
 extern "C"
 {
 #endif
-    #include "bigWig.h"
+    #include "binaMeth.h"
 #ifdef __cplusplus
 }
 #endif

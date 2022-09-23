@@ -12,7 +12,7 @@
 #include <time.h>
 #include <sys/time.h>
 #include <errno.h>
-#include "bigWig.h"
+#include "binaMeth.h"
 //g++ calmeth.cpp -o calmeth -m64 -I./bmtools/ -L./bmtools/ -I./samtools-0.1.18/ -L./samtools-0.1.18/ -lBigWig -lbam -lz -Wl,-rpath /public/home/qwzhou/software_devp/batmeth2-bwa/src/bmtools/
 #include <stdlib.h>
 
