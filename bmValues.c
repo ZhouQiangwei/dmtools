@@ -1,5 +1,5 @@
-#include "bigWig.h"
-#include "bwCommon.h"
+#include "binaMeth.h"
+#include "bmCommon.h"
 #include <stdlib.h>
 #include <math.h>
 #include <string.h>

@@ -5,7 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include "bigWigIO.h"
+#include "binaMethIO.h"
 #include <inttypes.h>
 #include <errno.h>
 

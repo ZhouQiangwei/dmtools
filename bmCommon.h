@@ -1,4 +1,4 @@
-/*! \file bwCommon.h
+/*! \file bmCommon.h
  *
  * You have no reason to use these functions. They may change without warning because there's no reason for them to be used outside of libBigWig's internals.
  *

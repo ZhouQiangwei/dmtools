@@ -13,7 +13,7 @@ typedef void CURL;
 #define CURLE_OK 0
 #define CURLE_FAILED_INIT 1
 #endif
-/*! \file bigWigIO.h
+/*! \file binaMethIO.h
  * These are (typically internal) IO functions, so there's generally no need for you to directly use them!
  */
 

@@ -1,8 +1,8 @@
 #ifndef LIBBIGWIG_H
 #define LIBBIGWIG_H
 
-#include "bigWigIO.h"
-#include "bwValues.h"
+#include "binaMethIO.h"
+#include "bmValues.h"
 #include <inttypes.h>
 #include <zlib.h>
 
@@ -10,17 +10,17 @@
 extern "C" {
 #endif
 
-/*! \mainpage libBigWig
+/*! \mainpage libBinaMeth
  *
  * \section Introduction
  *
- * libBigWig is a C library for parsing local/remote bigWig and bigBed files. This is similar to Kent's library from UCSC, except 
+ * libBinaMeth is a C library for parsing local/remote bigWig and bigBed files. This is similar to Kent's library from UCSC, except 
  *  * The license is much more liberal
  *  * This code doesn't call `exit()` on error, thereby killing the calling application.
  *
  * External files are accessed using [curl](http://curl.haxx.se/).
  *
- * Please submit issues and pull requests [here](https://github.com/dpryan79/libBigWig).
+ * Please submit issues and pull requests [here](https://github.com/dpryan79/libBinaMeth).
  *
  * \section Compilation
  *
@@ -34,11 +34,11 @@ extern "C" {
  *
  * \section Testing file types
  *
- * As of version 0.3.0, libBigWig supports reading bigBed files. If an application needs to support both bigBed and bigWig input, then the `bwIsBigWig` and `bbIsBigBed` functions can be used to determine the file type. These both use the "magic" number at the beginning of the file to determine the file type.
+ * As of version 0.3.0, libBinaMeth supports reading bigBed files. If an application needs to support both bigBed and bigWig input, then the `bwIsBinaMeth` and `bbIsBigBed` functions can be used to determine the file type. These both use the "magic" number at the beginning of the file to determine the file type.
  *
  * \section Interval and entry iterators
  *
- * As of version 0.3.0, libBigWig supports iterating over intervals in bigWig files and entries in bigBed files. The number of intervals/entries returned with each iteration can be controlled by setting the number of blocks processed in each iteration (intervals and entries are group inside of bigWig and bigBed files into blocks of entries). See `test/testIterator.c` for an example.
+ * As of version 0.3.0, libBinaMeth supports iterating over intervals in bigWig files and entries in bigBed files. The number of intervals/entries returned with each iteration can be controlled by setting the number of blocks processed in each iteration (intervals and entries are group inside of bigWig and bigBed files into blocks of entries). See `test/testIterator.c` for an example.
  *
  * \section Examples
  * 
@@ -46,7 +46,7 @@ extern "C" {
  */
  
 
-/*! \file bigWig.h
+/*! \file binaMeth.h
  *
  * These are the functions and structured that should be used by external users. While I don't particularly recommend dealing with some of the structures (e.g., a bigWigHdr_t), they're described here in case you need them.
  *
@@ -145,7 +145,7 @@ enum bwStatsType {
 
 //Should hide this from end users
 /*!
- * @brief BigWig files have multiple "zoom" levels, each of which has its own header. This hold those headers
+ * @brief BinaMeth files have multiple "zoom" levels, each of which has its own header. This hold those headers
  *
  * N.B., there's 4 bytes of padding in the on disk representation of level and dataOffset.
  */
@@ -197,7 +197,7 @@ typedef struct {
 //    uint32_t *NmethCover; /*The number of cover of each chromosome*/
 } chromList_t;
 
-//TODO remove from bigWig.h
+//TODO remove from binaMeth.h
 /// @cond SKIP
 typedef struct bwLL bwLL;
 struct bwLL {
@@ -214,7 +214,7 @@ struct bwZoomBuffer_t { //each individual entry takes 32 bytes
 
 /*!
  * @brief This is only needed for writing bigWig files (and won't be created otherwise)
- * This should be removed from bigWig.h
+ * This should be removed from binaMeth.h
  */
 typedef struct {
     uint64_t nBlocks; /**<The number of blocks written*/
@@ -328,7 +328,7 @@ void bwCleanup(void);
  * @param callBack An optional user-supplied function. This is applied to remote connections so users can specify things like proxy and password information. See `test/testRemote` for an example.
  * @return 1 if the file appears to be bigWig, otherwise 0.
  */
-int bwIsBigWig(char *fname, CURLcode (*callBack)(CURL*));
+int bwIsBinaMeth(char *fname, CURLcode (*callBack)(CURL*));
 
 /*!
  * @brief Determine is a file is a bigBed file.

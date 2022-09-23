@@ -2,7 +2,7 @@
 #define LIBBIGWIG_VALUES_H
 
 #include <inttypes.h>
-/*! \file bwValues.h
+/*! \file bmValues.h
  *
  * You should not directly use functions and structures defined here. They're really meant for internal use only.
  *

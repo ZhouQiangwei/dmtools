@@ -3,8 +3,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
-#include "bigWig.h"
-#include "bwCommon.h"
+#include "binaMeth.h"
+#include "bmCommon.h"
 
 /// @cond SKIP
 struct val_t {
