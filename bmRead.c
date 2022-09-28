@@ -5,10 +5,10 @@
 #include <string.h>
 #include <stdio.h>
 
-static uint64_t readChromBlock(bigWigFile_t *bw, chromList_t *cl, uint32_t keySize);
+static uint64_t readChromBlock(binaMethFile_t *bm, chromList_t *cl, uint32_t keySize);
 
 //Return the position in the file
-long bwTell(bigWigFile_t *fp) {
+long bmTell(binaMethFile_t *fp) {
     if(fp->URL->type == BWG_FILE) return ftell(fp->URL->x.fp);
     return (long) (fp->URL->filePos + fp->URL->bufPos);
 }
@@ -16,14 +16,14 @@ long bwTell(bigWigFile_t *fp) {
 //Seek to a given position, always from the beginning of the file
 //Return 0 on success and -1 on error
 //To do, use the return code of urlSeek() in a more useful way.
-int bwSetPos(bigWigFile_t *fp, size_t pos) {
+int bmSetPos(binaMethFile_t *fp, size_t pos) {
     CURLcode rv = urlSeek(fp->URL, pos);
     if(rv == CURLE_OK) return 0;
     return -1;
 }
 
 //returns the number of full members read (nmemb on success, something less on error)
-size_t bwRead(void *data, size_t sz, size_t nmemb, bigWigFile_t *fp) {
+size_t bmRead(void *data, size_t sz, size_t nmemb, binaMethFile_t *fp) {
     size_t i, rv;
     for(i=0; i<nmemb; i++) {
         rv = urlRead(fp->URL, data+i*sz, sz);
@@ -34,8 +34,8 @@ size_t bwRead(void *data, size_t sz, size_t nmemb, bigWigFile_t *fp) {
 
 //Initializes curl and sets global variables
 //Returns 0 on success and 1 on error
-//This should be called only once and bwCleanup() must be called when finished.
-int bwInit(size_t defaultBufSize) {
+//This should be called only once and bmCleanup() must be called when finished.
+int bmInit(size_t defaultBufSize) {
     //set the buffer size, number of iterations, sleep time between iterations, etc.
     GLOBAL_DEFAULTBUFFERSIZE = defaultBufSize;
 
@@ -49,30 +49,30 @@ int bwInit(size_t defaultBufSize) {
 }
 
 //This should be called before quiting, to release memory acquired by curl
-void bwCleanup() {
+void bmCleanup() {
 #ifndef NOCURL
     curl_global_cleanup();
 #endif
 }
 
-static bwZoomHdr_t *bwReadZoomHdrs(bigWigFile_t *bw) {
-    if(bw->isWrite) return NULL;
+static bmZoomHdr_t *bmReadZoomHdrs(binaMethFile_t *bm) {
+    if(bm->isWrite) return NULL;
     uint16_t i;
-    bwZoomHdr_t *zhdr = malloc(sizeof(bwZoomHdr_t));
+    bmZoomHdr_t *zhdr = malloc(sizeof(bmZoomHdr_t));
     if(!zhdr) return NULL;
-    uint32_t *level = malloc(bw->hdr->nLevels * sizeof(uint64_t));
+    uint32_t *level = malloc(bm->hdr->nLevels * sizeof(uint64_t));
     if(!level) {
         free(zhdr);
         return NULL;
     }
     uint32_t padding = 0;
-    uint64_t *dataOffset = malloc(sizeof(uint64_t) * bw->hdr->nLevels);
+    uint64_t *dataOffset = malloc(sizeof(uint64_t) * bm->hdr->nLevels);
     if(!dataOffset) {
         free(zhdr);
         free(level);
         return NULL;
     }
-    uint64_t *indexOffset = malloc(sizeof(uint64_t) * bw->hdr->nLevels);
+    uint64_t *indexOffset = malloc(sizeof(uint64_t) * bm->hdr->nLevels);
     if(!indexOffset) {
         free(zhdr);
         free(level);
@@ -80,24 +80,24 @@ static bwZoomHdr_t *bwReadZoomHdrs(bigWigFile_t *bw) {
         return NULL;
     }
 
-    for(i=0; i<bw->hdr->nLevels; i++) {
-        if(bwRead((void*) &(level[i]), sizeof(uint32_t), 1, bw) != 1) goto error;
-        if(bwRead((void*) &padding, sizeof(uint32_t), 1, bw) != 1) goto error;
-        if(bwRead((void*) &(dataOffset[i]), sizeof(uint64_t), 1, bw) != 1) goto error;
-        if(bwRead((void*) &(indexOffset[i]), sizeof(uint64_t), 1, bw) != 1) goto error;
+    for(i=0; i<bm->hdr->nLevels; i++) {
+        if(bmRead((void*) &(level[i]), sizeof(uint32_t), 1, bm) != 1) goto error;
+        if(bmRead((void*) &padding, sizeof(uint32_t), 1, bm) != 1) goto error;
+        if(bmRead((void*) &(dataOffset[i]), sizeof(uint64_t), 1, bm) != 1) goto error;
+        if(bmRead((void*) &(indexOffset[i]), sizeof(uint64_t), 1, bm) != 1) goto error;
     }
 
     zhdr->level = level;
     zhdr->dataOffset = dataOffset;
     zhdr->indexOffset = indexOffset;
-    zhdr->idx = calloc(bw->hdr->nLevels, sizeof(bwRTree_t*));
+    zhdr->idx = calloc(bm->hdr->nLevels, sizeof(bmRTree_t*));
     if(!zhdr->idx) goto error;
 
     return zhdr;
 
 error:
-    for(i=0; i<bw->hdr->nLevels; i++) {
-        if(zhdr->idx[i]) bwDestroyIndex(zhdr->idx[i]);
+    for(i=0; i<bm->hdr->nLevels; i++) {
+        if(zhdr->idx[i]) bmDestroyIndex(zhdr->idx[i]);
     }
     free(zhdr);
     free(level);
@@ -106,14 +106,14 @@ error:
     return NULL;
 }
 
-static void bwHdrDestroy(bigWigHdr_t *hdr) {
+static void bmHdrDestroy(binaMethHdr_t *hdr) {
     int i;
     if(hdr->zoomHdrs) {
         free(hdr->zoomHdrs->level);
         free(hdr->zoomHdrs->dataOffset);
         free(hdr->zoomHdrs->indexOffset);
         for(i=0; i<hdr->nLevels; i++) {
-            if(hdr->zoomHdrs->idx[i]) bwDestroyIndex(hdr->zoomHdrs->idx[i]);
+            if(hdr->zoomHdrs->idx[i]) bmDestroyIndex(hdr->zoomHdrs->idx[i]);
         }
         free(hdr->zoomHdrs->idx);
         free(hdr->zoomHdrs);
@@ -121,51 +121,51 @@ static void bwHdrDestroy(bigWigHdr_t *hdr) {
     free(hdr);
 }
 
-static void bwHdrRead(bigWigFile_t *bw) {
+static void bmHdrRead(binaMethFile_t *bm) {
     uint32_t magic;
-    if(bw->isWrite) return;
-    bw->hdr = calloc(1, sizeof(bigWigHdr_t));
-    if(!bw->hdr) return;
+    if(bm->isWrite) return;
+    bm->hdr = calloc(1, sizeof(binaMethHdr_t));
+    if(!bm->hdr) return;
 
-    if(bwRead((void*) &magic, sizeof(uint32_t), 1, bw) != 1) goto error; //0x0
+    if(bmRead((void*) &magic, sizeof(uint32_t), 1, bm) != 1) goto error; //0x0
     if(!(magic & BM_MAGIC) && magic != BIGWIG_MAGIC && magic != BIGBED_MAGIC) goto error;
 
-    if(bwRead((void*) &(bw->hdr->version), sizeof(uint16_t), 1, bw) != 1) goto error; //0x4
-    if(bwRead((void*) &(bw->hdr->nLevels), sizeof(uint16_t), 1, bw) != 1) goto error; //0x6
-    if(bwRead((void*) &(bw->hdr->ctOffset), sizeof(uint64_t), 1, bw) != 1) goto error; //0x8
-    if(bwRead((void*) &(bw->hdr->dataOffset), sizeof(uint64_t), 1, bw) != 1) goto error; //0x10
-    if(bwRead((void*) &(bw->hdr->indexOffset), sizeof(uint64_t), 1, bw) != 1) goto error; //0x18
-    if(bwRead((void*) &(bw->hdr->fieldCount), sizeof(uint16_t), 1, bw) != 1) goto error; //0x20
-    if(bwRead((void*) &(bw->hdr->definedFieldCount), sizeof(uint16_t), 1, bw) != 1) goto error; //0x22
-    if(bwRead((void*) &(bw->hdr->sqlOffset), sizeof(uint64_t), 1, bw) != 1) goto error; //0x24
-    if(bwRead((void*) &(bw->hdr->summaryOffset), sizeof(uint64_t), 1, bw) != 1) goto error; //0x2c
-    if(bwRead((void*) &(bw->hdr->bufSize), sizeof(uint32_t), 1, bw) != 1) goto error; //0x34
-    if(bwRead((void*) &(bw->hdr->extensionOffset), sizeof(uint64_t), 1, bw) != 1) goto error; //0x38
+    if(bmRead((void*) &(bm->hdr->version), sizeof(uint16_t), 1, bm) != 1) goto error; //0x4
+    if(bmRead((void*) &(bm->hdr->nLevels), sizeof(uint16_t), 1, bm) != 1) goto error; //0x6
+    if(bmRead((void*) &(bm->hdr->ctOffset), sizeof(uint64_t), 1, bm) != 1) goto error; //0x8
+    if(bmRead((void*) &(bm->hdr->dataOffset), sizeof(uint64_t), 1, bm) != 1) goto error; //0x10
+    if(bmRead((void*) &(bm->hdr->indexOffset), sizeof(uint64_t), 1, bm) != 1) goto error; //0x18
+    if(bmRead((void*) &(bm->hdr->fieldCount), sizeof(uint16_t), 1, bm) != 1) goto error; //0x20
+    if(bmRead((void*) &(bm->hdr->definedFieldCount), sizeof(uint16_t), 1, bm) != 1) goto error; //0x22
+    if(bmRead((void*) &(bm->hdr->sqlOffset), sizeof(uint64_t), 1, bm) != 1) goto error; //0x24
+    if(bmRead((void*) &(bm->hdr->summaryOffset), sizeof(uint64_t), 1, bm) != 1) goto error; //0x2c
+    if(bmRead((void*) &(bm->hdr->bufSize), sizeof(uint32_t), 1, bm) != 1) goto error; //0x34
+    if(bmRead((void*) &(bm->hdr->extensionOffset), sizeof(uint64_t), 1, bm) != 1) goto error; //0x38
 
     //zoom headers
-    if(bw->hdr->nLevels) {
-        if(!(bw->hdr->zoomHdrs = bwReadZoomHdrs(bw))) goto error;
+    if(bm->hdr->nLevels) {
+        if(!(bm->hdr->zoomHdrs = bmReadZoomHdrs(bm))) goto error;
     }
 
     //File summary information
-    if(bw->hdr->summaryOffset) {
-        if(urlSeek(bw->URL, bw->hdr->summaryOffset) != CURLE_OK) goto error;
-        if(bwRead((void*) &(bw->hdr->nBasesCovered), sizeof(uint64_t), 1, bw) != 1) goto error;
-        if(bwRead((void*) &(bw->hdr->minVal), sizeof(uint64_t), 1, bw) != 1) goto error;
-        if(bwRead((void*) &(bw->hdr->maxVal), sizeof(uint64_t), 1, bw) != 1) goto error;
-        if(bwRead((void*) &(bw->hdr->sumData), sizeof(uint64_t), 1, bw) != 1) goto error;
-        if(bwRead((void*) &(bw->hdr->sumSquared), sizeof(uint64_t), 1, bw) != 1) goto error;
+    if(bm->hdr->summaryOffset) {
+        if(urlSeek(bm->URL, bm->hdr->summaryOffset) != CURLE_OK) goto error;
+        if(bmRead((void*) &(bm->hdr->nBasesCovered), sizeof(uint64_t), 1, bm) != 1) goto error;
+        if(bmRead((void*) &(bm->hdr->minVal), sizeof(uint64_t), 1, bm) != 1) goto error;
+        if(bmRead((void*) &(bm->hdr->maxVal), sizeof(uint64_t), 1, bm) != 1) goto error;
+        if(bmRead((void*) &(bm->hdr->sumData), sizeof(uint64_t), 1, bm) != 1) goto error;
+        if(bmRead((void*) &(bm->hdr->sumSquared), sizeof(uint64_t), 1, bm) != 1) goto error;
     }
 
     //In case of uncompressed remote files, let the IO functions know to request larger chunks
-    bw->URL->isCompressed = (bw->hdr->bufSize > 0)?1:0;
+    bm->URL->isCompressed = (bm->hdr->bufSize > 0)?1:0;
 
     return;
 
 error:
-    bwHdrDestroy(bw->hdr);
-    fprintf(stderr, "[bwHdrRead] There was an error while reading in the header!\n");
-    bw->hdr = NULL;
+    bmHdrDestroy(bm->hdr);
+    fprintf(stderr, "[bmHdrRead] There was an error while reading in the header!\n");
+    bm->hdr = NULL;
 }
 
 static void destroyChromList(chromList_t *cl) {
@@ -181,19 +181,19 @@ static void destroyChromList(chromList_t *cl) {
     free(cl);
 }
 
-static uint64_t readChromLeaf(bigWigFile_t *bw, chromList_t *cl, uint32_t valueSize) {
+static uint64_t readChromLeaf(binaMethFile_t *bm, chromList_t *cl, uint32_t valueSize) {
     uint16_t nVals, i;
     uint32_t idx;
     char *chrom = NULL;
 
-    if(bwRead((void*) &nVals, sizeof(uint16_t), 1, bw) != 1) return -1;
+    if(bmRead((void*) &nVals, sizeof(uint16_t), 1, bm) != 1) return -1;
     chrom = calloc(valueSize+1, sizeof(char));
     if(!chrom) return -1;
 
     for(i=0; i<nVals; i++) {
-        if(bwRead((void*) chrom, sizeof(char), valueSize, bw) != valueSize) goto error;
-        if(bwRead((void*) &idx, sizeof(uint32_t), 1, bw) != 1) goto error;
-        if(bwRead((void*) &(cl->len[idx]), sizeof(uint32_t), 1, bw) != 1) goto error;
+        if(bmRead((void*) chrom, sizeof(char), valueSize, bm) != valueSize) goto error;
+        if(bmRead((void*) &idx, sizeof(uint32_t), 1, bm) != 1) goto error;
+        if(bmRead((void*) &(cl->len[idx]), sizeof(uint32_t), 1, bm) != 1) goto error;
         cl->chrom[idx] = strdup(chrom);
         if(!(cl->chrom[idx])) goto error;
     }
@@ -206,54 +206,54 @@ error:
     return -1;
 }
 
-static uint64_t readChromNonLeaf(bigWigFile_t *bw, chromList_t *cl, uint32_t keySize) {
+static uint64_t readChromNonLeaf(binaMethFile_t *bm, chromList_t *cl, uint32_t keySize) {
     uint64_t offset , rv = 0, previous;
     uint16_t nVals, i;
 
-    if(bwRead((void*) &nVals, sizeof(uint16_t), 1, bw) != 1) return -1;
+    if(bmRead((void*) &nVals, sizeof(uint16_t), 1, bm) != 1) return -1;
 
-    previous = bwTell(bw) + keySize;
+    previous = bmTell(bm) + keySize;
     for(i=0; i<nVals; i++) {
-        if(bwSetPos(bw, previous)) return -1;
-        if(bwRead((void*) &offset, sizeof(uint64_t), 1, bw) != 1) return -1;
-        if(bwSetPos(bw, offset)) return -1;
-        rv += readChromBlock(bw, cl, keySize);
+        if(bmSetPos(bm, previous)) return -1;
+        if(bmRead((void*) &offset, sizeof(uint64_t), 1, bm) != 1) return -1;
+        if(bmSetPos(bm, offset)) return -1;
+        rv += readChromBlock(bm, cl, keySize);
         previous += 8 + keySize;
     }
 
     return rv;
 }
 
-static uint64_t readChromBlock(bigWigFile_t *bw, chromList_t *cl, uint32_t keySize) {
+static uint64_t readChromBlock(binaMethFile_t *bm, chromList_t *cl, uint32_t keySize) {
     uint8_t isLeaf, padding;
 
-    if(bwRead((void*) &isLeaf, sizeof(uint8_t), 1, bw) != 1) return -1;
-    if(bwRead((void*) &padding, sizeof(uint8_t), 1, bw) != 1) return -1;
+    if(bmRead((void*) &isLeaf, sizeof(uint8_t), 1, bm) != 1) return -1;
+    if(bmRead((void*) &padding, sizeof(uint8_t), 1, bm) != 1) return -1;
 
     if(isLeaf) {
-        return readChromLeaf(bw, cl, keySize);
+        return readChromLeaf(bm, cl, keySize);
     } else { //I've never actually observed one of these, which is good since they're pointless
-        return readChromNonLeaf(bw, cl, keySize);
+        return readChromNonLeaf(bm, cl, keySize);
     }
 }
 
-static chromList_t *bwReadChromList(bigWigFile_t *bw) {
+static chromList_t *bmReadChromList(binaMethFile_t *bm) {
     chromList_t *cl = NULL;
     uint32_t magic, keySize, valueSize, itemsPerBlock;
     uint64_t rv, itemCount;
-    if(bw->isWrite) return NULL;
-    if(bwSetPos(bw, bw->hdr->ctOffset)) return NULL;
+    if(bm->isWrite) return NULL;
+    if(bmSetPos(bm, bm->hdr->ctOffset)) return NULL;
 
     cl = calloc(1, sizeof(chromList_t));
     if(!cl) return NULL;
 
-    if(bwRead((void*) &magic, sizeof(uint32_t), 1, bw) != 1) goto error;
+    if(bmRead((void*) &magic, sizeof(uint32_t), 1, bm) != 1) goto error;
     if(magic != CIRTREE_MAGIC) goto error;
 
-    if(bwRead((void*) &itemsPerBlock, sizeof(uint32_t), 1, bw) != 1) goto error;
-    if(bwRead((void*) &keySize, sizeof(uint32_t), 1, bw) != 1) goto error;
-    if(bwRead((void*) &valueSize, sizeof(uint32_t), 1, bw) != 1) goto error;
-    if(bwRead((void*) &itemCount, sizeof(uint64_t), 1, bw) != 1) goto error;
+    if(bmRead((void*) &itemsPerBlock, sizeof(uint32_t), 1, bm) != 1) goto error;
+    if(bmRead((void*) &keySize, sizeof(uint32_t), 1, bm) != 1) goto error;
+    if(bmRead((void*) &valueSize, sizeof(uint32_t), 1, bm) != 1) goto error;
+    if(bmRead((void*) &itemCount, sizeof(uint64_t), 1, bm) != 1) goto error;
 
     cl->nKeys = itemCount;
     cl->chrom = calloc(itemCount, sizeof(char*));
@@ -261,11 +261,11 @@ static chromList_t *bwReadChromList(bigWigFile_t *bw) {
     if(!cl->chrom) goto error;
     if(!cl->len) goto error;
 
-    if(bwRead((void*) &magic, sizeof(uint32_t), 1, bw) != 1) goto error;
-    if(bwRead((void*) &magic, sizeof(uint32_t), 1, bw) != 1) goto error;
+    if(bmRead((void*) &magic, sizeof(uint32_t), 1, bm) != 1) goto error;
+    if(bmRead((void*) &magic, sizeof(uint32_t), 1, bm) != 1) goto error;
 
     //Read in the blocks
-    rv = readChromBlock(bw, cl, keySize);
+    rv = readChromBlock(bm, cl, keySize);
     if(rv == (uint64_t) -1) goto error;
     if(rv != itemCount) goto error;
 
@@ -277,7 +277,7 @@ error:
 }
 
 //This is here mostly for convenience
-static void bwDestroyWriteBuffer(bwWriteBuffer_t *wb) {
+static void bmDestroyWriteBuffer(bmWriteBuffer_t *wb) {
     if(wb->p) free(wb->p);
     if(wb->compressP) free(wb->compressP);
     if(wb->firstZoomBuffer) free(wb->firstZoomBuffer);
@@ -286,23 +286,23 @@ static void bwDestroyWriteBuffer(bwWriteBuffer_t *wb) {
     free(wb);
 }
 
-void bwClose(bigWigFile_t *fp) {
+void bmClose(binaMethFile_t *fp) {
     if(DEBUG>1) fprintf(stderr, "kkkkxx\n");
     if(!fp) return;
     if(DEBUG>1) fprintf(stderr, "lllllxxxx\n");
-    if(bwFinalize(fp)) {
-        fprintf(stderr, "[bwClose] There was an error while finishing writing a bigWig file! The output is likely truncated.\n");
+    if(bmFinalize(fp)) {
+        fprintf(stderr, "[bmClose] There was an error while finishing writing a binaMeth file! The output is likely truncated.\n");
     }
     if(DEBUG>1) fprintf(stderr, "222222222\n");
     if(fp->URL) urlClose(fp->URL);
-    if(fp->hdr) bwHdrDestroy(fp->hdr);
+    if(fp->hdr) bmHdrDestroy(fp->hdr);
     if(fp->cl) destroyChromList(fp->cl);
-    if(fp->idx) bwDestroyIndex(fp->idx);
-    if(fp->writeBuffer) bwDestroyWriteBuffer(fp->writeBuffer);
+    if(fp->idx) bmDestroyIndex(fp->idx);
+    if(fp->writeBuffer) bmDestroyWriteBuffer(fp->writeBuffer);
     free(fp);
 }
 
-int bwIsBigWig(char *fname, CURLcode (*callBack) (CURL*)) {
+int bmIsBinaMeth(char *fname, CURLcode (*callBack) (CURL*)) {
     uint32_t magic = 0;
     URL_t *URL = NULL;
 
@@ -328,15 +328,15 @@ uint32_t BMtype(char *fname, CURLcode (*callBack) (CURL*)) {
     return magic;
 }
 
-char *bbGetSQL(bigWigFile_t *bw) {
+char *bbGetSQL(binaMethFile_t *bm) {
     char *o = NULL;
     uint64_t len;
-    if(!bw->hdr->sqlOffset) return NULL;
-    len = bw->hdr->summaryOffset - bw->hdr->sqlOffset; //This includes the NULL terminator
+    if(!bm->hdr->sqlOffset) return NULL;
+    len = bm->hdr->summaryOffset - bm->hdr->sqlOffset; //This includes the NULL terminator
     o = malloc(sizeof(char) * len);
     if(!o) goto error;
-    if(bwSetPos(bw, bw->hdr->sqlOffset)) goto error;
-    if(bwRead((void*) o, len, 1, bw) != 1) goto error;
+    if(bmSetPos(bm, bm->hdr->sqlOffset)) goto error;
+    if(bmRead((void*) o, len, 1, bm) != 1) goto error;
     return o;
 
 error:
@@ -358,60 +358,62 @@ int bbIsBigBed(char *fname, CURLcode (*callBack) (CURL*)) {
     return 0;
 }
 
-bigWigFile_t *bwOpen(char *fname, CURLcode (*callBack) (CURL*), const char *mode) {
-    bigWigFile_t *bwg = calloc(1, sizeof(bigWigFile_t));
-    if(!bwg) {
-        fprintf(stderr, "[bwOpen] Couldn't allocate space to create the output object!\n");
+binaMethFile_t *bmOpen(char *fname, CURLcode (*callBack) (CURL*), const char *mode) {
+    binaMethFile_t *bmg = calloc(1, sizeof(binaMethFile_t));
+    if(!bmg) {
+        fprintf(stderr, "[bmOpen] Couldn't allocate space to create the output object!\n");
         return NULL;
     }
     if((!mode) || (strchr(mode, 'w') == NULL)) {
-        bwg->isWrite = 0;
-        bwg->URL = urlOpen(fname, *callBack, NULL);
-        if(!bwg->URL) {
-            fprintf(stderr, "[bwOpen] urlOpen is NULL!\n");
+        bmg->isWrite = 0;
+        bmg->URL = urlOpen(fname, *callBack, NULL);
+        if(!bmg->URL) {
+            fprintf(stderr, "[bmOpen] urlOpen is NULL!\n");
             goto error;
         }
 
         //Attempt to read in the fixed header
-        bwHdrRead(bwg);
-        if(!bwg->hdr) {
-            fprintf(stderr, "[bwOpen] bwg->hdr is NULL!\n");
+        bmHdrRead(bmg);
+        if(!bmg->hdr) {
+            fprintf(stderr, "[bmOpen] bmg->hdr is NULL!\n");
             goto error;
         }
 
         //Read in the chromosome list
-        bwg->cl = bwReadChromList(bwg);
-        if(!bwg->cl) {
-            fprintf(stderr, "[bwOpen] bwg->cl is NULL (%s)!\n", fname);
+        bmg->cl = bmReadChromList(bmg);
+        if(!bmg->cl) {
+            fprintf(stderr, "[bmOpen] bmg->cl is NULL (%s)!\n", fname);
             goto error;
         }
 
         //Read in the index
-        if(bwg->hdr->indexOffset) {
-            bwg->idx = bwReadIndex(bwg, 0);
-            if(!bwg->idx) {
-                fprintf(stderr, "[bwOpen] bwg->idx is NULL bwg->hdr->dataOffset 0x%"PRIx64"!\n", bwg->hdr->dataOffset);
+        if(bmg->hdr->indexOffset) {
+            bmg->idx = bmReadIndex(bmg, 0);
+            if(!bmg->idx) {
+                fprintf(stderr, "[bmOpen] bmg->idx is NULL bmg->hdr->dataOffset 0x%"PRIx64"!\n", bmg->hdr->dataOffset);
                 goto error;
             }
         }
+        //type used for meth type
+        bmg->type = bmg->hdr->version;
     } else {
-        bwg->isWrite = 1;
-        bwg->URL = urlOpen(fname, NULL, "w+");
-        if(!bwg->URL) goto error;
-        bwg->writeBuffer = calloc(1,sizeof(bwWriteBuffer_t));
-        if(!bwg->writeBuffer) goto error;
-        bwg->writeBuffer->l = 24;
+        bmg->isWrite = 1;
+        bmg->URL = urlOpen(fname, NULL, "w+");
+        if(!bmg->URL) goto error;
+        bmg->writeBuffer = calloc(1,sizeof(bmWriteBuffer_t));
+        if(!bmg->writeBuffer) goto error;
+        bmg->writeBuffer->l = 24;
     }
 
-    return bwg;
+    return bmg;
 
 error:
-    bwClose(bwg);
+    bmClose(bmg);
     return NULL;
 }
 
-bigWigFile_t *bbOpen(char *fname, CURLcode (*callBack) (CURL*)) {
-    bigWigFile_t *bb = calloc(1, sizeof(bigWigFile_t));
+binaMethFile_t *bbOpen(char *fname, CURLcode (*callBack) (CURL*)) {
+    binaMethFile_t *bb = calloc(1, sizeof(binaMethFile_t));
     if(!bb) {
         fprintf(stderr, "[bbOpen] Couldn't allocate space to create the output object!\n");
         return NULL;
@@ -424,20 +426,20 @@ bigWigFile_t *bbOpen(char *fname, CURLcode (*callBack) (CURL*)) {
     if(!bb->URL) goto error;
 
     //Attempt to read in the fixed header
-    bwHdrRead(bb);
+    bmHdrRead(bb);
     if(!bb->hdr) goto error;
 
     //Read in the chromosome list
-    bb->cl = bwReadChromList(bb);
+    bb->cl = bmReadChromList(bb);
     if(!bb->cl) goto error;
 
     //Read in the index
-    bb->idx = bwReadIndex(bb, 0);
+    bb->idx = bmReadIndex(bb, 0);
     if(!bb->idx) goto error;
 
     return bb;
 
 error:
-    bwClose(bb);
+    bmClose(bb);
     return NULL;
 }

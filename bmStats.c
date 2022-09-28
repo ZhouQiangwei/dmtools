@@ -8,7 +8,7 @@
 
 //Returns -1 if there are no applicable levels, otherwise an integer indicating the most appropriate level.
 //Like Kent's library, this divides the desired bin size by 2 to minimize the effect of blocks overlapping multiple bins
-static int32_t determineZoomLevel(bigWigFile_t *fp, int basesPerBin) {
+static int32_t determineZoomLevel(binaMethFile_t *fp, int basesPerBin) {
     int32_t out = -1;
     int64_t diff;
     //uint32_t bestDiff = -1;
@@ -61,7 +61,7 @@ double getScalar(uint32_t i_start, uint32_t i_end, uint32_t b_start, uint32_t b_
 }
 
 //Returns NULL on error
-static struct vals_t *getVals(bigWigFile_t *fp, bwOverlapBlock_t *o, int i, uint32_t tid, uint32_t start, uint32_t end) {
+static struct vals_t *getVals(binaMethFile_t *fp, bmOverlapBlock_t *o, int i, uint32_t tid, uint32_t start, uint32_t end) {
     void *buf = NULL, *compBuf = NULL;
     uLongf sz = fp->hdr->bufSize;
     int compressed = 0, rv;
@@ -75,7 +75,7 @@ static struct vals_t *getVals(bigWigFile_t *fp, bwOverlapBlock_t *o, int i, uint
     }
     sz = 0; //This is now the size of the compressed buffer
 
-    if(bwSetPos(fp, o->offset[i])) goto error;
+    if(bmSetPos(fp, o->offset[i])) goto error;
 
     vals = calloc(1,sizeof(struct vals_t));
     if(!vals) goto error;
@@ -86,7 +86,7 @@ static struct vals_t *getVals(bigWigFile_t *fp, bwOverlapBlock_t *o, int i, uint
     if(sz < o->size[i]) compBuf = malloc(o->size[i]);
     if(!compBuf) goto error;
 
-    if(bwRead(compBuf, o->size[i], 1, fp) != 1) goto error;
+    if(bmRead(compBuf, o->size[i], 1, fp) != 1) goto error;
     if(compressed) {
         sz = fp->hdr->bufSize;
         rv = uncompress(buf, &sz, compBuf, o->size[i]);
@@ -137,7 +137,7 @@ error:
 }
 
 //On error, errno is set to ENOMEM and NaN is returned (though NaN can be returned normally)
-static double blockMean(bigWigFile_t *fp, bwOverlapBlock_t *blocks, uint32_t tid, uint32_t start, uint32_t end) {
+static double blockMean(binaMethFile_t *fp, bmOverlapBlock_t *blocks, uint32_t tid, uint32_t start, uint32_t end) {
     uint32_t i, j;
     double output = 0.0, coverage = 0.0;
     struct vals_t *v = NULL;
@@ -166,7 +166,7 @@ error:
     return strtod("NaN", NULL);
 }
 
-static double intMean(bwOverlappingIntervals_t* ints, uint32_t start, uint32_t end, uint16_t version, uint8_t strand, uint8_t context) {
+static double intMean(bmOverlappingIntervals_t* ints, uint32_t start, uint32_t end, uint16_t version, uint8_t strand, uint8_t context) {
     double sum = 0.0;
     uint32_t nBases = 0, i, start_use, end_use;
 
@@ -225,7 +225,7 @@ static double intMean(bwOverlappingIntervals_t* ints, uint32_t start, uint32_t e
     return sum/nBases;
 }
 
-double *intMean_array(bwOverlappingIntervals_t* ints, uint32_t start, uint32_t end, uint16_t version, uint8_t strand) {
+double *intMean_array(bmOverlappingIntervals_t* ints, uint32_t start, uint32_t end, uint16_t version, uint8_t strand) {
     uint32_t i, start_use, end_use;
     //0 c, 1 cg, 2 chg, 3 chh
     unsigned int Tsize = 4;
@@ -312,7 +312,7 @@ double *intMean_array(bwOverlappingIntervals_t* ints, uint32_t start, uint32_t e
 
 
 
-double *intweightedMean_array(bwOverlappingIntervals_t* ints, uint32_t start, uint32_t end, uint16_t version, uint8_t strand) {
+double *intweightedMean_array(bmOverlappingIntervals_t* ints, uint32_t start, uint32_t end, uint16_t version, uint8_t strand) {
     uint32_t i, start_use, end_use;
     unsigned int Tsize = 4;
     double *sum = malloc(sizeof(double)*Tsize);
@@ -322,7 +322,7 @@ double *intweightedMean_array(bwOverlappingIntervals_t* ints, uint32_t start, ui
     uint32_t coverC = 0;
     double *output = malloc(sizeof(double)*Tsize);
     if(!(version & BM_COVER)){
-        fprintf(stderr, "Error: mbw file without coverage information!!!\n mean average will replace weight coverage.");
+        fprintf(stderr, "Warning: bm file without coverage information!!!\n mean average will replace weight coverage.\n");
         double *Amean = intMean_array(ints, start, end, version, strand);
         return Amean;
     }
@@ -402,12 +402,12 @@ double *intweightedMean_array(bwOverlappingIntervals_t* ints, uint32_t start, ui
     return output;
 }
 
-void intweightedMean_array_count(bwOverlappingIntervals_t* ints, uint32_t start, uint32_t end, uint16_t version, uint8_t strand, uint16_t *countC, uint16_t *countCT) {
+void intweightedMean_array_count(bmOverlappingIntervals_t* ints, uint32_t start, uint32_t end, uint16_t version, uint8_t strand, uint16_t *countC, uint16_t *countCT) {
     uint32_t i, start_use, end_use;
     unsigned int Tsize = 4;
     uint32_t coverC = 0;
     if(!(version & BM_COVER)){
-        fprintf(stderr, "Error: mbw file without coverage information!!!\n");
+        fprintf(stderr, "Error: bm file without coverage information!!!\n");
         return;
     }
     for(i=0;i<Tsize;i++){
@@ -482,11 +482,11 @@ void intweightedMean_array_count(bwOverlappingIntervals_t* ints, uint32_t start,
     return;
 }
 
-static double intweightedMean(bwOverlappingIntervals_t* ints, uint32_t start, uint32_t end, uint16_t version, uint8_t strand, uint8_t context) {
+static double intweightedMean(bmOverlappingIntervals_t* ints, uint32_t start, uint32_t end, uint16_t version, uint8_t strand, uint8_t context) {
     double sum = 0.0;
     uint32_t nBases = 0, i, start_use, end_use;
     if(!(version & BM_COVER)){
-        fprintf(stderr, "Error: mbw file without coverage information!!!\n mean average will replace weight coverage.");
+        fprintf(stderr, "Warning: bm file without coverage information!!!\n mean average will replace weight coverage.\n");
         float Amean = intMean(ints, start, end, version, strand, context);
         return Amean;
     }
@@ -545,7 +545,7 @@ static double intweightedMean(bwOverlappingIntervals_t* ints, uint32_t start, ui
 }
 
 //Does UCSC compensate for partial block/range overlap?
-static double blockDev(bigWigFile_t *fp, bwOverlapBlock_t *blocks, uint32_t tid, uint32_t start, uint32_t end) {
+static double blockDev(binaMethFile_t *fp, bmOverlapBlock_t *blocks, uint32_t tid, uint32_t start, uint32_t end) {
     uint32_t i, j;
     double mean = 0.0, ssq = 0.0, coverage = 0.0, diff;
     struct vals_t *v = NULL;
@@ -581,7 +581,7 @@ error:
 }
 
 //This uses compensated summation to account for finite precision math
-static double intDev(bwOverlappingIntervals_t* ints, uint32_t start, uint32_t end, uint16_t version, uint8_t strand, uint8_t context) {
+static double intDev(bmOverlappingIntervals_t* ints, uint32_t start, uint32_t end, uint16_t version, uint8_t strand, uint8_t context) {
     double v1 = 0.0, mean, rv;
     uint32_t nBases = 0, i, start_use, end_use;
 
@@ -647,7 +647,7 @@ static double intDev(bwOverlappingIntervals_t* ints, uint32_t start, uint32_t en
     return rv;
 }
 
-static double blockMax(bigWigFile_t *fp, bwOverlapBlock_t *blocks, uint32_t tid, uint32_t start, uint32_t end) {
+static double blockMax(binaMethFile_t *fp, bmOverlapBlock_t *blocks, uint32_t tid, uint32_t start, uint32_t end) {
     uint32_t i, j, isNA = 1;
     double o = strtod("NaN", NULL);
     struct vals_t *v = NULL;
@@ -677,7 +677,7 @@ error:
     return strtod("NaN", NULL);
 }
 
-static double intMax(bwOverlappingIntervals_t* ints) {
+static double intMax(bmOverlappingIntervals_t* ints) {
     uint32_t i;
     double o;
 
@@ -691,7 +691,7 @@ static double intMax(bwOverlappingIntervals_t* ints) {
     return o;
 }
 
-static double blockMin(bigWigFile_t *fp, bwOverlapBlock_t *blocks, uint32_t tid, uint32_t start, uint32_t end) {
+static double blockMin(binaMethFile_t *fp, bmOverlapBlock_t *blocks, uint32_t tid, uint32_t start, uint32_t end) {
     uint32_t i, j, isNA = 1;
     double o = strtod("NaN", NULL);
     struct vals_t *v = NULL;
@@ -719,7 +719,7 @@ error:
     return strtod("NaN", NULL);
 }
 
-static double intMin(bwOverlappingIntervals_t* ints) {
+static double intMin(bmOverlappingIntervals_t* ints) {
     uint32_t i;
     double o;
 
@@ -734,7 +734,7 @@ static double intMin(bwOverlappingIntervals_t* ints) {
 }
 
 //Does UCSC compensate for only partial block/interval overlap?
-static double blockCoverage(bigWigFile_t *fp, bwOverlapBlock_t *blocks, uint32_t tid, uint32_t start, uint32_t end) {
+static double blockCoverage(binaMethFile_t *fp, bmOverlapBlock_t *blocks, uint32_t tid, uint32_t start, uint32_t end) {
     uint32_t i, j;
     double o = 0.0;
     struct vals_t *v = NULL;
@@ -760,7 +760,7 @@ error:
     return strtod("NaN", NULL);
 }
 
-static double intCoverage(bwOverlappingIntervals_t* ints, uint32_t start, uint32_t end, uint16_t version) {
+static double intCoverage(bmOverlappingIntervals_t* ints, uint32_t start, uint32_t end, uint16_t version) {
     uint32_t i, start_use, end_use;
     double o = 0.0;
 
@@ -783,7 +783,7 @@ static double intCoverage(bwOverlappingIntervals_t* ints, uint32_t start, uint32
     return o/(end-start);
 }
 
-static double blockSum(bigWigFile_t *fp, bwOverlapBlock_t *blocks, uint32_t tid, uint32_t start, uint32_t end) {
+static double blockSum(binaMethFile_t *fp, bmOverlapBlock_t *blocks, uint32_t tid, uint32_t start, uint32_t end) {
     uint32_t i, j, sizeUse;
     double o = 0.0;
     struct vals_t *v = NULL;
@@ -812,7 +812,7 @@ error:
     return strtod("NaN", NULL);
 }
 
-static double intSum(bwOverlappingIntervals_t* ints, uint32_t start, uint32_t end, uint16_t version) {
+static double intSum(bmOverlappingIntervals_t* ints, uint32_t start, uint32_t end, uint16_t version) {
     uint32_t i, start_use, end_use;
     double o = 0.0;
 
@@ -836,13 +836,13 @@ static double intSum(bwOverlappingIntervals_t* ints, uint32_t start, uint32_t en
 }
 
 //Returns NULL on error, otherwise a double* that needs to be free()d
-double *bwStatsFromZoom(bigWigFile_t *fp, int32_t level, uint32_t tid, uint32_t start, uint32_t end, uint32_t nBins, enum bwStatsType type) {
-    bwOverlapBlock_t *blocks = NULL;
+double *bmStatsFromZoom(binaMethFile_t *fp, int32_t level, uint32_t tid, uint32_t start, uint32_t end, uint32_t nBins, enum bmStatsType type) {
+    bmOverlapBlock_t *blocks = NULL;
     double *output = NULL;
     uint32_t pos = start, i, end2;
 
     if(!fp->hdr->zoomHdrs->idx[level]) {
-        fp->hdr->zoomHdrs->idx[level] = bwReadIndex(fp, fp->hdr->zoomHdrs->indexOffset[level]);
+        fp->hdr->zoomHdrs->idx[level] = bmReadIndex(fp, fp->hdr->zoomHdrs->indexOffset[level]);
         if(!fp->hdr->zoomHdrs->idx[level]) return NULL;
     }
     errno = 0; //Sometimes libCurls sets and then doesn't unset errno on errors
@@ -892,14 +892,14 @@ double *bwStatsFromZoom(bigWigFile_t *fp, int32_t level, uint32_t tid, uint32_t 
     return output;
 
 error:
-    fprintf(stderr, "got an error in bwStatsFromZoom in the range %"PRIu32"-%"PRIu32": %s\n", pos, end2, strerror(errno));
+    fprintf(stderr, "got an error in bmStatsFromZoom in the range %"PRIu32"-%"PRIu32": %s\n", pos, end2, strerror(errno));
     if(blocks) destroyBWOverlapBlock(blocks);
     if(output) free(output);
     return NULL;
 }
 
-double *bwStatsFromFull(bigWigFile_t *fp, char *chrom, uint32_t start, uint32_t end, uint32_t nBins, uint32_t movestep, enum bwStatsType type, uint8_t strand, uint8_t context) {
-    bwOverlappingIntervals_t *ints = NULL;
+double *bmStatsFromFull(binaMethFile_t *fp, char *chrom, uint32_t start, uint32_t end, uint32_t nBins, uint32_t movestep, enum bmStatsType type, uint8_t strand, uint8_t context) {
+    bmOverlappingIntervals_t *ints = NULL;
     double *output = malloc(sizeof(double)*nBins);
     uint32_t i, pos = start, end2;
     if(!output) return NULL;
@@ -911,7 +911,7 @@ double *bwStatsFromFull(bigWigFile_t *fp, char *chrom, uint32_t start, uint32_t 
         }else{
             end2 = start + movestep*(i+1);
         }
-        ints = bwGetOverlappingIntervals(fp, chrom, pos, end2);
+        ints = bmGetOverlappingIntervals(fp, chrom, pos, end2);
 
         if(!ints) {
             output[i] = strtod("NaN", NULL);
@@ -919,30 +919,30 @@ double *bwStatsFromFull(bigWigFile_t *fp, char *chrom, uint32_t start, uint32_t 
         }
 
         switch(type) {
-        default :
-        case 0:
-            output[i] = intMean(ints, pos, end2, fp->hdr->version, strand, context);
-            break;
-        case 6:
-            output[i] = intweightedMean(ints, pos, end2, fp->hdr->version, strand, context);
-            break;
-        case 1:
-            output[i] = intDev(ints, pos, end2, fp->hdr->version, strand, context);
-            break;
-        case 2:
-            output[i] = intMax(ints);
-            break;
-        case 3:
-            output[i] = intMin(ints);
-            break;
-        case 4:
-            output[i] = intCoverage(ints, pos, end2, fp->hdr->version);
-            break;
-        case 5:
-            output[i] = intSum(ints, pos, end2, fp->hdr->version);
-            break;
+            default :
+            case 0:
+                output[i] = intMean(ints, pos, end2, fp->hdr->version, strand, context);
+                break;
+            case 6:
+                output[i] = intweightedMean(ints, pos, end2, fp->hdr->version, strand, context);
+                break;
+            case 1:
+                output[i] = intDev(ints, pos, end2, fp->hdr->version, strand, context);
+                break;
+            case 2:
+                output[i] = intMax(ints);
+                break;
+            case 3:
+                output[i] = intMin(ints);
+                break;
+            case 4:
+                output[i] = intCoverage(ints, pos, end2, fp->hdr->version);
+                break;
+            case 5:
+                output[i] = intSum(ints, pos, end2, fp->hdr->version);
+                break;
         }
-        bwDestroyOverlappingIntervals(ints);
+        bmDestroyOverlappingIntervals(ints);
         //pos = end2;
         pos = pos + movestep;
     }
@@ -950,8 +950,8 @@ double *bwStatsFromFull(bigWigFile_t *fp, char *chrom, uint32_t start, uint32_t 
     return output;
 }
 
-double *bwStatsFromFull_array(bigWigFile_t *fp, char *chrom, uint32_t start, uint32_t end, uint32_t nBins, uint32_t movestep, enum bwStatsType type, uint8_t strand) {
-    bwOverlappingIntervals_t *ints = NULL;
+double *bmStatsFromFull_array(binaMethFile_t *fp, char *chrom, uint32_t start, uint32_t end, uint32_t nBins, uint32_t movestep, enum bmStatsType type, uint8_t strand) {
+    bmOverlappingIntervals_t *ints = NULL;
     unsigned int Tsize = 4;
     double *output = malloc(sizeof(double)*nBins*Tsize);
     uint32_t i, pos = start, end2, j, k;
@@ -965,7 +965,7 @@ double *bwStatsFromFull_array(bigWigFile_t *fp, char *chrom, uint32_t start, uin
         }else{
             end2 = start + movestep*(i+1);
         }
-        ints = bwGetOverlappingIntervals(fp, chrom, pos, end2);
+        ints = bmGetOverlappingIntervals(fp, chrom, pos, end2);
 
         if(!ints) {
             for(j=0;j<Tsize;j++){
@@ -990,7 +990,7 @@ double *bwStatsFromFull_array(bigWigFile_t *fp, char *chrom, uint32_t start, uin
                 break;
         }
         k += Tsize;
-        bwDestroyOverlappingIntervals(ints);
+        bmDestroyOverlappingIntervals(ints);
         //pos = end2;
         pos = pos + movestep;
     }
@@ -998,8 +998,8 @@ double *bwStatsFromFull_array(bigWigFile_t *fp, char *chrom, uint32_t start, uin
     return output;
 }
 
-void bwStatsFromFull_array_count(bigWigFile_t *fp, char *chrom, uint32_t start, uint32_t end, uint32_t nBins, uint32_t movestep, enum bwStatsType type, uint8_t strand, uint16_t *countC, uint16_t *countCT) {
-    bwOverlappingIntervals_t *ints = NULL;
+void bmStatsFromFull_array_count(binaMethFile_t *fp, char *chrom, uint32_t start, uint32_t end, uint32_t nBins, uint32_t movestep, enum bmStatsType type, uint8_t strand, uint16_t *countC, uint16_t *countCT) {
+    bmOverlappingIntervals_t *ints = NULL;
     unsigned int Tsize = 4;
     //double *output = malloc(sizeof(double)*nBins*Tsize);
     uint32_t i, pos = start, end2, j, k;
@@ -1014,7 +1014,7 @@ void bwStatsFromFull_array_count(bigWigFile_t *fp, char *chrom, uint32_t start, 
         }else{
             end2 = start + movestep*(i+1);
         }
-        ints = bwGetOverlappingIntervals(fp, chrom, pos, end2);
+        ints = bmGetOverlappingIntervals(fp, chrom, pos, end2);
 
         if(!ints) {
             for(j=0;j<Tsize;j++){
@@ -1035,7 +1035,7 @@ void bwStatsFromFull_array_count(bigWigFile_t *fp, char *chrom, uint32_t start, 
                 break;
         }
         k += Tsize;
-        bwDestroyOverlappingIntervals(ints);
+        bmDestroyOverlappingIntervals(ints);
         //pos = end2;
         pos = pos + movestep;
     }
@@ -1045,33 +1045,33 @@ void bwStatsFromFull_array_count(bigWigFile_t *fp, char *chrom, uint32_t start, 
 
 //Returns a list of floats of length nBins that must be free()d
 //On error, NULL is returned
-double *bwStats(bigWigFile_t *fp, char *chrom, uint32_t start, uint32_t end, uint32_t nBins, uint32_t movestep, enum bwStatsType type, uint8_t strand, uint8_t context) {
+double *bmStats(binaMethFile_t *fp, char *chrom, uint32_t start, uint32_t end, uint32_t nBins, uint32_t movestep, enum bmStatsType type, uint8_t strand, uint8_t context) {
     //int32_t level = determineZoomLevel(fp, ((double)(end-start))/((int) nBins));
-    uint32_t tid = bwGetTid(fp, chrom);
+    uint32_t tid = bmGetTid(fp, chrom);
     if(tid == (uint32_t) -1) return NULL;
 
     //if(level == -1 || level == 0)
-    return bwStatsFromFull(fp, chrom, start, end, nBins, movestep, type, strand, context);
-    //return bwStatsFromZoom(fp, level, tid, start, end, nBins, type);
+    return bmStatsFromFull(fp, chrom, start, end, nBins, movestep, type, strand, context);
+    //return bmStatsFromZoom(fp, level, tid, start, end, nBins, type);
 }
 
-double *bwStats_array(bigWigFile_t *fp, char *chrom, uint32_t start, uint32_t end, uint32_t nBins, uint32_t movestep, enum bwStatsType type, uint8_t strand) {
+double *bmStats_array(binaMethFile_t *fp, char *chrom, uint32_t start, uint32_t end, uint32_t nBins, uint32_t movestep, enum bmStatsType type, uint8_t strand) {
     //int32_t level = determineZoomLevel(fp, ((double)(end-start))/((int) nBins));
-    uint32_t tid = bwGetTid(fp, chrom);
+    uint32_t tid = bmGetTid(fp, chrom);
     if(tid == (uint32_t) -1) return NULL;
 
     //if(level == -1 || level == 0)
-    return bwStatsFromFull_array(fp, chrom, start, end, nBins, movestep, type, strand);
-    //return bwStatsFromZoom(fp, level, tid, start, end, nBins, type);
+    return bmStatsFromFull_array(fp, chrom, start, end, nBins, movestep, type, strand);
+    //return bmStatsFromZoom(fp, level, tid, start, end, nBins, type);
 }
 
-void bwStats_array_count(bigWigFile_t *fp, char *chrom, uint32_t start, uint32_t end, uint32_t nBins, uint32_t movestep, enum bwStatsType type, uint8_t strand, uint16_t *countC, uint16_t *countCT) {
+void bmStats_array_count(binaMethFile_t *fp, char *chrom, uint32_t start, uint32_t end, uint32_t nBins, uint32_t movestep, enum bmStatsType type, uint8_t strand, uint16_t *countC, uint16_t *countCT) {
     //int32_t level = determineZoomLevel(fp, ((double)(end-start))/((int) nBins));
-    uint32_t tid = bwGetTid(fp, chrom);
+    uint32_t tid = bmGetTid(fp, chrom);
     if(tid == (uint32_t) -1) return;
 
     //if(level == -1 || level == 0)
-    bwStatsFromFull_array_count(fp, chrom, start, end, nBins, movestep, type, strand, countC, countCT);
-    //return bwStatsFromZoom(fp, level, tid, start, end, nBins, type);
+    bmStatsFromFull_array_count(fp, chrom, start, end, nBins, movestep, type, strand, countC, countCT);
+    //return bmStatsFromZoom(fp, level, tid, start, end, nBins, type);
     return;
 }

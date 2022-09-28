@@ -17,9 +17,9 @@ struct val_t {
 };
 /// @endcond
 
-//Create a chromList_t and attach it to a bigWigFile_t *. Returns NULL on error
+//Create a chromList_t and attach it to a binaMethFile_t *. Returns NULL on error
 //Note that chroms and lengths are duplicated, so you MUST free the input
-chromList_t *bwCreateChromList(char **chroms, uint32_t *lengths, int64_t n) {
+chromList_t *bmCreateChromList(char **chroms, uint32_t *lengths, int64_t n) {
     int64_t i = 0;
     chromList_t *cl = calloc(1, sizeof(chromList_t));
     if(!cl) return NULL;
@@ -51,7 +51,7 @@ error:
     return NULL;
 }
 
-chromList_t *bwCreateChromList_ifp(bigWigFile_t *ifp) {
+chromList_t *bmCreateChromList_ifp(binaMethFile_t *ifp) {
     int64_t i = 0;
     chromList_t *cl = calloc(1, sizeof(chromList_t));
     if(!cl) return NULL;
@@ -86,9 +86,9 @@ error:
 
 //If maxZooms == 0, then 0 is used (i.e., there are no zoom levels). If maxZooms < 0 or > 65535 then 10 is used.
 //TODO allow changing bufSize and blockSize
-int bwCreateHdr(bigWigFile_t *fp, int32_t maxZooms) {
+int bmCreateHdr(binaMethFile_t *fp, int32_t maxZooms) {
     if(!fp->isWrite) return 1;
-    bigWigHdr_t *hdr = calloc(1, sizeof(bigWigHdr_t));
+    binaMethHdr_t *hdr = calloc(1, sizeof(binaMethHdr_t));
     if(!hdr) return 2;
 
     hdr->version = 4;
@@ -217,20 +217,20 @@ static int writeChromList(FILE *fp, chromList_t *cl) {
 
 //returns 0 on success
 //Still need to fill in indexOffset
-int bwWriteHdr(bigWigFile_t *bw) {
+int bmWriteHdr(binaMethFile_t *bm) {
     uint32_t magic = BIGWIG_MAGIC;
     //
     uint16_t magic2 = BM_MAGIC;
-    magic2 |= (uint16_t) bw->type;
-    //if(DEBUG>1) printf("|||||| %ld\n", bw->type);
+    magic2 |= (uint16_t) bm->type;
+    //if(DEBUG>1) printf("|||||| %ld\n", bm->type);
 
     uint16_t two = magic2; //4;
     FILE *fp;
     void *p = calloc(58, sizeof(uint8_t)); //58 bytes of nothing
-    if(!bw->isWrite) return 1;
+    if(!bm->isWrite) return 1;
 
     //The header itself, largely just reserving space...
-    fp = bw->URL->x.fp;
+    fp = bm->URL->x.fp;
     if(!fp) return 2;
     if(fseek(fp, 0, SEEK_SET)) return 3;
     if(fwrite(&magic, sizeof(uint32_t), 1, fp) != 1) return 4;
@@ -238,25 +238,25 @@ int bwWriteHdr(bigWigFile_t *bw) {
     if(fwrite(p, sizeof(uint8_t), 58, fp) != 58) return 6;
 
     //Empty zoom headers
-    if(bw->hdr->nLevels) {
-        for(two=0; two<bw->hdr->nLevels; two++) {
+    if(bm->hdr->nLevels) {
+        for(two=0; two<bm->hdr->nLevels; two++) {
             if(fwrite(p, sizeof(uint8_t), 24, fp) != 24) return 9;
         }
     }
 
     //Update summaryOffset and write an empty summary block
-    bw->hdr->summaryOffset = ftell(fp);
+    bm->hdr->summaryOffset = ftell(fp);
     if(fwrite(p, sizeof(uint8_t), 40, fp) != 40) return 10;
-    if(writeAtPos(&(bw->hdr->summaryOffset), sizeof(uint64_t), 1, 0x2c, fp)) return 11;
+    if(writeAtPos(&(bm->hdr->summaryOffset), sizeof(uint64_t), 1, 0x2c, fp)) return 11;
 
     //Write the chromosome list as a stupid freaking tree (because let's TREE ALL THE THINGS!!!)
-    bw->hdr->ctOffset = ftell(fp);
-    if(writeChromList(fp, bw->cl)) return 7;
-    if(writeAtPos(&(bw->hdr->ctOffset), sizeof(uint64_t), 1, 0x8, fp)) return 8;
+    bm->hdr->ctOffset = ftell(fp);
+    if(writeChromList(fp, bm->cl)) return 7;
+    if(writeAtPos(&(bm->hdr->ctOffset), sizeof(uint64_t), 1, 0x8, fp)) return 8;
 
     //Update the dataOffset
-    bw->hdr->dataOffset = ftell(fp);
-    if(writeAtPos(&bw->hdr->dataOffset, sizeof(uint64_t), 1, 0x10, fp)) return 12;
+    bm->hdr->dataOffset = ftell(fp);
+    if(writeAtPos(&bm->hdr->dataOffset, sizeof(uint64_t), 1, 0x10, fp)) return 12;
 
     //Save space for the number of blocks
     if(fwrite(p, sizeof(uint8_t), 8, fp) != 8) return 13;
@@ -265,8 +265,8 @@ int bwWriteHdr(bigWigFile_t *bw) {
     return 0;
 }
 
-static int insertIndexNode(bigWigFile_t *fp, bwRTreeNode_t *leaf) {
-    bwLL *l = malloc(sizeof(bwLL));
+static int insertIndexNode(binaMethFile_t *fp, bmRTreeNode_t *leaf) {
+    bmLL *l = malloc(sizeof(bmLL));
     if(!l) return 1;
     l->node = leaf;
     l->next = NULL;
@@ -281,8 +281,8 @@ static int insertIndexNode(bigWigFile_t *fp, bwRTreeNode_t *leaf) {
 }
 
 //0 on success
-static int appendIndexNodeEntry(bigWigFile_t *fp, uint32_t tid0, uint32_t tid1, uint32_t start, uint32_t end, uint64_t offset, uint64_t size) {
-    bwLL *n = fp->writeBuffer->currentIndexNode;
+static int appendIndexNodeEntry(binaMethFile_t *fp, uint32_t tid0, uint32_t tid1, uint32_t start, uint32_t end, uint64_t offset, uint64_t size) {
+    bmLL *n = fp->writeBuffer->currentIndexNode;
     if(!n) return 1;
     if(n->node->nChildren >= fp->writeBuffer->blockSize) return 2;
 
@@ -297,12 +297,12 @@ static int appendIndexNodeEntry(bigWigFile_t *fp, uint32_t tid0, uint32_t tid1, 
 }
 
 //Returns 0 on success
-static int addIndexEntry(bigWigFile_t *fp, uint32_t tid0, uint32_t tid1, uint32_t start, uint32_t end, uint64_t offset, uint64_t size) {
-    bwRTreeNode_t *node;
+static int addIndexEntry(binaMethFile_t *fp, uint32_t tid0, uint32_t tid1, uint32_t start, uint32_t end, uint64_t offset, uint64_t size) {
+    bmRTreeNode_t *node;
 
     if(appendIndexNodeEntry(fp, tid0, tid1, start, end, offset, size)) {
         //The last index node is full, we need to add a new one
-        node = calloc(1, sizeof(bwRTreeNode_t));
+        node = calloc(1, sizeof(bmRTreeNode_t));
         if(!node) return 1;
 
         //Allocate and set the fields
@@ -347,8 +347,8 @@ error:
  * TODO:
  *     The buffer size and compression sz need to be determined elsewhere (and p and compressP filled in!)
  */
-static int flushBuffer(bigWigFile_t *fp) {
-    bwWriteBuffer_t *wb = fp->writeBuffer;
+static int flushBuffer(binaMethFile_t *fp) {
+    bmWriteBuffer_t *wb = fp->writeBuffer;
     uLongf sz = wb->compressPsz;
     uint16_t nItems;
     if(!fp->writeBuffer->l) return 0;
@@ -392,7 +392,7 @@ static int flushBuffer(bigWigFile_t *fp) {
     }
 
     //Add an entry into the index
-    if(addIndexEntry(fp, wb->tid, wb->tid, wb->start, wb->end, bwTell(fp)-sz, sz)) return 11;
+    if(addIndexEntry(fp, wb->tid, wb->tid, wb->start, wb->end, bmTell(fp)-sz, sz)) return 11;
 
     wb->nBlocks++;
     wb->l = 24;
@@ -400,7 +400,7 @@ static int flushBuffer(bigWigFile_t *fp) {
     return 0;
 }
 
-static void updateStats(bigWigFile_t *fp, uint32_t span, float val) {
+static void updateStats(binaMethFile_t *fp, uint32_t span, float val) {
     if(val < fp->hdr->minVal) fp->hdr->minVal = val;
     else if(val > fp->hdr->maxVal) fp->hdr->maxVal = val;
     fp->hdr->nBasesCovered += 1; //span; //uncorrect for DNA meth
@@ -412,11 +412,11 @@ static void updateStats(bigWigFile_t *fp, uint32_t span, float val) {
 }
 
 //12 bytes per entry, now 16 bytes per entry
-int bwAddIntervals(bigWigFile_t *fp, char **chrom, uint32_t *start, uint32_t *end, float *values, uint16_t *coverage, uint8_t *strand,
+int bmAddIntervals(binaMethFile_t *fp, char **chrom, uint32_t *start, uint32_t *end, float *values, uint16_t *coverage, uint8_t *strand,
     uint8_t *context, char **entryid, uint32_t n) {
     uint32_t tid = 0, i;
     char *lastChrom = NULL;
-    bwWriteBuffer_t *wb = fp->writeBuffer;
+    bmWriteBuffer_t *wb = fp->writeBuffer;
     if(!n) return 0; //Not an error per se
     if(!fp->isWrite) return 1;
     if(!wb) return 2;
@@ -427,7 +427,7 @@ int bwAddIntervals(bigWigFile_t *fp, char **chrom, uint32_t *start, uint32_t *en
 
     if(wb->l+36 > fp->hdr->bufSize) if(flushBuffer(fp)) return 4;
     lastChrom = chrom[0];
-    tid = bwGetTid(fp, chrom[0]);
+    tid = bmGetTid(fp, chrom[0]);
     if(tid == (uint32_t) -1) return 5;
     if(tid != wb->tid) {
         if(flushBuffer(fp)) return 6;
@@ -525,7 +525,7 @@ int bwAddIntervals(bigWigFile_t *fp, char **chrom, uint32_t *start, uint32_t *en
             wb->end = end[i-1];
             flushBuffer(fp);
             lastChrom = chrom[i];
-            tid = bwGetTid(fp, chrom[i]);
+            tid = bmGetTid(fp, chrom[i]);
             if(tid == (uint32_t) -1) return 10;
             wb->tid = tid;
             wb->start = start[i];
@@ -622,10 +622,10 @@ int bwAddIntervals(bigWigFile_t *fp, char **chrom, uint32_t *start, uint32_t *en
     return 0;
 }
 
-int bwAppendIntervals(bigWigFile_t *fp, uint32_t *start, uint32_t *end, float *values, uint16_t *coverage, uint8_t *strand,
+int bmAppendIntervals(binaMethFile_t *fp, uint32_t *start, uint32_t *end, float *values, uint16_t *coverage, uint8_t *strand,
     uint8_t *context, char **entryid, uint32_t n) {
     uint32_t i;
-    bwWriteBuffer_t *wb = fp->writeBuffer;
+    bmWriteBuffer_t *wb = fp->writeBuffer;
     if(!n) return 0;
     if(!fp->isWrite) return 1;
     if(!wb) return 2;
@@ -723,16 +723,16 @@ int bwAppendIntervals(bigWigFile_t *fp, uint32_t *start, uint32_t *end, float *v
 }
 
 //8 bytes per entry
-int bwAddIntervalSpans(bigWigFile_t *fp, char *chrom, uint32_t *start, uint32_t span, float *values, uint32_t n) {
+int bmAddIntervalSpans(binaMethFile_t *fp, char *chrom, uint32_t *start, uint32_t span, float *values, uint32_t n) {
     uint32_t i, tid;
-    bwWriteBuffer_t *wb = fp->writeBuffer;
+    bmWriteBuffer_t *wb = fp->writeBuffer;
     if(!n) return 0;
     if(!fp->isWrite) return 1;
     if(!wb) return 2;
     if(wb->ltype != 2) if(flushBuffer(fp)) return 3;
     if(flushBuffer(fp)) return 4;
 
-    tid = bwGetTid(fp, chrom);
+    tid = bmGetTid(fp, chrom);
     if(tid == (uint32_t) -1) return 5;
     wb->tid = tid;
     wb->start = start[0];
@@ -756,9 +756,9 @@ int bwAddIntervalSpans(bigWigFile_t *fp, char *chrom, uint32_t *start, uint32_t 
     return 0;
 }
 
-int bwAppendIntervalSpans(bigWigFile_t *fp, uint32_t *start, float *values, uint32_t n) {
+int bmAppendIntervalSpans(binaMethFile_t *fp, uint32_t *start, float *values, uint32_t n) {
     uint32_t i;
-    bwWriteBuffer_t *wb = fp->writeBuffer;
+    bmWriteBuffer_t *wb = fp->writeBuffer;
     if(!n) return 0;
     if(!fp->isWrite) return 1;
     if(!wb) return 2;
@@ -781,16 +781,16 @@ int bwAppendIntervalSpans(bigWigFile_t *fp, uint32_t *start, float *values, uint
 }
 
 //4 bytes per entry
-int bwAddIntervalSpanSteps(bigWigFile_t *fp, char *chrom, uint32_t start, uint32_t span, uint32_t step, float *values, uint32_t n) {
+int bmAddIntervalSpanSteps(binaMethFile_t *fp, char *chrom, uint32_t start, uint32_t span, uint32_t step, float *values, uint32_t n) {
     uint32_t i, tid;
-    bwWriteBuffer_t *wb = fp->writeBuffer;
+    bmWriteBuffer_t *wb = fp->writeBuffer;
     if(!n) return 0;
     if(!fp->isWrite) return 1;
     if(!wb) return 2;
     if(wb->ltype != 3) flushBuffer(fp);
     if(flushBuffer(fp)) return 3;
 
-    tid = bwGetTid(fp, chrom);
+    tid = bmGetTid(fp, chrom);
     if(tid == (uint32_t) -1) return 4;
     wb->tid = tid;
     wb->start = start;
@@ -813,9 +813,9 @@ int bwAddIntervalSpanSteps(bigWigFile_t *fp, char *chrom, uint32_t start, uint32
     return 0;
 }
 
-int bwAppendIntervalSpanSteps(bigWigFile_t *fp, float *values, uint32_t n) {
+int bmAppendIntervalSpanSteps(binaMethFile_t *fp, float *values, uint32_t n) {
     uint32_t i;
-    bwWriteBuffer_t *wb = fp->writeBuffer;
+    bmWriteBuffer_t *wb = fp->writeBuffer;
     if(!n) return 0;
     if(!fp->isWrite) return 1;
     if(!wb) return 2;
@@ -837,7 +837,7 @@ int bwAppendIntervalSpanSteps(bigWigFile_t *fp, float *values, uint32_t n) {
 }
 
 //0 on success
-int writeSummary(bigWigFile_t *fp) {
+int writeSummary(binaMethFile_t *fp) {
     if(writeAtPos(&(fp->hdr->nBasesCovered), sizeof(uint64_t), 1, fp->hdr->summaryOffset, fp->URL->x.fp)) return 1;
     if(writeAtPos(&(fp->hdr->minVal), sizeof(double), 1, fp->hdr->summaryOffset+8, fp->URL->x.fp)) return 2;
     if(writeAtPos(&(fp->hdr->maxVal), sizeof(double), 1, fp->hdr->summaryOffset+16, fp->URL->x.fp)) return 3;
@@ -846,8 +846,8 @@ int writeSummary(bigWigFile_t *fp) {
     return 0;
 }
 
-static bwRTreeNode_t *makeEmptyNode(uint32_t blockSize) {
-    bwRTreeNode_t *n = calloc(1, sizeof(bwRTreeNode_t));
+static bmRTreeNode_t *makeEmptyNode(uint32_t blockSize) {
+    bmRTreeNode_t *n = calloc(1, sizeof(bmRTreeNode_t));
     if(!n) return NULL;
 
     n->chrIdxStart = malloc(blockSize*sizeof(uint32_t));
@@ -877,10 +877,10 @@ error:
 }
 
 //Returns 0 on success. This doesn't attempt to clean up!
-static bwRTreeNode_t *addLeaves(bwLL **ll, uint64_t *sz, uint64_t toProcess, uint32_t blockSize) {
+static bmRTreeNode_t *addLeaves(bmLL **ll, uint64_t *sz, uint64_t toProcess, uint32_t blockSize) {
     uint32_t i;
     uint64_t foo;
-    bwRTreeNode_t *n = makeEmptyNode(blockSize);
+    bmRTreeNode_t *n = makeEmptyNode(blockSize);
     if(!n) return NULL;
 
     if(toProcess <= blockSize) {
@@ -913,12 +913,12 @@ static bwRTreeNode_t *addLeaves(bwLL **ll, uint64_t *sz, uint64_t toProcess, uin
     return n;
 
 error:
-    bwDestroyIndexNode(n);
+    bmDestroyIndexNode(n);
     return NULL;
 }
 
 //Returns 1 on error
-int writeIndexTreeNode(FILE *fp, bwRTreeNode_t *n, uint8_t *wrote, int level) {
+int writeIndexTreeNode(FILE *fp, bmRTreeNode_t *n, uint8_t *wrote, int level) {
     uint8_t one = 0;
     uint32_t i, j, vector[6] = {0, 0, 0, 0, 0, 0}; //The last 8 bytes are left as 0
 
@@ -955,7 +955,7 @@ int writeIndexTreeNode(FILE *fp, bwRTreeNode_t *n, uint8_t *wrote, int level) {
 }
 
 //returns 1 on success
-int writeIndexOffsets(FILE *fp, bwRTreeNode_t *n, uint64_t offset) {
+int writeIndexOffsets(FILE *fp, bmRTreeNode_t *n, uint64_t offset) {
     uint32_t i;
 
     if(n->isLeaf) return 0;
@@ -967,7 +967,7 @@ int writeIndexOffsets(FILE *fp, bwRTreeNode_t *n, uint64_t offset) {
 }
 
 //Returns 0 on success
-int writeIndexTree(bigWigFile_t *fp) {
+int writeIndexTree(binaMethFile_t *fp) {
     uint64_t offset;
     uint8_t wrote = 0;
     int rv;
@@ -980,33 +980,33 @@ int writeIndexTree(bigWigFile_t *fp) {
     if(rv || wrote) return 1;
 
     //Save the file position
-    offset = bwTell(fp);
+    offset = bmTell(fp);
 
     //Write the offsets
     if(writeIndexOffsets(fp->URL->x.fp, fp->idx->root, fp->idx->rootOffset)) return 2;
 
     //Move the file pointer back to the end
-    bwSetPos(fp, offset);
+    bmSetPos(fp, offset);
 
     return 0;
 }
 
 //Returns 0 on success. The original state SHOULD be preserved on error
-int writeIndex(bigWigFile_t *fp) {
+int writeIndex(binaMethFile_t *fp) {
     uint32_t four = IDX_MAGIC;
     uint64_t idxSize = 0, foo;
     uint8_t one = 0;
     uint32_t i, vector[6] = {0, 0, 0, 0, 0, 0}; //The last 8 bytes are left as 0
-    bwLL *ll = fp->writeBuffer->firstIndexNode, *p;
-    bwRTreeNode_t *root = NULL;
+    bmLL *ll = fp->writeBuffer->firstIndexNode, *p;
+    bmRTreeNode_t *root = NULL;
 
     if(!fp->writeBuffer->nBlocks) return 0;
-    fp->idx = malloc(sizeof(bwRTree_t));
+    fp->idx = malloc(sizeof(bmRTree_t));
     if(!fp->idx) return 2;
     fp->idx->root = root;
 
     //Update the file header to indicate the proper index position
-    foo = bwTell(fp);
+    foo = bmTell(fp);
     if(writeAtPos(&foo, sizeof(uint64_t), 1, 0x18, fp->URL->x.fp)) return 3;
 
     //Make the tree
@@ -1039,7 +1039,7 @@ int writeIndex(bigWigFile_t *fp) {
     if(fwrite(&four, sizeof(uint32_t), 1, fp->URL->x.fp) != 1) return 13;
     four = 0;
     if(fwrite(&four, sizeof(uint32_t), 1, fp->URL->x.fp) != 1) return 14; //padding
-    fp->idx->rootOffset = bwTell(fp);
+    fp->idx->rootOffset = bmTell(fp);
 
     //Write the root node, since writeIndexTree writes the children and fills in the offset
     if(fwrite(&(root->isLeaf), sizeof(uint8_t), 1, fp->URL->x.fp) != 1) return 16;
@@ -1069,7 +1069,7 @@ int writeIndex(bigWigFile_t *fp) {
 
 //The first zoom level has a resolution of 4x mean entry size
 //This may or may not produce the requested number of zoom levels
-int makeZoomLevels(bigWigFile_t *fp) {
+int makeZoomLevels(binaMethFile_t *fp) {
     uint32_t meanBinSize, i;
     //uint32_t multiplier = 4, zoom = 10, maxZoom = 0;
     // for methylation data, not good for zoom in old version, modified by qwzhou at 2022.38
@@ -1087,12 +1087,12 @@ int makeZoomLevels(bigWigFile_t *fp) {
     //if(meanBinSize*4 > zoom) zoom = multiplier*meanBinSize;
     // for methylation data, not good for zoom in old version, modified by qwzhou at 2022.38
 
-    fp->hdr->zoomHdrs = calloc(1, sizeof(bwZoomHdr_t));
+    fp->hdr->zoomHdrs = calloc(1, sizeof(bmZoomHdr_t));
     if(!fp->hdr->zoomHdrs) return 1;
     fp->hdr->zoomHdrs->level = malloc(fp->hdr->nLevels * sizeof(uint32_t));
     fp->hdr->zoomHdrs->dataOffset = calloc(fp->hdr->nLevels, sizeof(uint64_t));
     fp->hdr->zoomHdrs->indexOffset = calloc(fp->hdr->nLevels, sizeof(uint64_t));
-    fp->hdr->zoomHdrs->idx = calloc(fp->hdr->nLevels, sizeof(bwRTree_t*));
+    fp->hdr->zoomHdrs->idx = calloc(fp->hdr->nLevels, sizeof(bmRTree_t*));
     if(!fp->hdr->zoomHdrs->level) return 2;
     if(!fp->hdr->zoomHdrs->dataOffset) return 3;
     if(!fp->hdr->zoomHdrs->indexOffset) return 4;
@@ -1115,14 +1115,14 @@ int makeZoomLevels(bigWigFile_t *fp) {
     }
     fp->hdr->nLevels = nLevels;
 
-    fp->writeBuffer->firstZoomBuffer = calloc(nLevels,sizeof(bwZoomBuffer_t*));
+    fp->writeBuffer->firstZoomBuffer = calloc(nLevels,sizeof(bmZoomBuffer_t*));
     if(!fp->writeBuffer->firstZoomBuffer) goto error;
-    fp->writeBuffer->lastZoomBuffer = calloc(nLevels,sizeof(bwZoomBuffer_t*));
+    fp->writeBuffer->lastZoomBuffer = calloc(nLevels,sizeof(bmZoomBuffer_t*));
     if(!fp->writeBuffer->lastZoomBuffer) goto error;
     fp->writeBuffer->nNodes = calloc(nLevels, sizeof(uint64_t));
 
     for(i=0; i<fp->hdr->nLevels; i++) {
-        fp->writeBuffer->firstZoomBuffer[i] = calloc(1, sizeof(bwZoomBuffer_t));
+        fp->writeBuffer->firstZoomBuffer[i] = calloc(1, sizeof(bmZoomBuffer_t));
         if(!fp->writeBuffer->firstZoomBuffer[i]) goto error;
         fp->writeBuffer->firstZoomBuffer[i]->p = calloc(fp->hdr->bufSize/32, 32);
         if(!fp->writeBuffer->firstZoomBuffer[i]->p) goto error;
@@ -1152,7 +1152,7 @@ error:
 }
 
 //Given an interval start, calculate the next one at a zoom level
-void nextPos(bigWigFile_t *fp, uint32_t size, uint32_t *pos, uint32_t desiredTid) {
+void nextPos(binaMethFile_t *fp, uint32_t size, uint32_t *pos, uint32_t desiredTid) {
     uint32_t *tid = pos;
     uint32_t *start = pos+1;
     uint32_t *end = pos+2;
@@ -1187,7 +1187,7 @@ uint32_t overlapsInterval(uint32_t tid0, uint32_t start0, uint32_t end0, uint32_
 }
 
 //Returns the number of bases of the interval written
-uint32_t updateInterval(bigWigFile_t *fp, bwZoomBuffer_t *buffer, double *sum, double *sumsq, uint32_t size, uint32_t tid, uint32_t start, uint32_t end, float value) {
+uint32_t updateInterval(binaMethFile_t *fp, bmZoomBuffer_t *buffer, double *sum, double *sumsq, uint32_t size, uint32_t tid, uint32_t start, uint32_t end, float value) {
     uint32_t *p2 = (uint32_t*) buffer->p;
     float *fp2 = (float*) p2;
     uint32_t rv = 0, offset = 0;
@@ -1252,8 +1252,8 @@ uint32_t updateInterval(bigWigFile_t *fp, bwZoomBuffer_t *buffer, double *sum, d
 }
 
 //Returns 0 on success
-int addIntervalValue(bigWigFile_t *fp, uint64_t *nEntries, double *sum, double *sumsq, bwZoomBuffer_t *buffer, uint32_t itemsPerSlot, uint32_t zoom, uint32_t tid, uint32_t start, uint32_t end, float value) {
-    bwZoomBuffer_t *newBuffer = NULL;
+int addIntervalValue(binaMethFile_t *fp, uint64_t *nEntries, double *sum, double *sumsq, bmZoomBuffer_t *buffer, uint32_t itemsPerSlot, uint32_t zoom, uint32_t tid, uint32_t start, uint32_t end, float value) {
+    bmZoomBuffer_t *newBuffer = NULL;
     uint32_t rv;
 
     if(DEBUG>1) printf("addIntervalValue %d %d %f\n", start, end, value);
@@ -1261,7 +1261,7 @@ int addIntervalValue(bigWigFile_t *fp, uint64_t *nEntries, double *sum, double *
         rv = updateInterval(fp, buffer, sum, sumsq, zoom, tid, start, end, value);
         if(!rv) {
             //Allocate a new buffer
-            newBuffer = calloc(1, sizeof(bwZoomBuffer_t));
+            newBuffer = calloc(1, sizeof(bmZoomBuffer_t));
             if(!newBuffer) return 1;
             newBuffer->p = calloc(itemsPerSlot, 32);
             if(!newBuffer->p) goto error;
@@ -1290,8 +1290,8 @@ error:
 }
 
 //Get all of the intervals and add them to the appropriate zoomBuffer
-int constructZoomLevels(bigWigFile_t *fp) {
-    bwOverlapIterator_t *it = NULL;
+int constructZoomLevels(binaMethFile_t *fp) {
+    bmOverlapIterator_t *it = NULL;
     double *sum = NULL, *sumsq = NULL;
     uint32_t i, j, k;
 
@@ -1301,7 +1301,7 @@ int constructZoomLevels(bigWigFile_t *fp) {
 
     for(i=0; i<fp->cl->nKeys; i++) {
         //if(DEBUG>1) printf("add Int ===zz-- %s %ld\n", fp->cl->chrom[i], fp->cl->len[i]);
-        it = bwOverlappingIntervalsIterator(fp, fp->cl->chrom[i], 0, fp->cl->len[i], 100000);
+        it = bmOverlappingIntervalsIterator(fp, fp->cl->chrom[i], 0, fp->cl->len[i], 100000);
         if(!it) goto error;
         if(DEBUG>1) printf("add Int ===zxxz-- %d\n", it->intervals->l);
         while(it->data != NULL){
@@ -1312,14 +1312,14 @@ int constructZoomLevels(bigWigFile_t *fp) {
                     while(fp->writeBuffer->lastZoomBuffer[k]->next) fp->writeBuffer->lastZoomBuffer[k] = fp->writeBuffer->lastZoomBuffer[k]->next;
                 }
             }
-            it = bwIteratorNext(it);
+            it = bmIteratorNext(it);
         }
-        bwIteratorDestroy(it);
+        bmIteratorDestroy(it);
     }
 
     //Make an index for each zoom level
     for(i=0; i<fp->hdr->nLevels; i++) {
-        fp->hdr->zoomHdrs->idx[i] = calloc(1, sizeof(bwRTree_t));
+        fp->hdr->zoomHdrs->idx[i] = calloc(1, sizeof(bmRTree_t));
         if(!fp->hdr->zoomHdrs->idx[i]) return 1;
         fp->hdr->zoomHdrs->idx[i]->blockSize = fp->writeBuffer->blockSize;
     }
@@ -1331,22 +1331,22 @@ int constructZoomLevels(bigWigFile_t *fp) {
     return 0;
 
 error:
-    if(it) bwIteratorDestroy(it);
+    if(it) bmIteratorDestroy(it);
     if(sum) free(sum);
     if(sumsq) free(sumsq);
     return 1;
 }
 
-int writeZoomLevels(bigWigFile_t *fp) {
+int writeZoomLevels(binaMethFile_t *fp) {
     uint64_t offset1, offset2, idxSize = 0;
     uint32_t i, j, four = 0, last, vector[6] = {0, 0, 0, 0, 0, 0}; //The last 8 bytes are left as 0;
     uint8_t wrote, one = 0;
     uint16_t actualNLevels = 0;
     int rv;
-    bwLL *ll, *p;
-    bwRTreeNode_t *root;
-    bwZoomBuffer_t *zb, *zb2;
-    bwWriteBuffer_t *wb = fp->writeBuffer;
+    bmLL *ll, *p;
+    bmRTreeNode_t *root;
+    bmZoomBuffer_t *zb, *zb2;
+    bmWriteBuffer_t *wb = fp->writeBuffer;
     uLongf sz;
 
     if(DEBUG>1) printf("-----1111\n");
@@ -1358,7 +1358,7 @@ int writeZoomLevels(bigWigFile_t *fp) {
         actualNLevels++;
 
         //reserve a uint32_t for the number of blocks
-        fp->hdr->zoomHdrs->dataOffset[i] = bwTell(fp);
+        fp->hdr->zoomHdrs->dataOffset[i] = bmTell(fp);
         fp->writeBuffer->nBlocks = 0;
         fp->writeBuffer->l = 24;
         if(fwrite(&four, sizeof(uint32_t), 1, fp->URL->x.fp) != 1) return 1;
@@ -1377,7 +1377,7 @@ int writeZoomLevels(bigWigFile_t *fp) {
             //Add an entry into the index
             last = (zb->l - 32)>>2;
 //printf("\n %ld %ld %ld \n", last, ((uint32_t*)zb->p)[0], ((uint32_t*)zb->p)[1]);
-            if(addIndexEntry(fp, ((uint32_t*)zb->p)[0], ((uint32_t*)zb->p)[last], ((uint32_t*)zb->p)[1], ((uint32_t*)zb->p)[last+2], bwTell(fp)-sz, sz)) return 4;
+            if(addIndexEntry(fp, ((uint32_t*)zb->p)[0], ((uint32_t*)zb->p)[last], ((uint32_t*)zb->p)[1], ((uint32_t*)zb->p)[last+2], bmTell(fp)-sz, sz)) return 4;
 
             wb->nBlocks++;
             wb->l = 24;
@@ -1411,7 +1411,7 @@ int writeZoomLevels(bigWigFile_t *fp) {
         if(DEBUG>1) printf("-----1111.6\n");
         //write the index
         wrote = 0;
-        fp->hdr->zoomHdrs->indexOffset[i] = bwTell(fp);
+        fp->hdr->zoomHdrs->indexOffset[i] = bmTell(fp);
         four = IDX_MAGIC;
         if(fwrite(&four, sizeof(uint32_t), 1, fp->URL->x.fp) != 1) return 1;
         root = fp->hdr->zoomHdrs->idx[i]->root;
@@ -1426,10 +1426,10 @@ int writeZoomLevels(bigWigFile_t *fp) {
         if(fwrite(&four, sizeof(uint32_t), 1, fp->URL->x.fp) != 1) return 13;
         four = 0;
         if(fwrite(&four, sizeof(uint32_t), 1, fp->URL->x.fp) != 1) return 14; //padding
-        fp->hdr->zoomHdrs->idx[i]->rootOffset = bwTell(fp);
+        fp->hdr->zoomHdrs->idx[i]->rootOffset = bmTell(fp);
 
         //Write the root node, since writeIndexTree writes the children and fills in the offset
-        offset1 = bwTell(fp);
+        offset1 = bmTell(fp);
         if(fwrite(&(root->isLeaf), sizeof(uint8_t), 1, fp->URL->x.fp) != 1) return 16;
         if(fwrite(&one, sizeof(uint8_t), 1, fp->URL->x.fp) != 1) return 17; //one byte of padding
         if(fwrite(&(root->nChildren), sizeof(uint16_t), 1, fp->URL->x.fp) != 1) return 18;
@@ -1456,13 +1456,13 @@ int writeZoomLevels(bigWigFile_t *fp) {
         if(rv || wrote) return 6;
 
         //Save the file position
-        offset2 = bwTell(fp);
+        offset2 = bmTell(fp);
 
         //Write the offsets
         if(writeIndexOffsets(fp->URL->x.fp, root, offset1)) return 2;
 
         //Move the file pointer back to the end
-        bwSetPos(fp, offset2);
+        bmSetPos(fp, offset2);
 
 
         //Free the linked list
@@ -1490,8 +1490,8 @@ int writeZoomLevels(bigWigFile_t *fp) {
     }
 
     //Write the zoom headers to disk
-    offset1 = bwTell(fp);
-    if(bwSetPos(fp, 0x40)) return 7;
+    offset1 = bmTell(fp);
+    if(bmSetPos(fp, 0x40)) return 7;
     four = 0;
     for(i=0; i<actualNLevels; i++) {
         if(fwrite(&(fp->hdr->zoomHdrs->level[i]), sizeof(uint32_t), 1, fp->URL->x.fp) != 1) return 8;
@@ -1501,16 +1501,16 @@ int writeZoomLevels(bigWigFile_t *fp) {
     }
 
     //Write the number of levels if needed
-    if(bwSetPos(fp, 0x6)) return 12;
+    if(bmSetPos(fp, 0x6)) return 12;
     if(fwrite(&actualNLevels, sizeof(uint16_t), 1, fp->URL->x.fp) != 1) return 13;
 
-    if(bwSetPos(fp, offset1)) return 14;
+    if(bmSetPos(fp, offset1)) return 14;
 
     return 0;
 }
 
 //0 on success
-int bwFinalize(bigWigFile_t *fp) {
+int bmFinalize(binaMethFile_t *fp) {
     uint32_t four;
     uint64_t offset;
     if(!fp->isWrite) return 0;
@@ -1545,10 +1545,10 @@ int bwFinalize(bigWigFile_t *fp) {
     if(DEBUG>1) printf("555555\n");
     //Zoom level stuff here?
     if(fp->hdr->nLevels && fp->writeBuffer->nBlocks) {
-        offset = bwTell(fp);
+        offset = bmTell(fp);
         if(makeZoomLevels(fp)) return 5;
         if(constructZoomLevels(fp)) return 6;
-        bwSetPos(fp, offset);
+        bmSetPos(fp, offset);
         if(writeZoomLevels(fp)) return 7; //This write nLevels as well
     }
     if(DEBUG>1) printf("666666\n");

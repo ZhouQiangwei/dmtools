@@ -98,7 +98,7 @@ size_t urlRead(URL_t *URL, void *buf, size_t bufSize) {
 #endif
 }
 
-size_t bwFillBuffer(void *inBuf, size_t l, size_t nmemb, void *pURL) {
+size_t bmFillBuffer(void *inBuf, size_t l, size_t nmemb, void *pURL) {
     URL_t *URL = (URL_t*) pURL;
     void *p = URL->memBuf;
     size_t copied = l*nmemb;
@@ -226,7 +226,7 @@ URL_t *urlOpen(char *fname, CURLcode (*callBack)(CURL*), const char *mode) {
                 goto error;
             }
             //Set the callback info, which means we no longer need to directly deal with sockets and header!
-            if(curl_easy_setopt(URL->x.curl, CURLOPT_WRITEFUNCTION, bwFillBuffer) != CURLE_OK) {
+            if(curl_easy_setopt(URL->x.curl, CURLOPT_WRITEFUNCTION, bmFillBuffer) != CURLE_OK) {
                 fprintf(stderr, "[urlOpen] Couldn't set CURLOPT_WRITEFUNCTION!\n");
                 goto error;
             }

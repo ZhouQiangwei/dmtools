@@ -3,7 +3,7 @@
 * main function contains:
 * bam2bm calculate methleval in loci and region with bam file, output bm file.
 * view   view bigmeth as txt format, 20211101
-* mr2mbw  convert methratio file from batmeth2 to bigmeth, 20211103
+* mr2bm  convert methratio file from batmeth2 to bigmeth, 20211103
 * bm2mr  convert bigmeth file to methratio txt file, 20211101
 * calregion   calculate DNA methylation level of all regions.
 * plotbasic
@@ -14,8 +14,8 @@
 * realign   realign of bsalign bam file.
 * 
 * make clean && make && gcc libBigWig.a libBigWig.so test/exampleWrite.c -o exampleWrite
-* ./exampleWrite mr2mbw -g ~/practice/Genome/hg38/hg38.chr.fa.len -E -C -m test.f -S --Cx -o test.bm -r chr1:0-100,chr1:16766-16890
-* gcc test/exampleWrite.c -o exampleWrite -I. -L. -lBigWig -Wl,-rpath /public/home/qwzhou/software_devp/batmeth2-bwa/src/bmtools/
+* ./exampleWrite mr2bm -g ~/practice/Genome/hg38/hg38.chr.fa.len -E -C -m test.f -S --Cx -o test.bm -r chr1:0-100,chr1:16766-16890
+* gcc test/exampleWrite.c -o exampleWrite -I. -L. -lBigWig -Wl,-rpath /public/home/qwzhou/software_devp/batmeth2-bma/src/bmtools/
 */
 #include "binaMeth.h"
 #include <string.h>
@@ -28,33 +28,33 @@
 FILE* File_Open(const char* File_Name,const char* Mode);
 char *strand_str[] = {"+", "-", "."};
 char *context_str[] = {"C", "CG", "CHG", "CHH"};
-int main_view_all(bigWigFile_t *fp, FILE* outfileF, char *outformat, bigWigFile_t *ofp, char* filterchrom);
-int main_view(bigWigFile_t *ifp, char *region, FILE* outfileF, char *outformat, bigWigFile_t *ofp);
-int main_view_bedfile(char *inbmF, char *bedfile, int type, FILE* outfileF, char *outformat, bigWigFile_t *ofp);
+int main_view_all(binaMethFile_t *fp, FILE* outfileF, char *outformat, binaMethFile_t *ofp, char* filterchrom);
+int main_view(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outformat, binaMethFile_t *ofp);
+int main_view_bedfile(char *inbmF, char *bedfile, int type, FILE* outfileF, char *outformat, binaMethFile_t *ofp);
 int calchromstats(char *inbmfile, char *method, int chromstep, int stepoverlap, uint8_t strand, uint8_t context, FILE* outfileF, FILE* outfileF_c, FILE* outfileF_cg, FILE* outfileF_chg, FILE* outfileF_chh);
 int calregionstats(char *inbmfile, char *method, char *region, uint8_t pstrand, uint8_t context, FILE* outfileF, FILE* outfileF_c, FILE* outfileF_cg, FILE* outfileF_chg, FILE* outfileF_chh);
 int calregionstats_file(char *inbmfile, char *method, char *bedfile, int format, uint8_t context, FILE* outfileF, FILE* outfileF_c, FILE* outfileF_cg, FILE* outfileF_chg, FILE* outfileF_chh);
 int calbodystats(char *inbmfile, char *method, char *region, uint8_t pstrand, uint8_t context, FILE* outfileF, FILE* outfileF_c, FILE* outfileF_cg, FILE* outfileF_chg, FILE* outfileF_chh);
 int calbodystats_file(char *inbmfile, char *method, char *bedfile, int format, uint8_t context, FILE* outfileF, FILE* outfileF_c, FILE* outfileF_cg, FILE* outfileF_chg, FILE* outfileF_chh);
-int bw_overlap_region(char *inbmF1, char *inbmF2, char *region, uint8_t pstrand);
-int bw_overlap_region_mul(char *inbmFs, char *region, uint8_t pstrand);
-int bw_overlap_all(char *inbmF1, char *inbmF2, int n1, int n2, uint8_t pstrand);
-int bw_overlap_file_mul(char *inbmF1, char *bedfile);
-int bw_overlap_file(char *inbmF1, char *inbmF2, char *bedfile);
-int bw_overlap_all_mul(char *inbmFs, uint8_t pstrand);
-int bw_overlap_mul(bigWigFile_t **ifp1s, int sizeifp, char *chrom, int start, int end, uint8_t strand);
-int bw_overlap(bigWigFile_t *ifp1, bigWigFile_t *ifp2, char *chrom, int start, int end, uint8_t strand);
+int bm_overlap_region(char *inbmF1, char *inbmF2, char *region, uint8_t pstrand);
+int bm_overlap_region_mul(char *inbmFs, char *region, uint8_t pstrand);
+int bm_overlap_all(char *inbmF1, char *inbmF2, int n1, int n2, uint8_t pstrand);
+int bm_overlap_file_mul(char *inbmF1, char *bedfile);
+int bm_overlap_file(char *inbmF1, char *inbmF2, char *bedfile);
+int bm_overlap_all_mul(char *inbmFs, uint8_t pstrand);
+int bm_overlap_mul(binaMethFile_t **ifp1s, int sizeifp, char *chrom, int start, int end, uint8_t strand);
+int bm_overlap(binaMethFile_t *ifp1, binaMethFile_t *ifp2, char *chrom, int start, int end, uint8_t strand);
 int calprofile(char *inbmfile, int upstream, int downstream, double profilestep, double bodyprofilestep, double bodyprofilemovestep, double profilemovestep, char *bedfile, uint8_t context, FILE* outfileF_c, FILE* outfileF_cg, FILE* outfileF_chg, FILE* outfileF_chh, FILE* outfileF_aver, int profilemode, int matrixX);
 int calprofile_gtf(char *inbmfile, int upstream, int downstream, double profilestep, double profilemovestep, double bodyprofilestep, double bodyprofilemovestep, char *gtffile, int format, uint8_t context, FILE* outfileF_c, FILE* outfileF_cg, FILE* outfileF_chg, FILE* outfileF_chh, FILE* outfileF_aver, int profilemode, int matrixX);
 void getcontext(uint8_t context, char* str_context);
 void delete_char2(char* str,char target,char target2);
-void calbody_print(bigWigFile_t *fp, char* chrom, int start, int end, int splitN, char* method, int pstrand, int format, char* geneid, uint8_t context, char* bodycase, char* strand, FILE* outfileF);
-void calregion_print(bigWigFile_t *fp, char* chrom, int start, int end, int splitN, char* method, int pstrand, int format, char* geneid, uint8_t context, char* strand, FILE* outfileF);
-void calregion_weighted_print(bigWigFile_t *fp, char* chrom, int start, int end, int splitN, char* method, int pstrand, int format, char* geneid, uint8_t context, char* bodycase, char* strand, FILE* outfileF_c, FILE* outfileF_cg, FILE* outfileF_chg, FILE* outfileF_chh, uint16_t *countC, uint16_t *countCT);
-int main_view_file(bigWigFile_t *ifp, char *bedfile, FILE* outfileF, char *outformat, bigWigFile_t *ofp);
-void mbwfileinit(bigWigFile_t *ofp, bigWigFile_t *ifp, char* outfile, int zoomlevel);
-void bwPrintHdr(bigWigFile_t *bw);
-void bwPrintIndexNode(bwRTreeNode_t *node, int level);
+void calbody_print(binaMethFile_t *fp, char* chrom, int start, int end, int splitN, char* method, int pstrand, int format, char* geneid, uint8_t context, char* bodycase, char* strand, FILE* outfileF);
+void calregion_print(binaMethFile_t *fp, char* chrom, int start, int end, int splitN, char* method, int pstrand, int format, char* geneid, uint8_t context, char* strand, FILE* outfileF);
+void calregion_weighted_print(binaMethFile_t *fp, char* chrom, int start, int end, int splitN, char* method, int pstrand, int format, char* geneid, uint8_t context, char* bodycase, char* strand, FILE* outfileF_c, FILE* outfileF_cg, FILE* outfileF_chg, FILE* outfileF_chh, uint16_t *countC, uint16_t *countCT);
+int main_view_file(binaMethFile_t *ifp, char *bedfile, FILE* outfileF, char *outformat, binaMethFile_t *ofp);
+void bmfileinit(binaMethFile_t *ofp, binaMethFile_t *ifp, char* outfile, int zoomlevel);
+void bmPrintHdr(binaMethFile_t *bm);
+void bmPrintIndexNode(bmRTreeNode_t *node, int level);
 char *fastStrcat(char *s, char *t);
 void onlyexecuteCMD(const char *cmd, const char *errorinfor);
 size_t get_executable_path( char* processdir,char* processname, size_t len);
@@ -63,24 +63,24 @@ size_t get_executable_path( char* processdir,char* processname, size_t len);
 #define MAX_BUFF_PRINT 20000000
 const char* Help_String_main="Command Format :  bmtools <mode> [opnions]\n"
 		"\nUsage:\n"
-        "\t  [mode]         bam2bm mr2mbw view viewheader overlap regionstats bodystats profile chromstats\n\n"
+        "\t  [mode]         bam2bm mr2bm view viewheader overlap regionstats bodystats profile chromstats\n\n"
         "\t  bam2bm         calculate DNA methylation (BM format) with BAM file\n"
-        "\t  mr2mbw         convert txt meth file to mbw format\n"
-        "\t  view           mbw format to txt meth\n"
-        "\t  viewheader     view header of mbw file\n"
-        "\t  overlap        overlap cytosine site with more than two mbw files\n"
+        "\t  mr2bm         convert txt meth file to bm format\n"
+        "\t  view           bm format to txt meth\n"
+        "\t  viewheader     view header of bm file\n"
+        "\t  overlap        overlap cytosine site with more than two bm files\n"
         "\t  regionstats    calculate DNA methylation level of per region\n"
         "\t  bodystats      calculate DNA methylation level of body, upstream and downstream.\n"
         "\t  profile        calculate DNA methylation profile\n"
         "\t  chromstats     calculate DNA methylation level across chromosome\n"
-        "\t  addzm          add or change zoom levels for mbw format, need for browser visulization\n";
+        "\t  addzm          add or change zoom levels for bm format, need for browser visulization\n";
 
 const char* Help_String_bam2bm="Command Format :  bmtools bam2bm [options] -g genome.fa -i/-b <SamfileSorted/BamfileSorted> -m <methratio bm outfile prefix>\n"
 		"\nUsage: bmtools bam2bm -g genome.fa -b align.sort.bam -m meth.bm\n"
         "\t [bam2bm] mode paramaters, required\n"
 		"\t-g|--genome           genome fasta file\n"
 		"\t-b|--binput           Bam format file, sorted by chrom.\n"
-        "\t-m|--methratio        Prefix of methratio.mbw output file\n"
+        "\t-m|--methratio        Prefix of methratio.bm output file\n"
 		"\t [bam2bm] mode paramaters, options\n"
         "\t-n|--Nmismatch        Number of mismatches, default 0.06 percentage of read length. [0-1]\n"
 		"\t-Q                    caculate the methratio while read QulityScore >= Q. default:20\n"
@@ -93,13 +93,13 @@ const char* Help_String_bam2bm="Command Format :  bmtools bam2bm [options] -g ge
         "\t-i|--input            Sam format file, sorted by chrom.\n"
         "\t-h|--help";
 
-const char* Help_String_mr2mbw="Command Format :  bmtools mr2mbw [opnions] -g genome.fa.fai -m methratio.txt -o outmeth.mbw\n"
-		"\nUsage: bmtools mr2mbw -C -S --Cx -g genome.fa.fai -m meth.txt -o meth.mbw\n"
-        "\t [mr2mbw] mode paramaters, required\n"
+const char* Help_String_mr2bm="Command Format :  bmtools mr2bm [opnions] -g genome.fa.fai -m methratio.txt -o outmeth.bm\n"
+		"\nUsage: bmtools mr2bm -C -S --Cx -g genome.fa.fai -m meth.txt -o meth.bm\n"
+        "\t [mr2bm] mode paramaters, required\n"
 		"\t-g                    chromosome size file.\n"
         "\t-m                    methratio file\n"
-        "\t-o|--outmbw           output mbigwig file\n"
-        "\t [mr2mbw] mode paramaters, options\n"
+        "\t-o|--outbm           output mbigwig file\n"
+        "\t [mr2bm] mode paramaters, options\n"
         "\t-C                    print coverage\n"
         "\t-S                    print strand\n"
         "\t--Cx                  print context\n"
@@ -118,7 +118,7 @@ const char* Help_String_mr2mbw="Command Format :  bmtools mr2mbw [opnions] -g ge
         "\tNote. meth ratio file must be sorted by chrom and coordinate. ex. sort -k1,1 -k2,2n\n"
 		"\t-h|--help";
 
-const char* Help_String_view="Command Format :  bmtools view [opnions] -i meth.mbw\n"
+const char* Help_String_view="Command Format :  bmtools view [opnions] -i meth.bm\n"
 		"\nUsage:\n"
         "\t [view] mode paramaters, required\n"
         "\t-i                    input mbigwig file\n"
@@ -130,17 +130,17 @@ const char* Help_String_view="Command Format :  bmtools view [opnions] -i meth.m
         "\t--context             [0/1/2/3] context for show, 0 represent 'C/ALL' context, 1 'CG' context, 2 'CHG' context, 3 'CHH' context.\n"
         "\t--mincover            >= minumum coverage show, default: 0\n"
         "\t--maxcover            <= maximum coverage show, default: 10000\n"
-        "\t--outformat           txt or mbw format\n"
-        "\t--zl                  The maximum number of zoom levels. [0-10], valid for mbw out\n"
+        "\t--outformat           txt or bm format\n"
+        "\t--zl                  The maximum number of zoom levels. [0-10], valid for bm out\n"
 		"\t-h|--help";
 
-const char* Help_String_addzm="Command Format :  bmtools addzm [opnions] -i meth.mbw -o meth.zm2.mbw\n"
-		"\nUsage: add zoom levels for mbw\n"
+const char* Help_String_addzm="Command Format :  bmtools addzm [opnions] -i meth.bm -o meth.zm2.bm\n"
+		"\nUsage: add zoom levels for bm\n"
         "\t [addzm] mode paramaters, required\n"
         "\t-i                    input mbigwig file\n"
         "\t [addzm] mode paramaters, options\n"
-        "\t-o                    output mbw file\n"
-        "\t--zl                  The maximum number of zoom levels. [0-10], valid for mbw out\n"
+        "\t-o                    output bm file\n"
+        "\t--zl                  The maximum number of zoom levels. [0-10], valid for bm out\n"
         "\t-r                    region for view, can be seperated by semicolon. chr1:1-2900;chr2:1-200;\n"
         "\t--bed                 bed file for view, format: chrom start end (strand).\n"
         "\t--strand              [0/1/2] strand for show, 0 represent '+' positive strand, 1 '-' negative strand, 2 '.' all information\n"
@@ -149,13 +149,13 @@ const char* Help_String_addzm="Command Format :  bmtools addzm [opnions] -i meth
         "\t--maxcover            <= maximum coverage show, default: 10000\n"
 		"\t-h|--help";
 
-const char* Help_String_viewheader="Command Format :  bmtools viewheader -i meth.mbw\n"
+const char* Help_String_viewheader="Command Format :  bmtools viewheader -i meth.bm\n"
 		"\nUsage:\n"
         "\t [view] mode paramaters, required\n"
         "\t-i                    input mbigwig file\n"
 		"\t-h|--help";
 
-const char* Help_String_overlap="Command Format :  bmtools overlap [opnions] -i meth1.mbw -i2 meth2.mbw\n"
+const char* Help_String_overlap="Command Format :  bmtools overlap [opnions] -i meth1.bm -i2 meth2.bm\n"
 		"\nUsage:\n"
         "\t [overlap] mode paramaters, required\n"
         "\t-i                    input mbigwig file\n"
@@ -168,7 +168,7 @@ const char* Help_String_overlap="Command Format :  bmtools overlap [opnions] -i 
         "\t--bmfiles             input mbigwig files, seperated by comma. This is no need if you provide -i and -i2.\n"
 		"\t-h|--help";
 
-const char* Help_String_regionstats="Command Format :  bmtools regionstats [opnions] -i mbw --bed bedfile\n"
+const char* Help_String_regionstats="Command Format :  bmtools regionstats [opnions] -i bm --bed bedfile\n"
 		"\nUsage:\n"
         "\t [regionstats] mode paramaters, required\n"
         "\t-i                    input mbigwig file\n"
@@ -187,7 +187,7 @@ const char* Help_String_regionstats="Command Format :  bmtools regionstats [opni
 //        "\t--maxcover            <= maximum coverage show, default: 10000\n"
 		"\t-h|--help";
 
-const char* Help_String_bodystats="Command Format :  bmtools bodystats [opnions] -i mbw --bed bedfile\n"
+const char* Help_String_bodystats="Command Format :  bmtools bodystats [opnions] -i bm --bed bedfile\n"
 		"\nUsage:\n"
         "\t [bodystats] mode paramaters, required\n"
         "\t-i                    input mbigwig file\n"
@@ -205,7 +205,7 @@ const char* Help_String_bodystats="Command Format :  bmtools bodystats [opnions]
         "\t--print2one           [int] print all the countC and coverage results of C/CG/CHG/CHH context methylation to same file, only valid when --printcoverage 1. 0 for no, 1 for yes. [0]\n"
         "\t-h|--help";
 
-const char* Help_String_profile="Command Format :  bmtools profile [opnions] -i meth.mbw --bed bedfile\n"
+const char* Help_String_profile="Command Format :  bmtools profile [opnions] -i meth.bm --bed bedfile\n"
 		"\nUsage:\n"
         "\t [profile] mode paramaters, required\n"
         "\t-i                    input mbigwig file\n"
@@ -224,7 +224,7 @@ const char* Help_String_profile="Command Format :  bmtools profile [opnions] -i 
         "\t--print2one           [int] print all the matrix results of C/CG/CHG/CHH context methylation to same file. 0 for no, 1 for yes. [0]\n"
         "\t-h|--help";
 
-const char* Help_String_chromstats="Command Format :  bmtools chromstats [opnions] -i meth.mbw\n"
+const char* Help_String_chromstats="Command Format :  bmtools chromstats [opnions] -i meth.bm\n"
 		"\nUsage:\n"
         "\t [chromstats] mode paramaters, required\n"
         "\t-i                    input mbigwig file\n"
@@ -250,7 +250,7 @@ int printcoverage = 0; // print countC and countCT instead of methratio
 int NTHREAD = 10;
 
 int main(int argc, char *argv[]) {
-    bigWigFile_t *fp = NULL;
+    binaMethFile_t *fp = NULL;
     char *filterchrom = NULL;
     char **chroms = (char**)malloc(sizeof(char*)*MAX_LINE_PRINT);
     if(!chroms) goto error;
@@ -307,9 +307,9 @@ int main(int argc, char *argv[]) {
         // mr2bam view overlap region
     }else if(argc>1){
         strcpy(mode, argv[1]);
-        //mr2mbw/ view/ overlap/ regionstats/ profile/ chromstats
-        if(strcmp(mode, "mr2mbw") == 0){
-           fprintf(stderr, "%s\n", Help_String_mr2mbw); 
+        //mr2bm/ view/ overlap/ regionstats/ profile/ chromstats
+        if(strcmp(mode, "mr2bm") == 0){
+           fprintf(stderr, "%s\n", Help_String_mr2bm); 
         }else if(strcmp(mode, "view") == 0){
            fprintf(stderr, "%s\n", Help_String_view); 
         }else if(strcmp(mode, "viewheader") == 0){
@@ -361,7 +361,7 @@ int main(int argc, char *argv[]) {
                 write_type |= BM_END;
             }else if(strcmp(argv[i], "-m") == 0){
                 strcpy(methfile, argv[++i]);
-            }else if(strcmp(argv[i], "--outmbw") == 0){
+            }else if(strcmp(argv[i], "--outbm") == 0){
                 outbmfile = malloc(100);
                 strcpy(outbmfile, argv[++i]);
             }else if(strcmp(argv[i], "--outformat") == 0){
@@ -448,7 +448,7 @@ int main(int argc, char *argv[]) {
             }else if(strcmp(argv[i], "--maxcover") == 0){
                 maxcover = atoi(argv[++i]);
             }else if(strcmp(argv[i], "-o") == 0 || strcmp(argv[i], "--out") == 0){
-                if(strcmp(mode, "mr2mbw") == 0){
+                if(strcmp(mode, "mr2bm") == 0){
                     if(!outbmfile){
                         outbmfile = malloc(100);
                         strcpy(outbmfile, argv[++i]);
@@ -473,7 +473,7 @@ int main(int argc, char *argv[]) {
         onlyexecuteCMD(cmd, Help_String_bam2bm);
         return;
     }
-    else if(strcmp(mode, "mr2mbw") == 0){
+    else if(strcmp(mode, "mr2bm") == 0){
         fprintf(stderr, "mr file format %s\n", mrformat);
         if(chromlenf_yes==0){
             fprintf(stderr, "please provide chrome size file with -g paramater\n");
@@ -531,34 +531,34 @@ int main(int argc, char *argv[]) {
         fclose(ChromF);
 
         fprintf(stderr, "[Mode] ------------- %s\n", mode);
-        if(bwInit(1<<17) != 0) {
-            fprintf(stderr, "Received an error in bwInit\n");
+        if(bmInit(1<<17) != 0) {
+            fprintf(stderr, "Received an error in bmInit\n");
             return 1;
         }
 
-        fp = bwOpen(outbmfile, NULL, "w");
+        fp = bmOpen(outbmfile, NULL, "w");
         fp->type = write_type;
         if(!fp) {
-            fprintf(stderr, "An error occurred while opening example_output.bw for writingn\n");
+            fprintf(stderr, "An error occurred while opening example_output.bm for writingn\n");
             return 1;
         }
         
         //Allow up to 10 zoom levels, though fewer will be used in practice
-        if(bwCreateHdr(fp, zoomlevel)) {
-            fprintf(stderr, "== bwCreateHdr ==\n");
+        if(bmCreateHdr(fp, zoomlevel)) {
+            fprintf(stderr, "== bmCreateHdr ==\n");
             goto error;
         }
 
         //Create the chromosome lists
-        fp->cl = bwCreateChromList(chroms, chrLens, printL); //2
+        fp->cl = bmCreateChromList(chroms, chrLens, printL); //2
         if(!fp->cl) {
-            fprintf(stderr, "== bwCreateChromList ==\n");
+            fprintf(stderr, "== bmCreateChromList ==\n");
             goto error;
         }
 
         //Write the header
-        if(bwWriteHdr(fp)) {
-            fprintf(stderr, "== bwWriteHdr ==\n");
+        if(bmWriteHdr(fp)) {
+            fprintf(stderr, "== bmWriteHdr ==\n");
             goto error;
         }
         
@@ -582,7 +582,7 @@ int main(int argc, char *argv[]) {
                 value = ((double) coverC/ coverage);
                 //fprintf(stderr, "%f\n", value);
             }else if(strcmp(mrformat, "bedmethyl") == 0){
-                //bedmethyl2mbw
+                //bedmethyl2bm
                 //chrom start end name score strand thickStart thickEnd itemRgb reads_coverage percent
                 //chr11   61452   61453   .       14      +       61452   61453   0,255,0 14      0
                 sscanf(PerLine, "%s%u%u%s%*s%s%*s%*s%*s%u%f", chrom, &start, &end, nameid, strand, &coverage, &value);
@@ -611,8 +611,8 @@ int main(int argc, char *argv[]) {
 
             if(strcmp(old_chrom, chrom)!=0){
                 if(printL > 1){
-                    if(bwAppendIntervals(fp, starts+1, ends+1, values+1, coverages+1, strands+1, contexts+1, entryid, printL-1))  {
-                        fprintf(stderr, "bwAppendIntervals -1\n");
+                    if(bmAppendIntervals(fp, starts+1, ends+1, values+1, coverages+1, strands+1, contexts+1, entryid, printL-1))  {
+                        fprintf(stderr, "bmAppendIntervals -1\n");
                         goto error;
                     }
                     fprintf(stderr, "Processed %d cytosine sites.\n", printL);
@@ -652,11 +652,11 @@ int main(int argc, char *argv[]) {
                     contexts[printL] = 3;
                 }
                 if(DEBUG>-1) fprintf(stderr,"## %d start %s %d %d %f %d %d %d\n", printL, chromsUse[printL], starts[printL], ends[printL], values[printL], coverages[printL], strands[printL], context[printL]);
-                int response = bwAddIntervals(fp, chromsUse, starts, ends, values, coverages, strands, contexts, 
+                int response = bmAddIntervals(fp, chromsUse, starts, ends, values, coverages, strands, contexts, 
                 entryid, 1);
                 fprintf(stderr, "Processing %s chromosome.\n", chrom);
                 if(response) {
-                    fprintf(stderr, "bwAddIntervals 0\n");
+                    fprintf(stderr, "bmAddIntervals 0\n");
                     goto error;
                 }
                 strcpy(old_chrom, chrom);
@@ -703,8 +703,8 @@ int main(int argc, char *argv[]) {
             if(printL>MAX_LINE_PRINT){
                 //We can continue appending similarly formatted entries
                 //N.B. you can't append a different chromosome (those always go into different
-                if(bwAppendIntervals(fp, starts+1, ends+1, values+1, coverages+1, strands+1, contexts+1, entryid, printL-1)) {
-                    fprintf(stderr, "bwAppendIntervals 2\n");
+                if(bmAppendIntervals(fp, starts+1, ends+1, values+1, coverages+1, strands+1, contexts+1, entryid, printL-1)) {
+                    fprintf(stderr, "bmAppendIntervals 2\n");
                     goto error;
                 }
                 TotalC+=printL;
@@ -713,36 +713,36 @@ int main(int argc, char *argv[]) {
         } // end read me file
         if(printL > 1) {
             if(DEBUG>1) fprintf(stderr, "--last print %d %d %d\n", starts[printL-1], ends[printL-1], printL-1);
-            if(bwAppendIntervals(fp, starts+1, ends+1, values+1, coverages+1, strands+1, contexts+1, entryid, printL-1)) {
-                fprintf(stderr, "bwAppendIntervals 3\n");
+            if(bmAppendIntervals(fp, starts+1, ends+1, values+1, coverages+1, strands+1, contexts+1, entryid, printL-1)) {
+                fprintf(stderr, "bmAppendIntervals 3\n");
                 goto error;
             }
             TotalC+=printL;
             printL = 0; 
         }
         fprintf(stderr, "\nprocess %ld cytosine site\n", TotalC);
-        //Add a new block of entries with a span. Since bwAdd/AppendIntervals was just used we MUST create a new block
-    //    if(bwAddIntervalSpans(fp, "1", starts+6, 20, values+6, 3)) goto error;
+        //Add a new block of entries with a span. Since bmAdd/AppendIntervals was just used we MUST create a new block
+    //    if(bmAddIntervalSpans(fp, "1", starts+6, 20, values+6, 3)) goto error;
         //We can continue appending similarly formatted entries
-    //    if(bwAppendIntervalSpans(fp, starts+9, values+9, 3)) goto error;
+    //    if(bmAppendIntervalSpans(fp, starts+9, values+9, 3)) goto error;
 
         //Add a new block of fixed-step entries
-    //    if(bwAddIntervalSpanSteps(fp, "1", 900, 20, 30, values+12, 3)) goto error;
+    //    if(bmAddIntervalSpanSteps(fp, "1", 900, 20, 30, values+12, 3)) goto error;
         //The start is then 760, since that's where the previous step ended
-    //    if(bwAppendIntervalSpanSteps(fp, values+15, 3)) goto error;
+    //    if(bmAppendIntervalSpanSteps(fp, values+15, 3)) goto error;
 
         //Add a new chromosome
     //    chromsUse[0] = "2";
     //    chromsUse[1] = "2";
     //    chromsUse[2] = "2";
-    //    if(bwAddIntervals(fp, chromsUse, starts, ends, values, 3)) goto error;
+    //    if(bmAddIntervals(fp, chromsUse, starts, ends, values, 3)) goto error;
 
         //Closing the file causes the zoom levels to be created
         //if(DEBUG>0) 
         if(DEBUG>0) fprintf(stderr, "bm close1111 ----- \n");
-        bwClose(fp);
+        bmClose(fp);
         if(DEBUG>0) fprintf(stderr, "bm close22222 ---===--- \n");
-        bwCleanup();
+        bmCleanup();
         /*
         * free memory from malloc
         */
@@ -778,77 +778,77 @@ int main(int argc, char *argv[]) {
     // read bm file, view
     if(strcmp(mode, "view")==0 || strcmp(mode, "addzm")==0){
         if(strcmp(mode, "addzm")==0){
-            strcpy(outformat, "mbw");
+            strcpy(outformat, "bm");
         }
         if(DEBUG>0) fprintf(stderr, "bm view\n");
         //char region[] = "chr1:0-100,chr1:16766-16830";
         uint32_t type = BMtype(inbmfile, NULL);
-        bigWigFile_t *ifp = NULL;
-        ifp = bwOpen(inbmfile, NULL, "r");
+        binaMethFile_t *ifp = NULL;
+        ifp = bmOpen(inbmfile, NULL, "r");
         ifp->type = ifp->hdr->version;
-        FILE *outfp_mbw = NULL;
-        bigWigFile_t *ofp = NULL;
+        FILE *outfp_bm = NULL;
+        binaMethFile_t *ofp = NULL;
         if(strcmp(outformat, "txt") == 0){
             if(outfile) {
-                outfp_mbw = File_Open(outfile,"w");
+                outfp_bm = File_Open(outfile,"w");
             }else {
-                outfp_mbw = stdout;
+                outfp_bm = stdout;
             }
-        }else if(strcmp(outformat, "mbw") == 0){
-            fprintf(stderr, "output mbw file\n");
-            //mbwfileinit(ofp, ifp, outfile, zoomlevel); // why not valid????
-            if(bwInit(1<<17) != 0) {
-                fprintf(stderr, "Received an error in bwInit\n");
+        }else if(strcmp(outformat, "bm") == 0){
+            fprintf(stderr, "output bm file\n");
+            //bmfileinit(ofp, ifp, outfile, zoomlevel); // why not valid????
+            if(bmInit(1<<17) != 0) {
+                fprintf(stderr, "Received an error in bmInit\n");
                 return 0;
             }
-            ofp = bwOpen(outfile, NULL, "w");
+            ofp = bmOpen(outfile, NULL, "w");
             ofp->type = ifp->type;
             if(!ofp) {
-                fprintf(stderr, "An error occurred while opening mbw for writingn\n");
+                fprintf(stderr, "An error occurred while opening bm for writingn\n");
                 return 0;
             }
             //Allow up to 10 zoom levels, though fewer will be used in practice
-            if(bwCreateHdr(ofp, zoomlevel)) {
-                fprintf(stderr, "== bwCreateHdr ==\n");
+            if(bmCreateHdr(ofp, zoomlevel)) {
+                fprintf(stderr, "== bmCreateHdr ==\n");
                 return 0;
             }
             //Create the chromosome lists
-            ofp->cl = bwCreateChromList_ifp(ifp); //2
+            ofp->cl = bmCreateChromList_ifp(ifp); //2
             if(!ofp->cl) {
-                fprintf(stderr, "== bwCreateChromList ==\n");
+                fprintf(stderr, "== bmCreateChromList ==\n");
                 return 0;
             }
             //Write the header
-            if(bwWriteHdr(ofp)) {
-                fprintf(stderr, "== bwWriteHdr ==\n");
+            if(bmWriteHdr(ofp)) {
+                fprintf(stderr, "== bmWriteHdr ==\n");
                 return 0;
             }
         }
         
         if(!region && !bedfile){
             fprintf(stderr, "[Mode] ------------- View all meth\n");
-            main_view_all(ifp, outfp_mbw, outformat, ofp, filterchrom);
+            main_view_all(ifp, outfp_bm, outformat, ofp, filterchrom);
         }else if(region){
             fprintf(stderr, "[Mode] ------------- View region %s\n", region);
-            main_view(ifp, region, outfp_mbw, outformat, ofp);
+            main_view(ifp, region, outfp_bm, outformat, ofp);
             free(region);
         }else if(bedfile){
             fprintf(stderr, "[Mode] ------------- View bedfile %s\n", bedfile);
-            main_view_file(ifp, bedfile, outfp_mbw, outformat, ofp);
+            main_view_file(ifp, bedfile, outfp_bm, outformat, ofp);
             free(bedfile);
         }else{
             fprintf(stderr, "\nplease provide -r or --bed!!!\n");
         }
         fprintf(stderr, "Done and free mem\n");
         free(inbmfile);
-        bwClose(ifp);
+        bmClose(ifp);
         if(outfile) free(outfile);
         if(filterchrom) free(filterchrom);
         if(strcmp(outformat, "txt") == 0){
-            fclose(outfp_mbw);
-        }else if(strcmp(outformat, "mbw") == 0){
-            bwClose(ofp);
-            bwCleanup();
+            fclose(outfp_bm);
+        }else if(strcmp(outformat, "bm") == 0){
+            bmClose(ofp);
+            bmCleanup();
         }
         return 0;
     }
@@ -856,13 +856,13 @@ int main(int argc, char *argv[]) {
     if(strcmp(mode, "viewheader")==0){
         if(DEBUG>0) fprintf(stderr, "bm viewheader\n");
         uint32_t type = BMtype(inbmfile, NULL);
-        bigWigFile_t *ifp = NULL;
-        ifp = bwOpen(inbmfile, NULL, "r");
+        binaMethFile_t *ifp = NULL;
+        ifp = bmOpen(inbmfile, NULL, "r");
         ifp->type = ifp->hdr->version;
-        bwPrintHdr(ifp);
-        //bwPrintIndexTree(ifp);
+        bmPrintHdr(ifp);
+        //bmPrintIndexTree(ifp);
         free(inbmfile);
-        bwClose(ifp);
+        bmClose(ifp);
         return 0;
     }
 
@@ -871,12 +871,12 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "[Mode] ------------- overlap %s %s\n", inbmfile, bmfile2);
         if(inbm_mul == 1){
             if(!region && !bedfile){
-                bw_overlap_all_mul(inbmfiles, filter_strand);
+                bm_overlap_all_mul(inbmfiles, filter_strand);
             }else if(region){
-                bw_overlap_region_mul(inbmfiles, region, filter_strand);
+                bm_overlap_region_mul(inbmfiles, region, filter_strand);
                 free(region);
             }else if(bedfile){
-                bw_overlap_file_mul(inbmfiles, bedfile);
+                bm_overlap_file_mul(inbmfiles, bedfile);
                 free(bedfile);
             }else{
                 fprintf(stderr, "\nplease provide -r or --bed!!!\n");
@@ -884,12 +884,12 @@ int main(int argc, char *argv[]) {
             free(inbmfiles); 
         }else{
             if(!region && !bedfile){
-                bw_overlap_all(inbmfile, bmfile2, 1, 1, filter_strand);
+                bm_overlap_all(inbmfile, bmfile2, 1, 1, filter_strand);
             }else if(region){
-                bw_overlap_region(inbmfile, bmfile2, region, filter_strand);
+                bm_overlap_region(inbmfile, bmfile2, region, filter_strand);
                 free(region);
             }else if(bedfile){
-                bw_overlap_file(inbmfile, bmfile2, bedfile);
+                bm_overlap_file(inbmfile, bmfile2, bedfile);
                 free(bedfile);
             }else{
                 fprintf(stderr, "\nplease provide -r or --bed!!!\n");
@@ -1173,78 +1173,78 @@ int main(int argc, char *argv[]) {
     return 1;
 error:
     fprintf(stderr, "Received an error in process!\n");
-    bwClose(fp);
-    bwCleanup();
+    bmClose(fp);
+    bmCleanup();
     return -1;
 }
 
-void mbwfileinit(bigWigFile_t *ofp, bigWigFile_t *ifp, char* outfile, int zoomlevel){
-    if(bwInit(1<<17) != 0) {
-        fprintf(stderr, "Received an error in bwInit\n");
+void bmfileinit(binaMethFile_t *ofp, binaMethFile_t *ifp, char* outfile, int zoomlevel){
+    if(bmInit(1<<17) != 0) {
+        fprintf(stderr, "Received an error in bmInit\n");
         return;
     }
-    ofp = bwOpen(outfile, NULL, "w");
+    ofp = bmOpen(outfile, NULL, "w");
     ofp->type = ifp->type;
     if(!ofp) {
-        fprintf(stderr, "An error occurred while opening mbw for writingn\n");
+        fprintf(stderr, "An error occurred while opening bm for writingn\n");
         return;
     }
     //Allow up to 10 zoom levels, though fewer will be used in practice
-    if(bwCreateHdr(ofp, zoomlevel)) {
-        fprintf(stderr, "== bwCreateHdr ==\n");
+    if(bmCreateHdr(ofp, zoomlevel)) {
+        fprintf(stderr, "== bmCreateHdr ==\n");
         return;
     }
 
     //Create the chromosome lists
     ofp->cl = ifp->cl; //2
     if(!ofp->cl) {
-        fprintf(stderr, "== bwCreateChromList ==\n");
+        fprintf(stderr, "== bmCreateChromList ==\n");
         return;
     }
 
     //Write the header
-    if(bwWriteHdr(ofp)) {
-        fprintf(stderr, "== bwWriteHdr ==\n");
+    if(bmWriteHdr(ofp)) {
+        fprintf(stderr, "== bmWriteHdr ==\n");
         return;
     }
 }
 
-double *Sregionstats(bigWigFile_t *fp, char *chrom, int start, int end, int splitN, uint32_t movestep, char *method, uint8_t strand, uint8_t context){
+double *Sregionstats(binaMethFile_t *fp, char *chrom, int start, int end, int splitN, uint32_t movestep, char *method, uint8_t strand, uint8_t context){
     double *stats = NULL;
     assert(splitN>0);
     //int i=0;
     if(strcmp(method, "mean")==0){
-        stats = bwStats(fp, chrom, start, end, splitN, movestep, mean, strand, context);
+        stats = bmStats(fp, chrom, start, end, splitN, movestep, mean, strand, context);
     }else if(strcmp(method, "weighted")==0){
-        stats = bwStats(fp, chrom, start, end, splitN, movestep, weighted, strand, context);
+        stats = bmStats(fp, chrom, start, end, splitN, movestep, weighted, strand, context);
     }else if(strcmp(method, "dev")==0){
-        stats = bwStats(fp, chrom, start, end, splitN, movestep, dev, strand, context);
+        stats = bmStats(fp, chrom, start, end, splitN, movestep, dev, strand, context);
     }else if(strcmp(method, "min")==0){
-        stats = bwStats(fp, chrom, start, end, splitN, movestep, min, strand, context);
+        stats = bmStats(fp, chrom, start, end, splitN, movestep, min, strand, context);
     }else if(strcmp(method, "max")==0){
-        stats = bwStats(fp, chrom, start, end, splitN, movestep, max, strand, context);
+        stats = bmStats(fp, chrom, start, end, splitN, movestep, max, strand, context);
     }else if(strcmp(method, "cover")==0){
-        stats = bwStats(fp, chrom, start, end, splitN, movestep, cov, strand, context);
+        stats = bmStats(fp, chrom, start, end, splitN, movestep, cov, strand, context);
     }
     return stats;
 }
 
 //c cg chg chh
 //idx0 c cg chg chh; idx1 c cg chg chh; ... etc
-double *Sregionstats_array(bigWigFile_t *fp, char *chrom, int start, int end, int splitN, uint32_t movestep, char *method, uint8_t strand){
+double *Sregionstats_array(binaMethFile_t *fp, char *chrom, int start, int end, int splitN, uint32_t movestep, char *method, uint8_t strand){
     double *stats = NULL;
     assert(splitN>0);
     //int i=0;
     if(strcmp(method, "mean")==0){
-        stats = bwStats_array(fp, chrom, start, end, splitN, movestep, mean, strand);
+        stats = bmStats_array(fp, chrom, start, end, splitN, movestep, mean, strand);
     }else if(strcmp(method, "weighted")==0){
-        stats = bwStats_array(fp, chrom, start, end, splitN, movestep, weighted, strand);
+        stats = bmStats_array(fp, chrom, start, end, splitN, movestep, weighted, strand);
     }
     return stats;
 }
 
 //double *output = malloc(sizeof(double)*nBins*Tsize);
-void Sregionstats_array_count(bigWigFile_t *fp, char *chrom, int start, int end, int splitN, uint32_t movestep, char *method, uint8_t strand, uint16_t *countC, uint16_t *countCT){
+void Sregionstats_array_count(binaMethFile_t *fp, char *chrom, int start, int end, int splitN, uint32_t movestep, char *method, uint8_t strand, uint16_t *countC, uint16_t *countCT){
     assert(splitN>0);
     int i=0, Tsize = 4;
     for(i=0;i<splitN*Tsize;i++){
@@ -1252,7 +1252,7 @@ void Sregionstats_array_count(bigWigFile_t *fp, char *chrom, int start, int end,
         countCT[i]=0;
     }
     if(strcmp(method, "weighted")==0){
-        bwStats_array_count(fp, chrom, start, end, splitN, movestep, weighted, strand, countC, countCT);
+        bmStats_array_count(fp, chrom, start, end, splitN, movestep, weighted, strand, countC, countCT);
     }else {
         fprintf(stderr, "Unexpected method for weighted methylation count!");
         exit(0);
@@ -1261,10 +1261,10 @@ void Sregionstats_array_count(bigWigFile_t *fp, char *chrom, int start, int end,
 }
 
 int calchromstats(char *inbmfile, char *method, int chromstep, int stepoverlap, uint8_t pstrand, uint8_t context, FILE* outfileF, FILE* outfileF_c, FILE* outfileF_cg, FILE* outfileF_chg, FILE* outfileF_chh){
-    //open mbw file
+    //open bm file
     uint32_t type = BMtype(inbmfile, NULL);
-    bigWigFile_t *fp = NULL;
-    fp = bwOpen(inbmfile, NULL, "r");
+    binaMethFile_t *fp = NULL;
+    fp = bmOpen(inbmfile, NULL, "r");
     fp->type = fp->hdr->version;
 
     int i = 0, start = 0, end = chromstep; //, j = 0
@@ -1315,13 +1315,13 @@ int calchromstats(char *inbmfile, char *method, int chromstep, int stepoverlap, 
     }
     free(region);
 
-    bwClose(fp);
-    bwCleanup();
+    bmClose(fp);
+    bmCleanup();
     free(countC); free(countCT);
     return 0;
 }
 
-void profile_print(bigWigFile_t *fp, char *chrom, int start, int end, int splitN, double profilemovestep, char *method, uint8_t strand, char* geneid, uint8_t context, FILE* outfileF){
+void profile_print(binaMethFile_t *fp, char *chrom, int start, int end, int splitN, double profilemovestep, char *method, uint8_t strand, char* geneid, uint8_t context, FILE* outfileF){
     double *stats = Sregionstats(fp, chrom, start, end, splitN, (int)((end-start)*profilemovestep), "weighted", strand, context);
     int i;
     if(stats) {
@@ -1358,7 +1358,7 @@ int *finalcounts;
 FILE* outfileF;
 
 typedef struct {
-    bigWigFile_t *fp;
+    binaMethFile_t *fp;
     char *chrom;
     int start;
     int end;
@@ -1745,7 +1745,7 @@ void profile_print_array_mp(void *arg){
 }
 
 uint32_t stored_buffer = 0;
-void profile_print_array_buffer(double *finalstats, int *finalcounts, bigWigFile_t *fp, char *chrom, int processtart, int start, int end, int processend, int splitN, int bodysplitN, double profilemovestep, double bodyprofilemovestep, char *method, uint8_t strand, char* geneid, uint8_t context, char* printbuffer_c, char* printbuffer_cg, char* printbuffer_chg, char* printbuffer_chh, int matrixX){
+void profile_print_array_buffer(double *finalstats, int *finalcounts, binaMethFile_t *fp, char *chrom, int processtart, int start, int end, int processend, int splitN, int bodysplitN, double profilemovestep, double bodyprofilemovestep, char *method, uint8_t strand, char* geneid, uint8_t context, char* printbuffer_c, char* printbuffer_cg, char* printbuffer_chg, char* printbuffer_chh, int matrixX){
     double *stats_up = Sregionstats_array(fp, chrom, processtart, start, splitN, (int)((start-processtart)*profilemovestep), "weighted", strand);
     double *stats_body = Sregionstats_array(fp, chrom, start, end, bodysplitN, (int)((end-start)*bodyprofilemovestep), "weighted", strand);
     double *stats_down = Sregionstats_array(fp, chrom, end, processend, splitN, (int)((processend-end)*profilemovestep), "weighted", strand);
@@ -1918,7 +1918,7 @@ void profile_print_array_buffer(double *finalstats, int *finalcounts, bigWigFile
     free(storetemp);
 }
 
-void profile_print_array_buffer1(double *finalstats, int *finalcounts, bigWigFile_t *fp, char *chrom, int start, int end, int splitN, double profilemovestep, char *method, uint8_t strand, char* geneid, uint8_t context, char* printbuffer_c, char* printbuffer_cg, char* printbuffer_chg, char* printbuffer_chh, int matrixX){
+void profile_print_array_buffer1(double *finalstats, int *finalcounts, binaMethFile_t *fp, char *chrom, int start, int end, int splitN, double profilemovestep, char *method, uint8_t strand, char* geneid, uint8_t context, char* printbuffer_c, char* printbuffer_cg, char* printbuffer_chg, char* printbuffer_chh, int matrixX){
     double *stats = Sregionstats_array(fp, chrom, start, end, splitN, (int)((end-start)*profilemovestep), "weighted", strand);
     int i,j,k,m; int Tsize = 4;
     int total_splitN = splitN*Tsize;
@@ -2068,10 +2068,10 @@ void profile_print_array_buffer1(double *finalstats, int *finalcounts, bigWigFil
 }
 
 int calprofile_gtf(char *inbmfile, int upstream, int downstream, double profilestep, double profilemovestep, double bodyprofilestep, double bodyprofilemovestep, char *gtffile, int format, uint8_t context, FILE* outfileF_c, FILE* outfileF_cg, FILE* outfileF_chg, FILE* outfileF_chh, FILE* outfileF_aver, int profilemode, int matrixX){
-    //open mbw file
+    //open bm file
     uint32_t type = BMtype(inbmfile, NULL);
-    bigWigFile_t *fp = NULL;
-    fp = bwOpen(inbmfile, NULL, "r");
+    binaMethFile_t *fp = NULL;
+    fp = bmOpen(inbmfile, NULL, "r");
     fp->type = fp->hdr->version;
 
     FILE* Fgtffile=File_Open(gtffile,"r");
@@ -2104,7 +2104,7 @@ int calprofile_gtf(char *inbmfile, int upstream, int downstream, double profiles
     //NTHREAD = 10
     int prothreads = 0, ithread = 0;
     ProfileARGS *profileArgs = malloc(sizeof(ProfileARGS)*NTHREAD);
-    //bigWigFile_t **fps = malloc(sizeof(bigWigFile_t*)*NTHREAD);
+    //binaMethFile_t **fps = malloc(sizeof(binaMethFile_t*)*NTHREAD);
     for(ithread=0; ithread<NTHREAD; ithread++){
         if(profilemode>0){
             profileArgs[ithread].splitN = splitN*2;
@@ -2117,7 +2117,7 @@ int calprofile_gtf(char *inbmfile, int upstream, int downstream, double profiles
         profileArgs[ithread].matrixX = matrixX;
         profileArgs[ithread].method = "weighted";
         profileArgs[ithread].fp = NULL;
-        profileArgs[ithread].fp = bwOpen(inbmfile, NULL, "r");
+        profileArgs[ithread].fp = bmOpen(inbmfile, NULL, "r");
         profileArgs[ithread].fp->type = profileArgs[ithread].fp->hdr->version;
         profileArgs[ithread].printbuffer_c = malloc(sizeof(char)*MAX_BUFF_PRINT);
         profileArgs[ithread].printbuffer_cg = malloc(sizeof(char)*MAX_BUFF_PRINT);
@@ -2265,9 +2265,9 @@ int calprofile_gtf(char *inbmfile, int upstream, int downstream, double profiles
     free(finalstats); free(finalcounts);//???
     fclose(Fgtffile);
     free(chrom); free(PerLine); free(strand); free(geneid); 
-    bwClose(fp);
+    bmClose(fp);
     for(ithread=0; ithread<NTHREAD; ithread++){
-        //bwClose(profileArgs[ithread].fp);
+        //bmClose(profileArgs[ithread].fp);
         free(profileArgs[ithread].printbuffer_c);
         free(profileArgs[ithread].printbuffer_cg);
         free(profileArgs[ithread].printbuffer_chg);
@@ -2276,15 +2276,15 @@ int calprofile_gtf(char *inbmfile, int upstream, int downstream, double profiles
         free(profileArgs[ithread].chrom);
     }
     free(profileArgs);
-    bwCleanup();
+    bmCleanup();
     fprintf(stderr, "done free!\n");
 }
 
 int calprofile(char *inbmfile, int upstream, int downstream, double profilestep, double profilemovestep, double bodyprofilestep, double bodyprofilemovestep, char *bedfile, uint8_t context, FILE* outfileF_c, FILE* outfileF_cg, FILE* outfileF_chg, FILE* outfileF_chh, FILE* outfileF_aver, int profilemode, int matrixX){
-    //open mbw file
+    //open bm file
     uint32_t type = BMtype(inbmfile, NULL);
-    bigWigFile_t *fp = NULL;
-    fp = bwOpen(inbmfile, NULL, "r");
+    binaMethFile_t *fp = NULL;
+    fp = bmOpen(inbmfile, NULL, "r");
     fp->type = fp->hdr->version;
 
     FILE* Fbedfile=File_Open(bedfile,"r");
@@ -2312,7 +2312,7 @@ int calprofile(char *inbmfile, int upstream, int downstream, double profilestep,
     //int NTHREAD = 10
     int prothreads = 0, ithread = 0;
     ProfileARGS *profileArgs = malloc(sizeof(ProfileARGS)*NTHREAD);
-    //bigWigFile_t **fps = malloc(sizeof(bigWigFile_t*)*NTHREAD);
+    //binaMethFile_t **fps = malloc(sizeof(binaMethFile_t*)*NTHREAD);
     for(ithread=0; ithread<NTHREAD; ithread++){
         if(profilemode>0){
             profileArgs[ithread].splitN = splitN*2;
@@ -2325,7 +2325,7 @@ int calprofile(char *inbmfile, int upstream, int downstream, double profilestep,
         profileArgs[ithread].matrixX = matrixX;
         profileArgs[ithread].method = "weighted";
         profileArgs[ithread].fp = NULL;
-        profileArgs[ithread].fp = bwOpen(inbmfile, NULL, "r");
+        profileArgs[ithread].fp = bmOpen(inbmfile, NULL, "r");
         profileArgs[ithread].fp->type = profileArgs[ithread].fp->hdr->version;
         profileArgs[ithread].printbuffer_c = malloc(sizeof(char)*MAX_BUFF_PRINT);
         profileArgs[ithread].printbuffer_cg = malloc(sizeof(char)*MAX_BUFF_PRINT);
@@ -2464,12 +2464,12 @@ int calprofile(char *inbmfile, int upstream, int downstream, double profilestep,
     free(print_context);
     free(finalstats); free(finalcounts);
 
-    bwClose(fp);
-    bwCleanup();
+    bmClose(fp);
+    bmCleanup();
     fclose(Fbedfile);
     free(chrom); free(PerLine); free(strand);
     for(ithread=0; ithread<NTHREAD; ithread++){
-        //bwClose(profileArgs[ithread].fp);
+        //bmClose(profileArgs[ithread].fp);
         free(profileArgs[ithread].printbuffer_c);
         free(profileArgs[ithread].printbuffer_cg);
         free(profileArgs[ithread].printbuffer_chg);
@@ -2499,7 +2499,7 @@ void delete_char2(char* str, char target,char target2){
 	str[j]='\0';
 }
 
-void calbody_print(bigWigFile_t *fp, char* chrom, int start, int end, int splitN, char* method, int pstrand, int format, char* geneid, uint8_t context, char* bodycase, char* strand, FILE* outfileF){
+void calbody_print(binaMethFile_t *fp, char* chrom, int start, int end, int splitN, char* method, int pstrand, int format, char* geneid, uint8_t context, char* bodycase, char* strand, FILE* outfileF){
     double *stats = Sregionstats_array(fp, chrom, start, end, splitN, end-start, method, pstrand);
     //int i = 0;
     char* print_context = malloc(sizeof(char)*5);
@@ -2550,7 +2550,7 @@ void calbody_print(bigWigFile_t *fp, char* chrom, int start, int end, int splitN
     free(print_context);
 }
 
-void calregion_weighted_print(bigWigFile_t *fp, char* chrom, int start, int end, int splitN, char* method, int pstrand, int format, char* geneid, uint8_t context, char* bodycase, char* strand, FILE* outfileF_c, FILE* outfileF_cg, FILE* outfileF_chg, FILE* outfileF_chh, uint16_t *countC, uint16_t *countCT){
+void calregion_weighted_print(binaMethFile_t *fp, char* chrom, int start, int end, int splitN, char* method, int pstrand, int format, char* geneid, uint8_t context, char* bodycase, char* strand, FILE* outfileF_c, FILE* outfileF_cg, FILE* outfileF_chg, FILE* outfileF_chh, uint16_t *countC, uint16_t *countCT){
     Sregionstats_array_count(fp, chrom, start, end, splitN, end-start, method, pstrand, countC, countCT);
     //int i = 0;
     char* print_context = malloc(sizeof(char)*5);
@@ -2590,7 +2590,7 @@ void calregion_weighted_print(bigWigFile_t *fp, char* chrom, int start, int end,
     free(print_geneid);
 }
 
-void calregion_print(bigWigFile_t *fp, char* chrom, int start, int end, int splitN, char* method, int pstrand, int format, char* geneid, uint8_t context, char* strand, FILE* outfileF){
+void calregion_print(binaMethFile_t *fp, char* chrom, int start, int end, int splitN, char* method, int pstrand, int format, char* geneid, uint8_t context, char* strand, FILE* outfileF){
     double *stats = Sregionstats_array(fp, chrom, start, end, splitN, end-start, method, pstrand);
     //int i = 0;
     char* print_context = malloc(sizeof(char)*5);
@@ -2636,10 +2636,10 @@ void calregion_print(bigWigFile_t *fp, char* chrom, int start, int end, int spli
 }
 
 int calregionstats_file(char *inbmfile, char *method, char *bedfile, int format, uint8_t context, FILE* outfileF, FILE* outfileF_c, FILE* outfileF_cg, FILE* outfileF_chg, FILE* outfileF_chh){
-    //open mbw file
+    //open bm file
     uint32_t type = BMtype(inbmfile, NULL);
-    bigWigFile_t *fp = NULL;
-    fp = bwOpen(inbmfile, NULL, "r");
+    binaMethFile_t *fp = NULL;
+    fp = bmOpen(inbmfile, NULL, "r");
     fp->type = fp->hdr->version;
 
     FILE* Fbedfile=File_Open(bedfile,"r");
@@ -2685,8 +2685,8 @@ int calregionstats_file(char *inbmfile, char *method, char *bedfile, int format,
         }
     }
 
-    bwClose(fp);
-    bwCleanup();
+    bmClose(fp);
+    bmCleanup();
     fclose(Fbedfile);
     free(chrom); free(PerLine); free(strand);
     free(countC); free(countCT);
@@ -2695,10 +2695,10 @@ int calregionstats_file(char *inbmfile, char *method, char *bedfile, int format,
 
 
 int calregionstats(char *inbmfile, char *method, char *region, uint8_t pstrand, uint8_t context, FILE* outfileF, FILE* outfileF_c, FILE* outfileF_cg, FILE* outfileF_chg, FILE* outfileF_chh){
-    //open mbw file
+    //open bm file
     uint32_t type = BMtype(inbmfile, NULL);
-    bigWigFile_t *fp = NULL;
-    fp = bwOpen(inbmfile, NULL, "r");
+    binaMethFile_t *fp = NULL;
+    fp = bmOpen(inbmfile, NULL, "r");
     fp->type = fp->hdr->version;
 
     char *substr= strtok(region, ";");
@@ -2767,18 +2767,18 @@ int calregionstats(char *inbmfile, char *method, char *region, uint8_t pstrand, 
         
     }
 
-    bwClose(fp);
-    bwCleanup();
+    bmClose(fp);
+    bmCleanup();
     //free(chrom);
     free(countC); free(countCT);
     return 0;
 }
 
 int calbodystats_file(char *inbmfile, char *method, char *bedfile, int format, uint8_t context, FILE* outfileF, FILE* outfileF_c, FILE* outfileF_cg, FILE* outfileF_chg, FILE* outfileF_chh){
-    //open mbw file
+    //open bm file
     uint32_t type = BMtype(inbmfile, NULL);
-    bigWigFile_t *fp = NULL;
-    fp = bwOpen(inbmfile, NULL, "r");
+    binaMethFile_t *fp = NULL;
+    fp = bmOpen(inbmfile, NULL, "r");
     fp->type = fp->hdr->version;
 
     FILE* Fbedfile=File_Open(bedfile,"r");
@@ -2827,8 +2827,8 @@ int calbodystats_file(char *inbmfile, char *method, char *bedfile, int format, u
         }
     }
 
-    bwClose(fp);
-    bwCleanup();
+    bmClose(fp);
+    bmCleanup();
     fclose(Fbedfile);
     free(chrom); free(PerLine); free(strand);
     free(countC); free(countCT);
@@ -2837,10 +2837,10 @@ int calbodystats_file(char *inbmfile, char *method, char *bedfile, int format, u
 
 
 int calbodystats(char *inbmfile, char *method, char *region, uint8_t pstrand, uint8_t context, FILE* outfileF, FILE* outfileF_c, FILE* outfileF_cg, FILE* outfileF_chg, FILE* outfileF_chh){
-    //open mbw file
+    //open bm file
     uint32_t type = BMtype(inbmfile, NULL);
-    bigWigFile_t *fp = NULL;
-    fp = bwOpen(inbmfile, NULL, "r");
+    binaMethFile_t *fp = NULL;
+    fp = bmOpen(inbmfile, NULL, "r");
     fp->type = fp->hdr->version;
 
     char *substr= strtok(region, ";");
@@ -2883,14 +2883,14 @@ int calbodystats(char *inbmfile, char *method, char *region, uint8_t pstrand, ui
         }
     }
 
-    bwClose(fp);
-    bwCleanup();
+    bmClose(fp);
+    bmCleanup();
     //free(chrom);
     free(countC); free(countCT);
     return 0;
 }
 
-int main_view_all(bigWigFile_t *ifp, FILE* outfileF, char *outformat, bigWigFile_t *ofp, char* filterchrom){
+int main_view_all(binaMethFile_t *ifp, FILE* outfileF, char *outformat, binaMethFile_t *ofp, char* filterchrom){
 
     int SEGlen = 1000000;
     int start = 0, end = SEGlen-1;
@@ -2923,20 +2923,20 @@ int main_view_all(bigWigFile_t *ifp, FILE* outfileF, char *outformat, bigWigFile
             }
             sprintf(region, "%s:%d-%d\n", chrom, start, end);
 //            fprintf(stderr, "ccx %s\n", region);
-            printL = main_view_mbw(ifp, region, outfileF, outformat, ofp, chromsUse, starts, ends, values, coverages, strands, contexts, 
+            printL = main_view_bm(ifp, region, outfileF, outformat, ofp, chromsUse, starts, ends, values, coverages, strands, contexts, 
                 entryid);
-            if(strcmp(outformat, "mbw") == 0) {
+            if(strcmp(outformat, "bm") == 0) {
                 if(start == 0 && printL>0){
-                    int response = bwAddIntervals(ofp, chromsUse, starts, ends, values, coverages, strands, contexts, 
+                    int response = bmAddIntervals(ofp, chromsUse, starts, ends, values, coverages, strands, contexts, 
                     entryid, printL);
                     if(response) {
-                        fprintf(stderr, "mbwAddIntervals 0\n");
+                        fprintf(stderr, "bmAddIntervals 0\n");
                         return -1;
                     }
                     printL = 0;
                 }else if(printL>0){
-                    if(bwAppendIntervals(ofp, starts, ends, values, coverages, strands, contexts, entryid, printL)) {
-                        fprintf(stderr, "mbwAppendIntervals 2\n");
+                    if(bmAppendIntervals(ofp, starts, ends, values, coverages, strands, contexts, entryid, printL)) {
+                        fprintf(stderr, "bmAppendIntervals 2\n");
                         return -1;
                     }
                     printL = 0;
@@ -2956,13 +2956,13 @@ int main_view_all(bigWigFile_t *ifp, FILE* outfileF, char *outformat, bigWigFile
     free(ends); free(values); free(coverages); free(strands); free(contexts);
 }
 
-int main_view_mbw(bigWigFile_t *ifp, char *region, FILE* outfileF, char *outformat, bigWigFile_t *ofp, \
+int main_view_bm(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outformat, binaMethFile_t *ofp, \
     char** chromsUse, uint32_t* starts, uint32_t* ends, float* values, uint16_t* coverages, uint8_t* strands, \
     uint8_t* contexts, char** entryid){
-    // read. test/example_output.bw
+    // read. test/example_output.bm
     if(DEBUG>1) fprintf(stderr, "\nifp===-=== %d %d\n", ifp->type, ifp->hdr->version);
     //ifp->type = type;
-    bwOverlappingIntervals_t *o;
+    bmOverlappingIntervals_t *o;
 
     if(DEBUG>1) fprintf(stderr, "xxx111-------- %s %d\n", region, ifp->type);
     char *substr= strtok(region, ";");
@@ -2987,7 +2987,7 @@ int main_view_mbw(bigWigFile_t *ifp, char *region, FILE* outfileF, char *outform
         //strand = strtok(NULL,",:-");
         //sscanf((const char *)regions[i], "%s:%d-%d", chrom, &start, &end);
         if(DEBUG>1) fprintf(stderr, "slen %d %d chrom %s %d %d %d", slen, i, chrom, start, end, slen);
-        o = bwGetOverlappingIntervals(ifp, chrom, start, end+1);
+        o = bmGetOverlappingIntervals(ifp, chrom, start, end+1);
         if(!o) goto error;
         if(DEBUG>1) fprintf(stderr, "\no->l %ld %ld %d\n", o->l, o->m, ifp->type);
         //fprintf(stderr, "--- version --- %d %d\n", ifp->hdr->version, o->l);
@@ -3009,7 +3009,7 @@ int main_view_mbw(bigWigFile_t *ifp, char *region, FILE* outfileF, char *outform
                     }
                 }
 
-                if(strcmp(outformat, "mbw") == 0){
+                if(strcmp(outformat, "bm") == 0){
                     chromsUse[Nprint] = strdup(chrom);
                     starts[Nprint] = o->start[j];
                     if(ifp->hdr->version & BM_END){
@@ -3063,8 +3063,8 @@ int main_view_mbw(bigWigFile_t *ifp, char *region, FILE* outfileF, char *outform
                     Nprint++;
                     if(Nprint>10000) {
                         if(strcmp(outformat, "txt") == 0) fprintf(outfileF,"%s",pszBuf);
-                        else if(strcmp(outformat, "mbw") == 0) {
-                            //mbw out
+                        else if(strcmp(outformat, "bm") == 0) {
+                            //bm out
                         }
                         Nprint = 0;
                     }
@@ -3076,14 +3076,14 @@ int main_view_mbw(bigWigFile_t *ifp, char *region, FILE* outfileF, char *outform
     if(Nprint>0) {
         if(strcmp(outformat, "txt") == 0) {
             fprintf(outfileF,"%s",pszBuf);
-        } else if(strcmp(outformat, "mbw") == 0) {
-            ;//mbw out, just skip
+        } else if(strcmp(outformat, "bm") == 0) {
+            ;//bm out, just skip
         }
     }
     //free(chrom);
     free(tempchar);
     free(pszBuf);
-    bwDestroyOverlappingIntervals(o);
+    bmDestroyOverlappingIntervals(o);
     return Nprint;
 
 error:
@@ -3091,11 +3091,11 @@ error:
     return 0;
 }
 
-int main_view_file(bigWigFile_t *ifp, char *bedfile, FILE* outfileF, char *outformat, bigWigFile_t *ofp){
-    // read. test/example_output.bw
+int main_view_file(binaMethFile_t *ifp, char *bedfile, FILE* outfileF, char *outformat, binaMethFile_t *ofp){
+    // read. test/example_output.bm
     if(DEBUG>1) fprintf(stderr, "\nifp===-=== %d %d\n", ifp->type, ifp->hdr->version);
     //ifp->type = type;
-    bwOverlappingIntervals_t *o;
+    bmOverlappingIntervals_t *o;
 
     if(DEBUG>1) fprintf(stderr, "xxx111-------- %s %d\n", bedfile, ifp->type);
 
@@ -3135,7 +3135,7 @@ int main_view_file(bigWigFile_t *ifp, char *bedfile, FILE* outfileF, char *outfo
     free(strand);
     free(PerLine); free(region);
 
-    bwDestroyOverlappingIntervals(o);
+    bmDestroyOverlappingIntervals(o);
     return 0;
 
 error:
@@ -3143,11 +3143,11 @@ error:
     return 1;
 }
 
-int main_view(bigWigFile_t *ifp, char *region, FILE* outfileF, char *outformat, bigWigFile_t *ofp){
-    // read. test/example_output.bw
+int main_view(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outformat, binaMethFile_t *ofp){
+    // read. test/example_output.bm
     if(DEBUG>1) fprintf(stderr, "\nifp===-=== %d %d\n", ifp->type, ifp->hdr->version);
     //ifp->type = type;
-    bwOverlappingIntervals_t *o;
+    bmOverlappingIntervals_t *o;
 
     if(DEBUG>1) fprintf(stderr, "xxx111-------- %s %d\n", region, ifp->type);
     char *substr= strtok(region, ";");
@@ -3172,7 +3172,7 @@ int main_view(bigWigFile_t *ifp, char *region, FILE* outfileF, char *outformat, 
         //strand = strtok(NULL,",:-");
         //sscanf((const char *)regions[i], "%s:%d-%d", chrom, &start, &end);
         if(DEBUG>1) fprintf(stderr, "slen %d %d chrom %s %d %d %d", slen, i, chrom, start, end, slen);
-        o = bwGetOverlappingIntervals(ifp, chrom, start, end+1);
+        o = bmGetOverlappingIntervals(ifp, chrom, start, end+1);
         if(!o) goto error;
         if(DEBUG>1) fprintf(stderr, "\no->l %ld %ld %d\n", o->l, o->m, ifp->type);
         //fprintf(stderr, "--- version --- %d\n", ifp->hdr->version);
@@ -3224,8 +3224,8 @@ int main_view(bigWigFile_t *ifp, char *region, FILE* outfileF, char *outformat, 
                 Nprint++;
                 if(Nprint>10000) {
                     if(strcmp(outformat, "txt") == 0) fprintf(outfileF,"%s",pszBuf);
-                    else if(strcmp(outformat, "mbw") == 0) {
-                        //mbw out
+                    else if(strcmp(outformat, "bm") == 0) {
+                        //bm out
                     }
                     Nprint = 0;
                 }
@@ -3235,15 +3235,15 @@ int main_view(bigWigFile_t *ifp, char *region, FILE* outfileF, char *outformat, 
 
     if(Nprint>0) {
         if(strcmp(outformat, "txt") == 0) fprintf(outfileF,"%s",pszBuf);
-        else if(strcmp(outformat, "mbw") == 0) {
-            //mbw out
+        else if(strcmp(outformat, "bm") == 0) {
+            //bm out
         }
         Nprint = 0;
     }
     //free(chrom);
     free(tempchar);
     free(pszBuf);
-    bwDestroyOverlappingIntervals(o);
+    bmDestroyOverlappingIntervals(o);
     return 0;
 
 error:
@@ -3251,12 +3251,12 @@ error:
     return 1;
 }
 
-int main_view_bedfile(char *inbmF, char *bedfile, int type, FILE* outfileF, char *outformat, bigWigFile_t *ofp){
-    // read. test/example_output.bw
-    bigWigFile_t *ifp = NULL;
-    ifp = bwOpen(inbmF, NULL, "r");
+int main_view_bedfile(char *inbmF, char *bedfile, int type, FILE* outfileF, char *outformat, binaMethFile_t *ofp){
+    // read. test/example_output.bm
+    binaMethFile_t *ifp = NULL;
+    ifp = bmOpen(inbmF, NULL, "r");
     ifp->type = type;
-    bwOverlappingIntervals_t *o;
+    bmOverlappingIntervals_t *o;
 
     FILE *BedF = File_Open(bedfile, "r");
 
@@ -3275,7 +3275,7 @@ int main_view_bedfile(char *inbmF, char *bedfile, int type, FILE* outfileF, char
         }
         //sscanf((const char *)regions[i], "%s:%d-%d", chrom, &start, &end);
         if(DEBUG>1) fprintf(stderr, "slen %d chrom %s %d %d", i, chrom, start, end);
-        o = bwGetOverlappingIntervals(ifp, chrom, start, end+1);
+        o = bmGetOverlappingIntervals(ifp, chrom, start, end+1);
         if(!o) goto error;
         if(DEBUG>1) fprintf(stderr, "\no->l %ld %ld %d\n", o->l, o->m, ifp->type);
         if(o->l) {
@@ -3290,18 +3290,18 @@ int main_view_bedfile(char *inbmF, char *bedfile, int type, FILE* outfileF, char
 
     //free(chrom);
     fclose(BedF);
-    bwDestroyOverlappingIntervals(o);
-    bwClose(ifp);
+    bmDestroyOverlappingIntervals(o);
+    bmClose(ifp);
     return 0;
 
 error:
     fprintf(stderr, "No results found!\n");
-    bwClose(ifp);
-    bwCleanup();
+    bmClose(ifp);
+    bmCleanup();
     return 1;
 }
 
-int bw_overlap_all_mul(char *inbmFs, uint8_t pstrand){
+int bm_overlap_all_mul(char *inbmFs, uint8_t pstrand){
     char *substr= strtok(inbmFs, ",");
     char infiles[1000][200] = {""};
     int sizeifp = 0, i = 0;
@@ -3311,12 +3311,12 @@ int bw_overlap_all_mul(char *inbmFs, uint8_t pstrand){
         substr = strtok(NULL,",");
     }
 
-    bigWigFile_t **ifps = malloc(sizeof(bigWigFile_t)*sizeifp);
+    binaMethFile_t **ifps = malloc(sizeof(binaMethFile_t)*sizeifp);
 
     for(i=0;i<sizeifp;i++){
         uint32_t type1 = BMtype(infiles[i], NULL);
-        bigWigFile_t *ifp1 = NULL;
-        ifp1 = bwOpen(infiles[i], NULL, "r");
+        binaMethFile_t *ifp1 = NULL;
+        ifp1 = bmOpen(infiles[i], NULL, "r");
         ifp1->type = ifp1->hdr->version;
         ifps[i] = ifp1;
     }
@@ -3332,7 +3332,7 @@ int bw_overlap_all_mul(char *inbmFs, uint8_t pstrand){
             if(end>len){
                 end = len;
             }
-            bw_overlap_mul(ifps, sizeifp, chrom, start, end, pstrand);
+            bm_overlap_mul(ifps, sizeifp, chrom, start, end, pstrand);
             start += SEGlen;
             end += SEGlen;
         }
@@ -3340,22 +3340,22 @@ int bw_overlap_all_mul(char *inbmFs, uint8_t pstrand){
 
     
     for(i=0;i<sizeifp;i++){
-        bwClose(ifps[i]);
+        bmClose(ifps[i]);
     }
     return 0;
 }
 
-int bw_overlap_file_mul(char *inbmFs, char *bedfile){
+int bm_overlap_file_mul(char *inbmFs, char *bedfile){
     /*
     //open file1
     uint32_t type1 = BMtype(inbmF1, NULL);
-    bigWigFile_t *ifp1 = NULL;
-    ifp1 = bwOpen(inbmF1, NULL, "r");
+    binaMethFile_t *ifp1 = NULL;
+    ifp1 = bmOpen(inbmF1, NULL, "r");
     ifp1->type = ifp1->hdr->version;
     //file2
     uint32_t type2 = BMtype(inbmF2, NULL);
-    bigWigFile_t *ifp2 = NULL;
-    ifp2 = bwOpen(inbmF2, NULL, "r");
+    binaMethFile_t *ifp2 = NULL;
+    ifp2 = bmOpen(inbmF2, NULL, "r");
     ifp2->type = ifp2->hdr->version;
     */
 
@@ -3369,12 +3369,12 @@ int bw_overlap_file_mul(char *inbmFs, char *bedfile){
         substr = strtok(NULL,",");
     }
 
-    bigWigFile_t **ifps = malloc(sizeof(bigWigFile_t)*sizeifp);
+    binaMethFile_t **ifps = malloc(sizeof(binaMethFile_t)*sizeifp);
 
     for(i=0;i<sizeifp;i++){
         uint32_t type1 = BMtype(infiles[i], NULL);
-        bigWigFile_t *ifp1 = NULL;
-        ifp1 = bwOpen(infiles[i], NULL, "r");
+        binaMethFile_t *ifp1 = NULL;
+        ifp1 = bmOpen(infiles[i], NULL, "r");
         ifp1->type = ifp1->hdr->version;
         ifps[i] = ifp1;
     }
@@ -3402,30 +3402,30 @@ int bw_overlap_file_mul(char *inbmFs, char *bedfile){
         if(end-start>SEGlen){
             nK = (int)((end-start)/SEGlen-0.5);
             for(j=0;j<nK;j++){
-                bw_overlap_mul(ifps, sizeifp, chrom, start+j*SEGlen, start+(j+1)*SEGlen-1, pstrand);
+                bm_overlap_mul(ifps, sizeifp, chrom, start+j*SEGlen, start+(j+1)*SEGlen-1, pstrand);
             }
-            bw_overlap_mul(ifps, sizeifp, chrom, start+nK*SEGlen, end, pstrand);
+            bm_overlap_mul(ifps, sizeifp, chrom, start+nK*SEGlen, end, pstrand);
         }else
-            bw_overlap_mul(ifps, sizeifp, chrom, start, end, pstrand);
+            bm_overlap_mul(ifps, sizeifp, chrom, start, end, pstrand);
     }
 
     for(i=0;i<sizeifp;i++){
-        bwClose(ifps[i]);
+        bmClose(ifps[i]);
     }
     fclose(Fbedfile);
     free(PerLine); free(chrom); free(strand);
 }
 
-int bw_overlap_file(char *inbmF1, char *inbmF2, char *bedfile){
+int bm_overlap_file(char *inbmF1, char *inbmF2, char *bedfile){
     //open file1
     uint32_t type1 = BMtype(inbmF1, NULL);
-    bigWigFile_t *ifp1 = NULL;
-    ifp1 = bwOpen(inbmF1, NULL, "r");
+    binaMethFile_t *ifp1 = NULL;
+    ifp1 = bmOpen(inbmF1, NULL, "r");
     ifp1->type = ifp1->hdr->version;
     //file2
     uint32_t type2 = BMtype(inbmF2, NULL);
-    bigWigFile_t *ifp2 = NULL;
-    ifp2 = bwOpen(inbmF2, NULL, "r");
+    binaMethFile_t *ifp2 = NULL;
+    ifp2 = bmOpen(inbmF2, NULL, "r");
     ifp2->type = ifp2->hdr->version;
 
     
@@ -3448,16 +3448,16 @@ int bw_overlap_file(char *inbmF1, char *inbmF2, char *bedfile){
         }else{
             pstrand = 2;
         }
-        bw_overlap(ifp1, ifp2, chrom, start, end, pstrand);
+        bm_overlap(ifp1, ifp2, chrom, start, end, pstrand);
     }
 
-    bwClose(ifp1);
-    bwClose(ifp2);
+    bmClose(ifp1);
+    bmClose(ifp2);
     fclose(Fbedfile);
     free(PerLine); free(chrom); free(strand);
 }
 
-int bw_overlap_region_mul(char *inbmFs, char *region, uint8_t pstrand){
+int bm_overlap_region_mul(char *inbmFs, char *region, uint8_t pstrand){
     //open file1
     char *subinbm= strtok(inbmFs, ",");
     char infiles[1000][200] = {""};
@@ -3468,12 +3468,12 @@ int bw_overlap_region_mul(char *inbmFs, char *region, uint8_t pstrand){
         subinbm = strtok(NULL,",");
     }
 
-    bigWigFile_t **ifps = malloc(sizeof(bigWigFile_t)*sizeifp);
+    binaMethFile_t **ifps = malloc(sizeof(binaMethFile_t)*sizeifp);
 
     for(i=0;i<sizeifp;i++){
         uint32_t type1 = BMtype(infiles[i], NULL);
-        bigWigFile_t *ifp1 = NULL;
-        ifp1 = bwOpen(infiles[i], NULL, "r");
+        binaMethFile_t *ifp1 = NULL;
+        ifp1 = bmOpen(infiles[i], NULL, "r");
         ifp1->type = ifp1->hdr->version;
         ifps[i] = ifp1;
     }
@@ -3509,29 +3509,29 @@ int bw_overlap_region_mul(char *inbmFs, char *region, uint8_t pstrand){
         if(end-start>SEGlen){
             nK = (int)((end-start)/SEGlen-0.5);
             for(j=0;j<nK;j++){
-                bw_overlap_mul(ifps, sizeifp, chrom, start+j*SEGlen, start+(j+1)*SEGlen-1, pstrand);
+                bm_overlap_mul(ifps, sizeifp, chrom, start+j*SEGlen, start+(j+1)*SEGlen-1, pstrand);
             }
-            bw_overlap_mul(ifps, sizeifp, chrom, start+nK*SEGlen, end, pstrand);
+            bm_overlap_mul(ifps, sizeifp, chrom, start+nK*SEGlen, end, pstrand);
         }else
-            bw_overlap_mul(ifps, sizeifp, chrom, start, end, pstrand);
+            bm_overlap_mul(ifps, sizeifp, chrom, start, end, pstrand);
     }
 
     for(i=0;i<sizeifp;i++){
-        bwClose(ifps[i]);
+        bmClose(ifps[i]);
     }
     return 0;
 }
 
-int bw_overlap_region(char *inbmF1, char *inbmF2, char *region, uint8_t pstrand){
+int bm_overlap_region(char *inbmF1, char *inbmF2, char *region, uint8_t pstrand){
     //open file1
     uint32_t type1 = BMtype(inbmF1, NULL);
-    bigWigFile_t *ifp1 = NULL;
-    ifp1 = bwOpen(inbmF1, NULL, "r");
+    binaMethFile_t *ifp1 = NULL;
+    ifp1 = bmOpen(inbmF1, NULL, "r");
     ifp1->type = ifp1->hdr->version;
     //file2
     uint32_t type2 = BMtype(inbmF2, NULL);
-    bigWigFile_t *ifp2 = NULL;
-    ifp2 = bwOpen(inbmF2, NULL, "r");
+    binaMethFile_t *ifp2 = NULL;
+    ifp2 = bmOpen(inbmF2, NULL, "r");
     ifp2->type = ifp2->hdr->version;
 
     char *substr= strtok(region, ",");
@@ -3549,27 +3549,27 @@ int bw_overlap_region(char *inbmF1, char *inbmF2, char *region, uint8_t pstrand)
         chrom = strtok(regions[i], ":-");
         start = atoi(strtok(NULL,":-"));
         end = atoi(strtok(NULL,":-")); // + 1;
-        bw_overlap(ifp1, ifp2, chrom, start, end, pstrand);
+        bm_overlap(ifp1, ifp2, chrom, start, end, pstrand);
     }
 
-    bwClose(ifp1);
-    bwClose(ifp2);
+    bmClose(ifp1);
+    bmClose(ifp2);
     return 0;
 }
 
-int bw_overlap_all(char *inbmF1, char *inbmF2, int n1, int n2, uint8_t pstrand){
+int bm_overlap_all(char *inbmF1, char *inbmF2, int n1, int n2, uint8_t pstrand){
     if(n1<1 || n2<1){
         return -1;
     }
     //open file1
     uint32_t type1 = BMtype(inbmF1, NULL);
-    bigWigFile_t *ifp1 = NULL;
-    ifp1 = bwOpen(inbmF1, NULL, "r");
+    binaMethFile_t *ifp1 = NULL;
+    ifp1 = bmOpen(inbmF1, NULL, "r");
     ifp1->type = ifp1->hdr->version;
     //file2
     uint32_t type2 = BMtype(inbmF2, NULL);
-    bigWigFile_t *ifp2 = NULL;
-    ifp2 = bwOpen(inbmF2, NULL, "r");
+    binaMethFile_t *ifp2 = NULL;
+    ifp2 = bmOpen(inbmF2, NULL, "r");
     ifp2->type = ifp2->hdr->version;
 
     int SEGlen = 1000000;
@@ -3584,20 +3584,20 @@ int bw_overlap_all(char *inbmF1, char *inbmF2, int n1, int n2, uint8_t pstrand){
             if(end>len){
                 end = len;
             }
-            bw_overlap(ifp1, ifp2, chrom, start, end, pstrand);
+            bm_overlap(ifp1, ifp2, chrom, start, end, pstrand);
             start += SEGlen;
             end += SEGlen;
         }
     }
 
-    bwClose(ifp1);
-    bwClose(ifp2);
+    bmClose(ifp1);
+    bmClose(ifp2);
     return 0;
 }
 
-int bw_overlap(bigWigFile_t *ifp1, bigWigFile_t *ifp2, char *chrom, int start, int end, uint8_t strand){
-    bwOverlappingIntervals_t *o1;
-    bwOverlappingIntervals_t *o2;
+int bm_overlap(binaMethFile_t *ifp1, binaMethFile_t *ifp2, char *chrom, int start, int end, uint8_t strand){
+    bmOverlappingIntervals_t *o1;
+    bmOverlappingIntervals_t *o2;
 
     int slen = 1, i =0, j = 0, k = 0, lociK = 0;
     int* countM = malloc(sizeof(int)*(end-start+1));
@@ -3605,8 +3605,8 @@ int bw_overlap(bigWigFile_t *ifp1, bigWigFile_t *ifp2, char *chrom, int start, i
     for(i=0;i<slen; i++){
         //sscanf((const char *)regions[i], "%s:%d-%d", chrom, &start, &end);
         if(DEBUG>1) fprintf(stderr, "slen %d %d chrom %s %d %d %d", slen, i, chrom, start, end, slen);
-        o1 = bwGetOverlappingIntervals(ifp1, chrom, start, end+1);
-        o2 = bwGetOverlappingIntervals(ifp2, chrom, start, end+1);
+        o1 = bmGetOverlappingIntervals(ifp1, chrom, start, end+1);
+        o2 = bmGetOverlappingIntervals(ifp2, chrom, start, end+1);
         if(!o1 || !o2) goto error;
         //fprintf(stderr, "--- version --- %d\n", ifp1->hdr->version);
         if(o1->l && o2->l) {
@@ -3662,8 +3662,8 @@ int bw_overlap(bigWigFile_t *ifp1, bigWigFile_t *ifp2, char *chrom, int start, i
     }
 
     //free(chrom);
-    bwDestroyOverlappingIntervals(o1);
-    bwDestroyOverlappingIntervals(o2);
+    bmDestroyOverlappingIntervals(o1);
+    bmDestroyOverlappingIntervals(o2);
     free(countM);
     return 0;
 
@@ -3672,8 +3672,8 @@ error:
     return 1;
 }
 
-int bw_overlap_mul(bigWigFile_t **ifp1s, int sizeifp, char *chrom, int start, int end, uint8_t strand){
-    bwOverlappingIntervals_t *o1;
+int bm_overlap_mul(binaMethFile_t **ifp1s, int sizeifp, char *chrom, int start, int end, uint8_t strand){
+    bmOverlappingIntervals_t *o1;
     fprintf(stderr, "process region %s %d %d\n", chrom, start, end);
     int slen = 1, i =0, j = 0;
     int* countM = malloc(sizeof(int)*(end-start+1));
@@ -3683,7 +3683,7 @@ int bw_overlap_mul(bigWigFile_t **ifp1s, int sizeifp, char *chrom, int start, in
     if(DEBUG>1) fprintf(stderr, "slen %d %d chrom %s %d %d %d", slen, i, chrom, start, end, slen);
     int total = 0, loci = 0;
     for(i=0;i<sizeifp;i++){
-        o1 = bwGetOverlappingIntervals(ifp1s[i], chrom, start, end+1);
+        o1 = bmGetOverlappingIntervals(ifp1s[i], chrom, start, end+1);
         if(!o1) goto error;
         //fprintf(stderr, "--- version --- %d\n", ifp1->hdr->version);
         if(o1->l) {
@@ -3704,7 +3704,7 @@ int bw_overlap_mul(bigWigFile_t **ifp1s, int sizeifp, char *chrom, int start, in
         }
     }
     if(total == 0){
-        bwDestroyOverlappingIntervals(o1);
+        bmDestroyOverlappingIntervals(o1);
         free(countM);
         return 0;
     }
@@ -3717,7 +3717,7 @@ int bw_overlap_mul(bigWigFile_t **ifp1s, int sizeifp, char *chrom, int start, in
 
     int printed = 0;
     for(i=0;i<sizeifp;i++){
-        o1 = bwGetOverlappingIntervals(ifp1s[i], chrom, start, end+1);
+        o1 = bmGetOverlappingIntervals(ifp1s[i], chrom, start, end+1);
         if(!o1) goto error;
         if(o1->l){
             for(j=0; j<o1->l; j++) {
@@ -3765,7 +3765,7 @@ int bw_overlap_mul(bigWigFile_t **ifp1s, int sizeifp, char *chrom, int start, in
     }
 
     //free(chrom);
-    bwDestroyOverlappingIntervals(o1);
+    bmDestroyOverlappingIntervals(o1);
     for(i=0;i<end-start+1;i++){
         free(printmr[i]);
     }
@@ -3802,54 +3802,54 @@ FILE* File_Open(const char* File_Name,const char* Mode)
 	else return Handle;
 }
 
-void bwPrintHdr(bigWigFile_t *bw) {
+void bmPrintHdr(binaMethFile_t *bm) {
     uint64_t i;
     int64_t i64;
-    //fprintf(stderr, "Version:    %"PRIu16"\n", bw->hdr->version);
-    if(bw->hdr->version & BM_END) fprintf(stderr, "BM_END:    yes\n");
+    fprintf(stderr, "Ver code:    %"PRIu16"\n", bm->hdr->version);
+    if(bm->hdr->version & BM_END) fprintf(stderr, "BM_END:    yes\n");
     else fprintf(stderr, "BM_END:    no\n");
-    if(bw->hdr->version & BM_COVER) fprintf(stderr, "BM_COVER:    yes\n");
+    if(bm->hdr->version & BM_COVER) fprintf(stderr, "BM_COVER:    yes\n");
     else fprintf(stderr, "BM_COVER:    no\n");
-    if(bw->hdr->version & BM_CONTEXT) fprintf(stderr, "BM_CONTEXT:    yes\n");
+    if(bm->hdr->version & BM_CONTEXT) fprintf(stderr, "BM_CONTEXT:    yes\n");
     else fprintf(stderr, "BM_CONTEXT:    no\n");
-    if(bw->hdr->version & BM_STRAND) fprintf(stderr, "BM_STRAND:    yes\n");
+    if(bm->hdr->version & BM_STRAND) fprintf(stderr, "BM_STRAND:    yes\n");
     else fprintf(stderr, "BM_STRAND:    no\n");
-    if(bw->hdr->version & BM_ID) fprintf(stderr, "BM_ID:    yes\n");
+    if(bm->hdr->version & BM_ID) fprintf(stderr, "BM_ID:    yes\n");
     else fprintf(stderr, "BM_ID:    no\n");
-    fprintf(stderr, "Levels:     %"PRIu16"\n", bw->hdr->nLevels);
-    //fprintf(stderr, "ctOffset:   0x%"PRIx64"\n", bw->hdr->ctOffset);
-    //fprintf(stderr, "dataOffset: 0x%"PRIx64"\n", bw->hdr->dataOffset);
-    fprintf(stderr, "indexOffset:        0x%"PRIx64"\n", bw->hdr->indexOffset);
-    //fprintf(stderr, "sqlOffset:  0x%"PRIx64"\n", bw->hdr->sqlOffset);
-    //fprintf(stderr, "summaryOffset:      0x%"PRIx64"\n", bw->hdr->summaryOffset);
-    fprintf(stderr, "bufSize:    %"PRIu32"\n", bw->hdr->bufSize);
-    fprintf(stderr, "extensionOffset:    0x%"PRIx64"\n", bw->hdr->extensionOffset);
+    fprintf(stderr, "Levels:     %"PRIu16"\n", bm->hdr->nLevels);
+    //fprintf(stderr, "ctOffset:   0x%"PRIx64"\n", bm->hdr->ctOffset);
+    //fprintf(stderr, "dataOffset: 0x%"PRIx64"\n", bm->hdr->dataOffset);
+    fprintf(stderr, "indexOffset:        0x%"PRIx64"\n", bm->hdr->indexOffset);
+    //fprintf(stderr, "sqlOffset:  0x%"PRIx64"\n", bm->hdr->sqlOffset);
+    //fprintf(stderr, "summaryOffset:      0x%"PRIx64"\n", bm->hdr->summaryOffset);
+    fprintf(stderr, "bufSize:    %"PRIu32"\n", bm->hdr->bufSize);
+    fprintf(stderr, "extensionOffset:    0x%"PRIx64"\n", bm->hdr->extensionOffset);
 
-    if(bw->hdr->nLevels) {
+    if(bm->hdr->nLevels) {
         fprintf(stderr, "	i	level	data	index\n");
     }
-    for(i=0; i<bw->hdr->nLevels; i++) {
-        fprintf(stderr, "\t%"PRIu64"\t%"PRIu32"\t%"PRIx64"\t%"PRIx64"\n", i, bw->hdr->zoomHdrs->level[i], bw->hdr->zoomHdrs->dataOffset[i], bw->hdr->zoomHdrs->indexOffset[i]);
+    for(i=0; i<bm->hdr->nLevels; i++) {
+        fprintf(stderr, "\t%"PRIu64"\t%"PRIu32"\t%"PRIx64"\t%"PRIx64"\n", i, bm->hdr->zoomHdrs->level[i], bm->hdr->zoomHdrs->dataOffset[i], bm->hdr->zoomHdrs->indexOffset[i]);
     }
 
-    fprintf(stderr, "nBasesCovered:      %"PRIu64"\n", bw->hdr->nBasesCovered);
-    fprintf(stderr, "sumData:      %f\n", bw->hdr->sumData);
-    fprintf(stderr, "minVal:     %f\n", bw->hdr->minVal);
-    fprintf(stderr, "maxVal:     %f\n", bw->hdr->maxVal);
-    //fprintf(stderr, "sumData:    %f\n", bw->hdr->sumData);
-    //fprintf(stderr, "sumSquared: %f\n", bw->hdr->sumSquared);
+    fprintf(stderr, "nBasesCovered:      %"PRIu64"\n", bm->hdr->nBasesCovered);
+    fprintf(stderr, "sumData:      %f\n", bm->hdr->sumData);
+    fprintf(stderr, "minVal:     %f\n", bm->hdr->minVal);
+    fprintf(stderr, "maxVal:     %f\n", bm->hdr->maxVal);
+    //fprintf(stderr, "sumData:    %f\n", bm->hdr->sumData);
+    //fprintf(stderr, "sumSquared: %f\n", bm->hdr->sumSquared);
 
     //Chromosome idx/name/length
-    if(bw->cl) {
+    if(bm->cl) {
         fprintf(stderr, "Chromosome List\n");
         fprintf(stderr, "  idx\tChrom\tLength (bases)\n");
-        for(i64=0; i64<bw->cl->nKeys; i64++) {
-            fprintf(stderr, "  %"PRIu64"\t%s\t%"PRIu32"\n", i64, bw->cl->chrom[i64], bw->cl->len[i64]);
+        for(i64=0; i64<bm->cl->nKeys; i64++) {
+            fprintf(stderr, "  %"PRIu64"\t%s\t%"PRIu32"\n", i64, bm->cl->chrom[i64], bm->cl->len[i64]);
         }
     }
 }
 
-void bwPrintIndexNode(bwRTreeNode_t *node, int level) {
+void bmPrintIndexNode(bmRTreeNode_t *node, int level) {
     uint16_t i;
     if(!node) return;
     for(i=0; i<node->nChildren; i++) {
@@ -3868,12 +3868,12 @@ void bwPrintIndexNode(bwRTreeNode_t *node, int level) {
                 node->chrIdxEnd[i], \
                 node->baseEnd[i], \
                 node->dataOffset[i]);
-            bwPrintIndexNode(node->x.child[i], level+1);
+            bmPrintIndexNode(node->x.child[i], level+1);
         }
     }
 }
 
-void bwPrintIndexTree(bigWigFile_t *fp) {
+void bmPrintIndexTree(binaMethFile_t *fp) {
     printf("\nIndex tree:\n");
     printf("nItems:\t%"PRIu64"\n", fp->idx->nItems);
     printf("chrIdxStart:\t%"PRIu32"\n", fp->idx->chrIdxStart);
@@ -3882,7 +3882,7 @@ void bwPrintIndexTree(bigWigFile_t *fp) {
     printf("baseEnd:\t%"PRIu32"\n", fp->idx->baseEnd);
     printf("idxSize:\t%"PRIu64"\n", fp->idx->idxSize);
     printf("  level\tchrIdxStart\tbaseStart\tchrIdxEnd\tbaseEnd\tchild\tsize\n");
-    bwPrintIndexNode(fp->idx->root, 0);
+    bmPrintIndexNode(fp->idx->root, 0);
 }
 
 char *fastStrcat(char *s, char *t)
