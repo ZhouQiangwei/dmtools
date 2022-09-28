@@ -47,6 +47,8 @@ libdir = $(exec_prefix)/lib
 
 all: libs lib $(PROGS)
 
+pycd: lib $(PROGS)
+
 lib: lib-static lib-shared
 
 lib-static: libBinaMeth.a
