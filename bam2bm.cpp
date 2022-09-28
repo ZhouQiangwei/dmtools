@@ -13,7 +13,6 @@
 #include <sys/time.h>
 #include <errno.h>
 #include "binaMeth.h"
-//g++ calmeth.cpp -o calmeth -m64 -I./bmtools/ -L./bmtools/ -I./samtools-0.1.18/ -L./samtools-0.1.18/ -lBigWig -lbam -lz -Wl,-rpath /public/home/qwzhou/software_devp/batmeth2-bwa/src/bmtools/
 #include <stdlib.h>
 
 #include "htslib/htslib/sam.h"
@@ -172,7 +171,7 @@ string Prefix="None";
 #define MAX_LINE_PRINT 1000000
 #define BUFSIZE 1000000
 #define MAX_CHROM 1000000
-bigWigFile_t *fp;
+binaMethFile_t *fp;
 int main(int argc, char* argv[])
 {
 	time_t Start_Time,End_Time;
@@ -182,7 +181,7 @@ int main(int argc, char* argv[])
         "\t [bam2bm] mode paramaters, required\n"
 		"\t-g|--genome           genome fasta file\n"
 		"\t-b|--binput           Bam format file, sorted by chrom.\n"
-        "\t-m|--methratio        Prefix of methratio.mbw output file\n"
+        "\t-m|--methratio        Prefix of methratio.bm output file\n"
 		"\t [bam2bm] mode paramaters, options\n"
         "\t-n|--Nmismatch        Number of mismatches, default 0.06 percentage of read length. [0-1]\n"
 		"\t-Q                    caculate the methratio while read QulityScore >= Q. default:20\n"
@@ -500,16 +499,16 @@ int main(int argc, char* argv[])
 				}
 
 				fp = NULL;
-				methOutfileName=Prefix;methOutfileName+=".methratio.mbw";
+				methOutfileName=Prefix;methOutfileName+=".methratio.bm";
 
-				if(bwInit(1<<17) != 0) {
-        		    fprintf(stderr, "Received an error in bwInit\n");
+				if(bmInit(1<<17) != 0) {
+        		    fprintf(stderr, "Received an error in bmInit\n");
 		            return 1;
         		}
-				fp = (bigWigFile_t*)bwOpen((char*)methOutfileName.data(), NULL, "w");
+				fp = (binaMethFile_t*)bmOpen((char*)methOutfileName.data(), NULL, "w");
 	        	fp->type = write_type;
 				if(!fp) {
-					fprintf(stderr, "An error occurred while opening example_output.bw for writingn\n");
+					fprintf(stderr, "An error occurred while opening example_output.bm for writingn\n");
 					return 1;
 				}
 
@@ -605,12 +604,12 @@ int main(int argc, char* argv[])
 				}
 				if(f==InFileStart){
 					//Allow up to 10 zoom levels, though fewer will be used in practice
-					if(bwCreateHdr(fp, zoomlevel)) exit(0);
+					if(bmCreateHdr(fp, zoomlevel)) exit(0);
 					//Create the chromosome lists
-					fp->cl = bwCreateChromList(chroms, chrLens, Genome_Count); //2
+					fp->cl = bmCreateChromList(chroms, chrLens, Genome_Count); //2
 					if(!fp->cl) exit(0);
 					//Write the header
-					if(bwWriteHdr(fp)) exit(0);
+					if(bmWriteHdr(fp)) exit(0);
 					//Some example methlevel
 					if(DEBUG>1) fprintf(stderr, "====HHH type %d\n", fp->type);
 				}
@@ -757,10 +756,10 @@ int main(int argc, char* argv[])
 				fprintf(ALIGNLOG, "Mapped_reverse\t%u\n", reverse_mapped);
 				fclose(ALIGNLOG);
 			}
-			fprintf(stderr, "[BM::calmeth] mbw closing\n");
-        	bwClose(fp);
-    	    fprintf(stderr, "[BM::calmeth] mbw closed\n");
-	        bwCleanup();
+			fprintf(stderr, "[BM::calmeth] bm closing\n");
+        	bmClose(fp);
+    	    fprintf(stderr, "[BM::calmeth] bm closed\n");
+	        bmCleanup();
 //delete
 			fprintf(stderr, "[BM::calmeth] Done and release memory!\n");
 			for(int i =0; i < MAX_CHROM; i++){
@@ -1147,14 +1146,14 @@ void print_meth_tofile(int genome_id, ARGS* args){
 					}
 					printL++;
 					if(chrprinHdr==0){
-						int response = bwAddIntervals(fp, chromsUse, starts, pends, values, coverages, strands, contexts, 
+						int response = bmAddIntervals(fp, chromsUse, starts, pends, values, coverages, strands, contexts, 
 		                entryid, 1);
         		        if(response) goto error;
 					}
 					else if(printL>MAX_LINE_PRINT){
 						//We can continue appending similarly formatted entries
 						//N.B. you can't append a different chromosome (those always go into different
-						if(bwAppendIntervals(fp, starts+1, pends+1, values+1, coverages+1, strands+1, contexts+1, entryid, printL-1)) goto error;
+						if(bmAppendIntervals(fp, starts+1, pends+1, values+1, coverages+1, strands+1, contexts+1, entryid, printL-1)) goto error;
 						printL = 0;
 					}
 					chrprinHdr = 1;
@@ -1306,14 +1305,14 @@ void print_meth_tofile(int genome_id, ARGS* args){
 					}
 					printL++;
 					if(chrprinHdr==0){
-						int response = bwAddIntervals(fp, chromsUse, starts, pends, values, coverages, strands, contexts, 
+						int response = bmAddIntervals(fp, chromsUse, starts, pends, values, coverages, strands, contexts, 
 		                entryid, 1);
         		        if(response) goto error;
 					}
 					else if(printL>MAX_LINE_PRINT){
 						//We can continue appending similarly formatted entries
 						//N.B. you can't append a different chromosome (those always go into different
-						if(bwAppendIntervals(fp, starts+1, pends+1, values+1, coverages+1, strands+1, contexts+1, entryid, printL-1)) goto error;
+						if(bmAppendIntervals(fp, starts+1, pends+1, values+1, coverages+1, strands+1, contexts+1, entryid, printL-1)) goto error;
 						printL = 0;
 					}
 					chrprinHdr = 1;
@@ -1333,7 +1332,7 @@ void print_meth_tofile(int genome_id, ARGS* args){
 		//end print
 		if(printL > 1) {
             fprintf(stderr, "[BM::calmeth] print %d %d %d\n", starts[printL-1], pends[printL-1], printL-1);
-            if(bwAppendIntervals(fp, starts+1, pends+1, values+1, coverages+1, strands+1, contexts+1, entryid, printL-1)) goto error;
+            if(bmAppendIntervals(fp, starts+1, pends+1, values+1, coverages+1, strands+1, contexts+1, entryid, printL-1)) goto error;
             printL = 0; 
         }
 		//

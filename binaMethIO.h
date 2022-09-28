@@ -25,7 +25,7 @@ extern size_t GLOBAL_DEFAULTBUFFERSIZE;
 /*!
  * The enumerated values that indicate the connection type used to access a file.
  */
-enum bigWigFile_type_enum {
+enum binaMethFile_type_enum {
     BWG_FILE = 0,
     BWG_HTTP = 1,
     BWG_HTTPS = 2,
@@ -47,7 +47,7 @@ typedef struct {
     size_t bufPos; /**<Curent position inside the buffer.*/
     size_t bufSize; /**<The size of the buffer.*/
     size_t bufLen; /**<The actual size of the buffer used.*/
-    enum bigWigFile_type_enum type; /**<The connection type*/
+    enum binaMethFile_type_enum type; /**<The connection type*/
     int isCompressed; /**<1 if the file is compressed, otherwise 0*/
     char *fname; /**<Only needed for remote connections. The original URL/filename requested, since we need to make multiple connections.*/
 } URL_t;
@@ -84,9 +84,9 @@ CURLcode urlSeek(URL_t *URL, size_t pos);
  *
  *  Opens a local or remote file. Currently, http, https, and ftp are the only supported protocols and the URL must then begin with "http://", "https://", or "ftp://" as appropriate.
  *
- *  For remote files, an internal buffer is used to hold file contents, to avoid downloading entire files before starting. The size of this buffer and various variable related to connection timeout are set with bwInit().
+ *  For remote files, an internal buffer is used to hold file contents, to avoid downloading entire files before starting. The size of this buffer and various variable related to connection timeout are set with bmInit().
  *
- *  Note that you **must** run urlClose() on this when finished. However, you would typically just use bwOpen() rather than directly calling this function.
+ *  Note that you **must** run urlClose() on this when finished. However, you would typically just use bmOpen() rather than directly calling this function.
  *
  * @param fname The file name or URL to open.
  * @param callBack An optional user-supplied function. This is applied to remote connections so users can specify things like proxy and password information.

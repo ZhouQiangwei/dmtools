@@ -17,7 +17,7 @@
  *
  * With the start/end position, these positions refer specifically to the chromosomes specified in chrIdxStart/chrIdxEnd. Any chromosomes between these are completely spanned by a given child.
  */
-typedef struct bwRTreeNode_t {
+typedef struct bmRTreeNode_t {
     uint8_t isLeaf; /**<Is this node a leaf?*/
     //1 byte of padding
     uint16_t nChildren; /**<The number of children of this node, all lists have this length.*/
@@ -28,9 +28,9 @@ typedef struct bwRTreeNode_t {
     uint64_t *dataOffset; /**<For leaves, the offset to the on-disk data. For twigs, the offset to the child node.*/
     union {
         uint64_t *size; /**<Leaves only: The size of the data block.*/
-        struct bwRTreeNode_t **child; /**<Twigs only: The child node(s).*/
+        struct bmRTreeNode_t **child; /**<Twigs only: The child node(s).*/
     } x; /**<A union holding either size or child*/
-} bwRTreeNode_t;
+} bmRTreeNode_t;
 
 /*!
  * A header and index that points to an R-tree that in turn points to data blocks.
@@ -47,8 +47,8 @@ typedef struct {
     uint32_t nItemsPerSlot; /**<This is always 1!*/
     //There's 4 bytes of padding in the file here
     uint64_t rootOffset; /**<The offset to the root node of the R-Tree (on disk). Yes, this is redundant.*/
-    bwRTreeNode_t *root; /**<A pointer to the root node.*/
-} bwRTree_t;
+    bmRTreeNode_t *root; /**<A pointer to the root node.*/
+} bmRTree_t;
 
 /*!
  * @brief This structure holds the data blocks that overlap a given interval.
@@ -57,12 +57,12 @@ typedef struct {
     uint64_t n; /**<The number of blocks that overlap. This *MAY* be 0!.*/
     uint64_t *offset; /**<The offset to the on-disk position of the block.*/
     uint64_t *size; /**<The size of each block on disk (in bytes).*/
-} bwOverlapBlock_t;
+} bmOverlapBlock_t;
 
 /*!
  * @brief The header section of a given data block.
  *
- * There are 3 types of data blocks in bigWig files, each with slightly different needs. This is all taken care of internally.
+ * There are 3 types of data blocks in binaMeth files, each with slightly different needs. This is all taken care of internally.
  */
 typedef struct {
     uint32_t tid; /**<The chromosome ID.*/
@@ -72,6 +72,6 @@ typedef struct {
     uint32_t span; /**<The span of each data value*/
     uint8_t type; /**<The block type: 1, bedGraph; 2, variable step; 3, fixed step.*/
     uint16_t nItems; /**<The number of values in a given block.*/
-} bwDataHeader_t;
+} bmDataHeader_t;
 
 #endif // LIBBIGWIG_VALUES_H
