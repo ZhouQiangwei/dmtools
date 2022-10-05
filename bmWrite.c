@@ -98,7 +98,7 @@ int bmCreateHdr(binaMethFile_t *fp, int32_t maxZooms) {
         hdr->nLevels = maxZooms;
     }
 
-    hdr->bufSize = 32768; //When the file is finalized this is reset if fp->writeBuffer->compressPsz is 0!
+    hdr->bufSize = fp->type;// 32768; //fp->type;??// 0x8000 is 32768, per entry, momo; //When the file is finalized this is reset if fp->writeBuffer->compressPsz is 0!
     hdr->minVal = DBL_MAX;
     hdr->maxVal = DBL_MIN;
     fp->hdr = hdr;
@@ -1071,9 +1071,9 @@ int writeIndex(binaMethFile_t *fp) {
 //This may or may not produce the requested number of zoom levels
 int makeZoomLevels(binaMethFile_t *fp) {
     uint32_t meanBinSize, i;
-    //uint32_t multiplier = 4, zoom = 10, maxZoom = 0;
-    // for methylation data, not good for zoom in old version, modified by qwzhou at 2022.38
-    uint32_t multiplier = 10, zoom = 100, maxZoom = 0;
+    uint32_t multiplier = 4, zoom = 10, maxZoom = 0;
+    // for methylation data, not good for zoom in old version, modified by qwzhou at 2022.38, above line is old, below is new
+    //uint32_t multiplier = 10, zoom = 10, maxZoom = 0; // 10 100 0
 
     uint16_t nLevels = 0;
 
@@ -1081,10 +1081,11 @@ int makeZoomLevels(binaMethFile_t *fp) {
     //In reality, one level is skipped
     //meanBinSize *= 4;
     // for methylation data, not good for zoom in old version, modified by qwzhou at 2022.38
+    meanBinSize *= 4;
     //N.B., we must ALWAYS check that the zoom doesn't overflow a uint32_t!
     if(((uint32_t)-1)>>2 < meanBinSize) return 0; //No zoom levels!
     
-    //if(meanBinSize*4 > zoom) zoom = multiplier*meanBinSize;
+    if(meanBinSize*4 > zoom) zoom = multiplier*meanBinSize;
     // for methylation data, not good for zoom in old version, modified by qwzhou at 2022.38
 
     fp->hdr->zoomHdrs = calloc(1, sizeof(bmZoomHdr_t));
@@ -1103,7 +1104,7 @@ int makeZoomLevels(binaMethFile_t *fp) {
     for(i=0; i<fp->cl->nKeys; i++) {
         if(fp->cl->len[i] > maxZoom) maxZoom = fp->cl->len[i];
     }
-    if(zoom > maxZoom) zoom = maxZoom;
+    if(zoom > maxZoom) zoom = maxZoom-1;
     //fprintf(stderr, "\nzoom %ld %ld\n", zoom, maxZoom);
 
     for(i=0; i<fp->hdr->nLevels; i++) {

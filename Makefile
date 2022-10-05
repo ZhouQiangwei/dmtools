@@ -100,19 +100,16 @@ bam2bm:
 test/exampleWrite: libBinaMeth.so
 	$(CC) -o $@ -I. -L. $(CFLAGS) test/exampleWrite.c -lBinaMeth $(LIBS) -Wl,-rpath .
 
-test/testBigBed: libBinaMeth.a
-	$(CC) -o $@ -I. $(CFLAGS) test/testBigBed.c libBinaMeth.a $(LIBS)
-
 test/testIterator: libBinaMeth.a
 	$(CC) -o $@ -I. $(CFLAGS) test/testIterator.c libBinaMeth.a $(LIBS)
 
 install: bam2bm bmtools bmDMR
 
-test: test/testLocal test/testRemote test/testWrite test/testLocal bmtools test/exampleWrite test/testRemoteManyContigs test/testBigBed test/testIterator
+test: test/testLocal test/testRemote test/testWrite test/testLocal bmtools test/exampleWrite test/testRemoteManyContigs test/testIterator
 	./test/test.py
 
 clean:
-	rm -f *.o libBinaMeth.a libBinaMeth.so *.pico test/testLocal test/testRemote test/testWrite bmtools bmDMR bam2bm test/exampleWrite test/testRemoteManyContigs test/testBigBed test/testIterator example_output.bw
+	rm -f *.o libBinaMeth.a libBinaMeth.so *.pico test/testLocal test/testRemote test/testWrite bmtools bmDMR bam2bm test/exampleWrite test/testRemoteManyContigs test/testIterator
 	make clean -C htslib
 
 install-old: libBinaMeth.a libBinaMeth.so
