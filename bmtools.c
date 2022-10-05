@@ -98,7 +98,7 @@ const char* Help_String_mr2bm="Command Format :  bmtools mr2bm [opnions] -g geno
         "\t [mr2bm] mode paramaters, required\n"
 		"\t-g                    chromosome size file.\n"
         "\t-m                    methratio file\n"
-        "\t-o|--outbm           output mbigwig file\n"
+        "\t-o|--outbm            output BM file\n"
         "\t [mr2bm] mode paramaters, options\n"
         "\t-C                    print coverage\n"
         "\t-S                    print strand\n"
@@ -121,7 +121,7 @@ const char* Help_String_mr2bm="Command Format :  bmtools mr2bm [opnions] -g geno
 const char* Help_String_view="Command Format :  bmtools view [opnions] -i meth.bm\n"
 		"\nUsage:\n"
         "\t [view] mode paramaters, required\n"
-        "\t-i                    input mbigwig file\n"
+        "\t-i                    input BM file\n"
         "\t [view] mode paramaters, options\n"
         "\t-o                    output file [stdout]\n"
         "\t-r                    region for view, can be seperated by semicolon. chr1:1-2900;chr2:1-200;\n"
@@ -199,8 +199,8 @@ const char* Help_String_bodystats="Command Format :  bmtools bodystats [opnions]
         "\t-r                    region for view, can be seperated by semicolon. chr1:1-2900;chr2:1-200,+;\n"
         "\t--method              weighted/ mean\n"
         "\t--regionextend        also calculate DNA methylation level of upstream and downstream N-bp window. default 2000.\n"
-        "\t--strand              [0/1/2/3] strand for show, 0 represent '+' positive strand, 1 '-' negative strand, 2 '.' all information, 3 calculate and print strand meth level seperately\n"
-        "\t--context             [0/1/2/3/4] context for show, 0 represent 'C/ALL' context, 1 'CG' context, 2 'CHG' context, 3 'CHH' context, 4 calculate and print strand meth level seperately\n"
+        "\t--strand              [0/1/2/3] strand for show, 0 represent '+' positive strand, 1 '-' negative strand, 2 '.' all information, 3 calculate and print strand meth level seperately, only valid while -r para\n"
+        "\t--context             [0/1/2/3/4] context for show, 0 represent 'C/ALL' context, 1 'CG' context, 2 'CHG' context, 3 'CHH' context, 4 calculate and print strand meth level seperately, default: 4.\n"
 		"\t--printcoverage       [0/1] also print countC and coverage of body instead of methratio. [0]\n"
         "\t--print2one           [int] print all the countC and coverage results of C/CG/CHG/CHH context methylation to same file, only valid when --printcoverage 1. 0 for no, 1 for yes. [0]\n"
         "\t-h|--help";
@@ -218,6 +218,8 @@ const char* Help_String_profile="Command Format :  bmtools profile [opnions] -i 
         "\t--regionextend        region extend for upstream and downstram, [2000]\n"
         "\t--profilestep         [double] step mean bin size for chromosome region, default: 0.02 (2%)\n"
         "\t--profilemovestep     [double] step move, default: 0.01, if no overlap, please define same as --profilestep\n"
+//        "\t--bodyprofilestep     [double] step mean bin size for element body region, default: 0.02 (2%)\n"
+//        "\t--bodyprofilemovestep [double] step move for body region, default: 0.01, if no overlap, please define same as --bodyprofilestep\n"
         "\t--profilemode         calculate the methylation matrix mode of every region or gene. 0 for gene and flanks mode, 1 for tss and flanks, 2 for tts and flanks, 3 for region center and flanks. [0]\n"
         "\t--bodyX               [double] the gene body bin size is N multiple of the bin size of the upstream and downstream extension region. [1]\n"
         "\t--matrixX             [int] the bin size is N times of the bin size of profile, so the bin size should be N*profilestep [5], please note N*profilestep must < 1 and N must >= 1\n"
@@ -397,6 +399,11 @@ int main(int argc, char *argv[]) {
                 assert(regionextend>0);
             }else if(strcmp(argv[i], "--profilemovestep") == 0){
                 profilemovestep = atof(argv[++i]);
+            }else if(strcmp(argv[i], "--bodyprofilestep") == 0){
+                bodyprofilestep = atof(argv[++i]);
+                assert(bodyprofilestep>0 && bodyprofilestep<1);
+            }else if(strcmp(argv[i], "--bodyprofilemovestep") == 0){
+                bodyprofilemovestep = atof(argv[++i]);
             }else if(strcmp(argv[i], "--profilemode") == 0){
                 profilemode = atoi(argv[++i]);
                 assert(profilemode>=0 && profilemode<4);
@@ -603,6 +610,10 @@ int main(int argc, char *argv[]) {
             }else{
                 fprintf(stderr, "Unexpected mr file format!!!\n");
                 exit(0);
+            }
+            if(filterchrom && strcmp(filterchrom, chrom) !=0 ) {
+                if(TotalC>0) break;
+                continue;
             }
             if(coverage<mcover_cutoff) continue;
             if(strcmp(filtercontext, "ALL") != 0 && strcmp(filtercontext, context) != 0){
@@ -1482,24 +1493,26 @@ void profile_print_array(void *arg){
 
                         i=i-Tsize*matrixX;
                     }
-                    // i >= 0
-                    meth = 0, mcount = 0;
-                    for(;i>=0;){
-                        if(!isnan(stats[i])) {
-                            meth+=stats[i];
-                            mcount++;
+                    if(i>=0) {
+                        // i >= 0
+                        meth = 0, mcount = 0;
+                        for(;i>=0;){
+                            if(!isnan(stats[i])) {
+                                meth+=stats[i];
+                                mcount++;
 
-                            finalstats[j+k-i] += stats[i];
-                            finalcounts[j+k-i]++;
+                                finalstats[j+k-i] += stats[i];
+                                finalcounts[j+k-i]++;
+                            }
+                            i=i-Tsize;
                         }
-                        i=i-Tsize;
+                        if(mcount>0) sprintf(storetemp, "\t%.4lf", meth/mcount);
+                        else strcpy(storetemp, "\tnan");
+                        if(k==0) printbuffer_c = fastStrcat(printbuffer_c, storetemp);
+                        else if(k==1) printbuffer_cg = fastStrcat(printbuffer_cg, storetemp);
+                        else if(k==2) printbuffer_chg = fastStrcat(printbuffer_chg, storetemp);
+                        else if(k==3) printbuffer_chh = fastStrcat(printbuffer_chh, storetemp);
                     }
-                    if(mcount>0) sprintf(storetemp, "\t%.4lf", meth/mcount);
-                    else strcpy(storetemp, "\tnan");
-                    if(k==0) printbuffer_c = fastStrcat(printbuffer_c, storetemp);
-                    else if(k==1) printbuffer_cg = fastStrcat(printbuffer_cg, storetemp);
-                    else if(k==2) printbuffer_chg = fastStrcat(printbuffer_chg, storetemp);
-                    else if(k==3) printbuffer_chh = fastStrcat(printbuffer_chh, storetemp);
                 }
                 sprintf(storetemp, "\n");
                 if(k==0) printbuffer_c = fastStrcat(printbuffer_c, storetemp);
@@ -1543,23 +1556,25 @@ void profile_print_array(void *arg){
                         i+=Tsize*matrixX;
                     }
                     // i < total_splitN
-                    meth = 0, mcount = 0;
-                    for(;i<total_splitN;){
-                        if(!isnan(stats[i])) {
-                            meth+=stats[i];
-                            mcount++;
+                    if(i<total_splitN) {
+                        meth = 0, mcount = 0;
+                        for(;i<total_splitN;){
+                            if(!isnan(stats[i])) {
+                                meth+=stats[i];
+                                mcount++;
 
-                            finalstats[i] += stats[i];
-                            finalcounts[i]++;
+                                finalstats[i] += stats[i];
+                                finalcounts[i]++;
+                            }
+                            i=i+Tsize;
                         }
-                        i=i+Tsize;
+                        if(mcount>0) sprintf(storetemp, "\t%.4lf", meth/mcount);
+                        else strcpy(storetemp, "\tnan");
+                        if(j==0) printbuffer_c = fastStrcat(printbuffer_c, storetemp);
+                        else if(j==1) printbuffer_cg = fastStrcat(printbuffer_cg, storetemp);
+                        else if(j==2) printbuffer_chg = fastStrcat(printbuffer_chg, storetemp);
+                        else if(j==3) printbuffer_chh = fastStrcat(printbuffer_chh, storetemp);
                     }
-                    if(mcount>0) sprintf(storetemp, "\t%.4lf", meth/mcount);
-                    else strcpy(storetemp, "\tnan");
-                    if(j==0) printbuffer_c = fastStrcat(printbuffer_c, storetemp);
-                    else if(j==1) printbuffer_cg = fastStrcat(printbuffer_cg, storetemp);
-                    else if(j==2) printbuffer_chg = fastStrcat(printbuffer_chg, storetemp);
-                    else if(j==3) printbuffer_chh = fastStrcat(printbuffer_chh, storetemp);
                 }
                 sprintf(storetemp, "\n");
                 if(j==0) printbuffer_c = fastStrcat(printbuffer_c, storetemp);
@@ -1650,24 +1665,26 @@ void profile_print_array_mp(void *arg){
 
                         i=i-Tsize*matrixX;
                     }
-                    // i >= 0
-                    meth = 0, mcount = 0;
-                    for(;i>=0;){
-                        if(!isnan(stats[i])) {
-                            meth+=stats[i];
-                            mcount++;
+                    if(i>=0) {
+                        // i >= 0
+                        meth = 0, mcount = 0;
+                        for(;i>=0;){
+                            if(!isnan(stats[i])) {
+                                meth+=stats[i];
+                                mcount++;
 
-                            finalstats[j+k-i] += stats[i];
-                            finalcounts[j+k-i]++;
+                                finalstats[j+k-i] += stats[i];
+                                finalcounts[j+k-i]++;
+                            }
+                            i=i-Tsize;
                         }
-                        i=i-Tsize;
+                        if(mcount>0) sprintf(storetemp, "\t%.4lf", meth/mcount);
+                        else strcpy(storetemp, "\tnan");
+                        if(k==0) printbuffer_c = fastStrcat(printbuffer_c, storetemp);
+                        else if(k==1) printbuffer_cg = fastStrcat(printbuffer_cg, storetemp);
+                        else if(k==2) printbuffer_chg = fastStrcat(printbuffer_chg, storetemp);
+                        else if(k==3) printbuffer_chh = fastStrcat(printbuffer_chh, storetemp);
                     }
-                    if(mcount>0) sprintf(storetemp, "\t%.4lf", meth/mcount);
-                    else strcpy(storetemp, "\tnan");
-                    if(k==0) printbuffer_c = fastStrcat(printbuffer_c, storetemp);
-                    else if(k==1) printbuffer_cg = fastStrcat(printbuffer_cg, storetemp);
-                    else if(k==2) printbuffer_chg = fastStrcat(printbuffer_chg, storetemp);
-                    else if(k==3) printbuffer_chh = fastStrcat(printbuffer_chh, storetemp);
 
                 }
                 sprintf(storetemp, "\n");
@@ -1711,24 +1728,26 @@ void profile_print_array_mp(void *arg){
 
                         i+=Tsize*matrixX;
                     }
-                    // i < total_splitN
-                    meth = 0, mcount = 0;
-                    for(;i<total_splitN;){
-                        if(!isnan(stats[i])) {
-                            meth+=stats[i];
-                            mcount++;
+                    if(i<total_splitN) {
+                        // i < total_splitN
+                        meth = 0, mcount = 0;
+                        for(;i<total_splitN;){
+                            if(!isnan(stats[i])) {
+                                meth+=stats[i];
+                                mcount++;
 
-                            finalstats[i] += stats[i];
-                            finalcounts[i]++;
+                                finalstats[i] += stats[i];
+                                finalcounts[i]++;
+                            }
+                            i=i+Tsize;
                         }
-                        i=i+Tsize;
+                        if(mcount>0) sprintf(storetemp, "\t%.4lf", meth/mcount);
+                        else strcpy(storetemp, "\tnan");
+                        if(j==0) printbuffer_c = fastStrcat(printbuffer_c, storetemp);
+                        else if(j==1) printbuffer_cg = fastStrcat(printbuffer_cg, storetemp);
+                        else if(j==2) printbuffer_chg = fastStrcat(printbuffer_chg, storetemp);
+                        else if(j==3) printbuffer_chh = fastStrcat(printbuffer_chh, storetemp);
                     }
-                    if(mcount>0) sprintf(storetemp, "\t%.4lf", meth/mcount);
-                    else strcpy(storetemp, "\tnan");
-                    if(j==0) printbuffer_c = fastStrcat(printbuffer_c, storetemp);
-                    else if(j==1) printbuffer_cg = fastStrcat(printbuffer_cg, storetemp);
-                    else if(j==2) printbuffer_chg = fastStrcat(printbuffer_chg, storetemp);
-                    else if(j==3) printbuffer_chh = fastStrcat(printbuffer_chh, storetemp);
 
                 }
                 sprintf(storetemp, "\n");
@@ -1826,24 +1845,26 @@ void profile_print_array_buffer(double *finalstats, int *finalcounts, binaMethFi
 
                         i=i-Tsize*matrixX;
                     }
-                    // i >= 0
-                    meth = 0, mcount = 0;
-                    for(;i>=0;){
-                        if(!isnan(stats[i])) {
-                            meth+=stats[i];
-                            mcount++;
+                    if(i>=0) {
+                        // i >= 0
+                        meth = 0, mcount = 0;
+                        for(;i>=0;){
+                            if(!isnan(stats[i])) {
+                                meth+=stats[i];
+                                mcount++;
 
-                            finalstats[j+k-i] += stats[i];
-                            finalcounts[j+k-i]++;
+                                finalstats[j+k-i] += stats[i];
+                                finalcounts[j+k-i]++;
+                            }
+                            i=i-Tsize;
                         }
-                        i=i-Tsize;
+                        if(mcount>0) sprintf(storetemp, "\t%.4lf", meth/mcount);
+                        else strcpy(storetemp, "\tnan");
+                        if(k==0) printbuffer_c = fastStrcat(printbuffer_c, storetemp);
+                        else if(k==1) printbuffer_cg = fastStrcat(printbuffer_cg, storetemp);
+                        else if(k==2) printbuffer_chg = fastStrcat(printbuffer_chg, storetemp);
+                        else if(k==3) printbuffer_chh = fastStrcat(printbuffer_chh, storetemp);
                     }
-                    if(mcount>0) sprintf(storetemp, "\t%.4lf", meth/mcount);
-                    else strcpy(storetemp, "\tnan");
-                    if(k==0) printbuffer_c = fastStrcat(printbuffer_c, storetemp);
-                    else if(k==1) printbuffer_cg = fastStrcat(printbuffer_cg, storetemp);
-                    else if(k==2) printbuffer_chg = fastStrcat(printbuffer_chg, storetemp);
-                    else if(k==3) printbuffer_chh = fastStrcat(printbuffer_chh, storetemp);
                 }
                 sprintf(storetemp, "\n");
                 if(k==0) printbuffer_c = fastStrcat(printbuffer_c, storetemp);
@@ -1886,24 +1907,26 @@ void profile_print_array_buffer(double *finalstats, int *finalcounts, binaMethFi
 
                         i+=Tsize*matrixX;
                     }
-                    // i < total_splitN
-                    meth = 0, mcount = 0;
-                    for(;i<total_splitN;){
-                        if(!isnan(stats[i])) {
-                            meth+=stats[i];
-                            mcount++;
+                    if(i<total_splitN) {
+                        // i < total_splitN
+                        meth = 0, mcount = 0;
+                        for(;i<total_splitN;){
+                            if(!isnan(stats[i])) {
+                                meth+=stats[i];
+                                mcount++;
 
-                            finalstats[i] += stats[i];
-                            finalcounts[i]++;
+                                finalstats[i] += stats[i];
+                                finalcounts[i]++;
+                            }
+                            i=i+Tsize;
                         }
-                        i=i+Tsize;
+                        if(mcount>0) sprintf(storetemp, "\t%.4lf", meth/mcount);
+                        else strcpy(storetemp, "\tnan");
+                        if(j==0) printbuffer_c = fastStrcat(printbuffer_c, storetemp);
+                        else if(j==1) printbuffer_cg = fastStrcat(printbuffer_cg, storetemp);
+                        else if(j==2) printbuffer_chg = fastStrcat(printbuffer_chg, storetemp);
+                        else if(j==3) printbuffer_chh = fastStrcat(printbuffer_chh, storetemp);
                     }
-                    if(mcount>0) sprintf(storetemp, "\t%.4lf", meth/mcount);
-                    else strcpy(storetemp, "\tnan");
-                    if(j==0) printbuffer_c = fastStrcat(printbuffer_c, storetemp);
-                    else if(j==1) printbuffer_cg = fastStrcat(printbuffer_cg, storetemp);
-                    else if(j==2) printbuffer_chg = fastStrcat(printbuffer_chg, storetemp);
-                    else if(j==3) printbuffer_chh = fastStrcat(printbuffer_chh, storetemp);
                 }
                 sprintf(storetemp, "\n");
                 if(j==0) printbuffer_c = fastStrcat(printbuffer_c, storetemp);
@@ -1973,24 +1996,26 @@ void profile_print_array_buffer1(double *finalstats, int *finalcounts, binaMethF
 
                         i=i-Tsize*matrixX;
                     }
-                    // i >= 0
-                    meth = 0, mcount = 0;
-                    for(;i>=0;){
-                        if(!isnan(stats[i])) {
-                            meth+=stats[i];
-                            mcount++;
+                    if(i>=0) {
+                        // i >= 0
+                        meth = 0, mcount = 0;
+                        for(;i>=0;){
+                            if(!isnan(stats[i])) {
+                                meth+=stats[i];
+                                mcount++;
 
-                            finalstats[j+k-i] += stats[i];
-                            finalcounts[j+k-i]++;
+                                finalstats[j+k-i] += stats[i];
+                                finalcounts[j+k-i]++;
+                            }
+                            i=i-Tsize;
                         }
-                        i=i-Tsize;
+                        if(mcount>0) sprintf(storetemp, "\t%.4lf", meth/mcount);
+                        else strcpy(storetemp, "\tnan");
+                        if(k==0) printbuffer_c = fastStrcat(printbuffer_c, storetemp);
+                        else if(k==1) printbuffer_cg = fastStrcat(printbuffer_cg, storetemp);
+                        else if(k==2) printbuffer_chg = fastStrcat(printbuffer_chg, storetemp);
+                        else if(k==3) printbuffer_chh = fastStrcat(printbuffer_chh, storetemp);
                     }
-                    if(mcount>0) sprintf(storetemp, "\t%.4lf", meth/mcount);
-                    else strcpy(storetemp, "\tnan");
-                    if(k==0) printbuffer_c = fastStrcat(printbuffer_c, storetemp);
-                    else if(k==1) printbuffer_cg = fastStrcat(printbuffer_cg, storetemp);
-                    else if(k==2) printbuffer_chg = fastStrcat(printbuffer_chg, storetemp);
-                    else if(k==3) printbuffer_chh = fastStrcat(printbuffer_chh, storetemp);
 
                 }
                 sprintf(storetemp, "\n");
@@ -2034,24 +2059,26 @@ void profile_print_array_buffer1(double *finalstats, int *finalcounts, binaMethF
 
                         i+=Tsize*matrixX;
                     }
-                    // i < total_splitN
-                    meth = 0, mcount = 0;
-                    for(;i<total_splitN;){
-                        if(!isnan(stats[i])) {
-                            meth+=stats[i];
-                            mcount++;
+                    if(i<total_splitN) {
+                        // i < total_splitN
+                        meth = 0, mcount = 0;
+                        for(;i<total_splitN;){
+                            if(!isnan(stats[i])) {
+                                meth+=stats[i];
+                                mcount++;
 
-                            finalstats[i] += stats[i];
-                            finalcounts[i]++;
+                                finalstats[i] += stats[i];
+                                finalcounts[i]++;
+                            }
+                            i=i+Tsize;
                         }
-                        i=i+Tsize;
+                        if(mcount>0) sprintf(storetemp, "\t%.4lf", meth/mcount);
+                        else strcpy(storetemp, "\tnan");
+                        if(j==0) printbuffer_c = fastStrcat(printbuffer_c, storetemp);
+                        else if(j==1) printbuffer_cg = fastStrcat(printbuffer_cg, storetemp);
+                        else if(j==2) printbuffer_chg = fastStrcat(printbuffer_chg, storetemp);
+                        else if(j==3) printbuffer_chh = fastStrcat(printbuffer_chh, storetemp);
                     }
-                    if(mcount>0) sprintf(storetemp, "\t%.4lf", meth/mcount);
-                    else strcpy(storetemp, "\tnan");
-                    if(j==0) printbuffer_c = fastStrcat(printbuffer_c, storetemp);
-                    else if(j==1) printbuffer_cg = fastStrcat(printbuffer_cg, storetemp);
-                    else if(j==2) printbuffer_chg = fastStrcat(printbuffer_chg, storetemp);
-                    else if(j==3) printbuffer_chh = fastStrcat(printbuffer_chh, storetemp);
 
                 }
                 sprintf(storetemp, "\n");
@@ -2508,36 +2535,36 @@ void calbody_print(binaMethFile_t *fp, char* chrom, int start, int end, int spli
         if(format == 1 || format == 2){
             if(context >= 4){
                 if(!isnan(stats[0])) {
-                    fprintf(outfileF, "C\t%s\t%f\t%s\n", bodycase, stats[0], geneid);
+                    fprintf(outfileF, "C\t%s\t%f\t%s\t%s\n", bodycase, stats[0], strand, geneid);
                 }
                 if(!isnan(stats[1])) {
-                    fprintf(outfileF, "CG\t%s\t%f\t%s\n", bodycase, stats[1], geneid);
+                    fprintf(outfileF, "CG\t%s\t%f\t%s\t%s\n", bodycase, stats[1], strand, geneid);
                 }
                 if(!isnan(stats[2])) {
-                    fprintf(outfileF, "CHG\t%s\t%f\t%s\n", bodycase, stats[2], geneid);
+                    fprintf(outfileF, "CHG\t%s\t%f\t%s\t%s\n", bodycase, stats[2], strand, geneid);
                 }
                 if(!isnan(stats[3])) {
-                    fprintf(outfileF, "CHH\t%s\t%f\t%s\n", bodycase, stats[3], geneid);
+                    fprintf(outfileF, "CHH\t%s\t%f\t%s\t%s\n", bodycase, stats[3], strand, geneid);
                 }
             }else if(!isnan(stats[context])) {
-                fprintf(outfileF, "%s\t%s\t%f\t%s\n", print_context, bodycase, stats[context], geneid);
+                fprintf(outfileF, "%s\t%s\t%f\t%s\t%s\n", print_context, bodycase, stats[context], strand, geneid);
             }
         }else{
             if(context >= 4) {
                 if(!isnan(stats[0])) {
-                    fprintf(outfileF, "C\t%s\t%f\t%s:%d-%d\n", bodycase, stats[0], chrom, start, end);
+                    fprintf(outfileF, "C\t%s\t%f\t%s:%d-%d\t%s\n", bodycase, stats[0], chrom, start, end, strand);
                 }
                 if(!isnan(stats[1])) {
-                    fprintf(outfileF, "CG\t%s\t%f\t%s:%d-%d\n", bodycase, stats[1], chrom, start, end);
+                    fprintf(outfileF, "CG\t%s\t%f\t%s:%d-%d\t%s\n", bodycase, stats[1], chrom, start, end, strand);
                 }
                 if(!isnan(stats[2])) {
-                    fprintf(outfileF, "CHG\t%s\t%f\t%s:%d-%d\n", bodycase, stats[2], chrom, start, end);
+                    fprintf(outfileF, "CHG\t%s\t%f\t%s:%d-%d\t%s\n", bodycase, stats[2], chrom, start, end, strand);
                 }
                 if(!isnan(stats[3])) {
-                    fprintf(outfileF, "CHH\t%s\t%f\t%s:%d-%d\n", bodycase, stats[3], chrom, start, end);
+                    fprintf(outfileF, "CHH\t%s\t%f\t%s:%d-%d\t%s\n", bodycase, stats[3], chrom, start, end, strand);
                 }
             }else if(!isnan(stats[context])) {
-                fprintf(outfileF, "%s\t%s\t%f\t%s:%d-%d\n", print_context, bodycase, stats[context], chrom, start, end);
+                fprintf(outfileF, "%s\t%s\t%f\t%s:%d-%d\t%s\n", print_context, bodycase, stats[context], chrom, start, end, strand);
             }
         }
         /*
@@ -2962,7 +2989,6 @@ int main_view_bm(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outfor
     // read. test/example_output.bm
     if(DEBUG>1) fprintf(stderr, "\nifp===-=== %d %d\n", ifp->type, ifp->hdr->version);
     //ifp->type = type;
-    bmOverlappingIntervals_t *o;
 
     if(DEBUG>1) fprintf(stderr, "xxx111-------- %s %d\n", region, ifp->type);
     char *substr= strtok(region, ";");
@@ -2987,6 +3013,7 @@ int main_view_bm(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outfor
         //strand = strtok(NULL,",:-");
         //sscanf((const char *)regions[i], "%s:%d-%d", chrom, &start, &end);
         if(DEBUG>1) fprintf(stderr, "slen %d %d chrom %s %d %d %d", slen, i, chrom, start, end, slen);
+        bmOverlappingIntervals_t *o;
         o = bmGetOverlappingIntervals(ifp, chrom, start, end+1);
         if(!o) goto error;
         if(DEBUG>1) fprintf(stderr, "\no->l %ld %ld %d\n", o->l, o->m, ifp->type);
@@ -3071,6 +3098,7 @@ int main_view_bm(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outfor
                 }
             }
         }
+        bmDestroyOverlappingIntervals(o);
     }
 
     if(Nprint>0) {
@@ -3083,7 +3111,6 @@ int main_view_bm(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outfor
     //free(chrom);
     free(tempchar);
     free(pszBuf);
-    bmDestroyOverlappingIntervals(o);
     return Nprint;
 
 error:
@@ -3147,7 +3174,6 @@ int main_view(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outformat
     // read. test/example_output.bm
     if(DEBUG>1) fprintf(stderr, "\nifp===-=== %d %d\n", ifp->type, ifp->hdr->version);
     //ifp->type = type;
-    bmOverlappingIntervals_t *o;
 
     if(DEBUG>1) fprintf(stderr, "xxx111-------- %s %d\n", region, ifp->type);
     char *substr= strtok(region, ";");
@@ -3172,6 +3198,7 @@ int main_view(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outformat
         //strand = strtok(NULL,",:-");
         //sscanf((const char *)regions[i], "%s:%d-%d", chrom, &start, &end);
         if(DEBUG>1) fprintf(stderr, "slen %d %d chrom %s %d %d %d", slen, i, chrom, start, end, slen);
+        bmOverlappingIntervals_t *o;
         o = bmGetOverlappingIntervals(ifp, chrom, start, end+1);
         if(!o) goto error;
         if(DEBUG>1) fprintf(stderr, "\no->l %ld %ld %d\n", o->l, o->m, ifp->type);
@@ -3231,6 +3258,7 @@ int main_view(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outformat
                 }
             }
         }
+        bmDestroyOverlappingIntervals(o);
     }
 
     if(Nprint>0) {
@@ -3243,7 +3271,6 @@ int main_view(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outformat
     //free(chrom);
     free(tempchar);
     free(pszBuf);
-    bmDestroyOverlappingIntervals(o);
     return 0;
 
 error:
@@ -3596,8 +3623,6 @@ int bm_overlap_all(char *inbmF1, char *inbmF2, int n1, int n2, uint8_t pstrand){
 }
 
 int bm_overlap(binaMethFile_t *ifp1, binaMethFile_t *ifp2, char *chrom, int start, int end, uint8_t strand){
-    bmOverlappingIntervals_t *o1;
-    bmOverlappingIntervals_t *o2;
 
     int slen = 1, i =0, j = 0, k = 0, lociK = 0;
     int* countM = malloc(sizeof(int)*(end-start+1));
@@ -3605,6 +3630,8 @@ int bm_overlap(binaMethFile_t *ifp1, binaMethFile_t *ifp2, char *chrom, int star
     for(i=0;i<slen; i++){
         //sscanf((const char *)regions[i], "%s:%d-%d", chrom, &start, &end);
         if(DEBUG>1) fprintf(stderr, "slen %d %d chrom %s %d %d %d", slen, i, chrom, start, end, slen);
+        bmOverlappingIntervals_t *o1;
+        bmOverlappingIntervals_t *o2;
         o1 = bmGetOverlappingIntervals(ifp1, chrom, start, end+1);
         o2 = bmGetOverlappingIntervals(ifp2, chrom, start, end+1);
         if(!o1 || !o2) goto error;
@@ -3659,11 +3686,11 @@ int bm_overlap(binaMethFile_t *ifp1, binaMethFile_t *ifp2, char *chrom, int star
             }
 
         }
+        bmDestroyOverlappingIntervals(o1);
+        bmDestroyOverlappingIntervals(o2);
     }
 
     //free(chrom);
-    bmDestroyOverlappingIntervals(o1);
-    bmDestroyOverlappingIntervals(o2);
     free(countM);
     return 0;
 
@@ -3673,7 +3700,6 @@ error:
 }
 
 int bm_overlap_mul(binaMethFile_t **ifp1s, int sizeifp, char *chrom, int start, int end, uint8_t strand){
-    bmOverlappingIntervals_t *o1;
     fprintf(stderr, "process region %s %d %d\n", chrom, start, end);
     int slen = 1, i =0, j = 0;
     int* countM = malloc(sizeof(int)*(end-start+1));
@@ -3683,6 +3709,7 @@ int bm_overlap_mul(binaMethFile_t **ifp1s, int sizeifp, char *chrom, int start, 
     if(DEBUG>1) fprintf(stderr, "slen %d %d chrom %s %d %d %d", slen, i, chrom, start, end, slen);
     int total = 0, loci = 0;
     for(i=0;i<sizeifp;i++){
+        bmOverlappingIntervals_t *o1;
         o1 = bmGetOverlappingIntervals(ifp1s[i], chrom, start, end+1);
         if(!o1) goto error;
         //fprintf(stderr, "--- version --- %d\n", ifp1->hdr->version);
@@ -3702,9 +3729,9 @@ int bm_overlap_mul(binaMethFile_t **ifp1s, int sizeifp, char *chrom, int start, 
                 }
             }
         }
+        bmDestroyOverlappingIntervals(o1);
     }
     if(total == 0){
-        bmDestroyOverlappingIntervals(o1);
         free(countM);
         return 0;
     }
@@ -3717,6 +3744,7 @@ int bm_overlap_mul(binaMethFile_t **ifp1s, int sizeifp, char *chrom, int start, 
 
     int printed = 0;
     for(i=0;i<sizeifp;i++){
+        bmOverlappingIntervals_t *o1;
         o1 = bmGetOverlappingIntervals(ifp1s[i], chrom, start, end+1);
         if(!o1) goto error;
         if(o1->l){
@@ -3756,6 +3784,7 @@ int bm_overlap_mul(binaMethFile_t **ifp1s, int sizeifp, char *chrom, int start, 
             }
 
         }
+        bmDestroyOverlappingIntervals(o1);
     }
 
     for(i=0;i<end-start+1;i++){
@@ -3765,7 +3794,6 @@ int bm_overlap_mul(binaMethFile_t **ifp1s, int sizeifp, char *chrom, int start, 
     }
 
     //free(chrom);
-    bmDestroyOverlappingIntervals(o1);
     for(i=0;i<end-start+1;i++){
         free(printmr[i]);
     }

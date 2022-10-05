@@ -131,7 +131,7 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "%s\n", Help_String);
         exit(0);
     }
-    for(i=0; i< argc; i++){
+    for(i=1; i< argc; i++){
         if(strcmp(argv[i], "--minstep") == 0){
             mindmcdis = atoi(argv[++i]);
         }else if(strcmp(argv[i], "--mindmc") == 0){
@@ -281,6 +281,7 @@ int bm_overlap_all_mul_sep(char *inbmFs1, char *inbmFs2, uint8_t pstrand, vector
             if(end>len){
                 end = len;
             }
+            fprintf(stderr, "processing %s:%d-%d\n", chrom, start, end);
             bm_overlap_mul_calp(ifps, sizeifp, chrom, start, end, pstrand, Nsample1, full_regression, null_regression, pvals, NcountC, Pcutoff, methdiff, chrom_offset, filtercontext);
             start += SEGlen;
             end += SEGlen;
@@ -326,6 +327,7 @@ int bm_overlap_all_mul(char *inbmFs, uint8_t pstrand){
             if(end>len){
                 end = len;
             }
+            fprintf(stderr, "region %s %d %d\n", chrom, start, end);
             bm_overlap_mul(ifps, sizeifp, chrom, start, end, pstrand, 0);
             start += SEGlen;
             end += SEGlen;
@@ -367,7 +369,7 @@ int bm_overlap_all(char *inbmF1, char *inbmF2, int n1, int n2, uint8_t pstrand, 
             if(end>len){
                 end = len;
             }
-            //fprintf(stderr, "region %s %d %d\n", chrom, start, end);
+            fprintf(stderr, "region %s %d %d\n", chrom, start, end);
             bm_overlap(ifp1, ifp2, chrom, start, end, pstrand, pvals, NcountC, Pcutoff, methdiff, chrom_offset, filtercontext);
             start += SEGlen;
             end += SEGlen;
@@ -385,9 +387,6 @@ int bm_overlap(binaMethFile_t *ifp1, binaMethFile_t *ifp2, char *chrom, int star
     
     //omp_set_num_threads(10);
 
-    bmOverlappingIntervals_t *o1;
-    bmOverlappingIntervals_t *o2;
-
     int slen = 1, i =0, j = 0, k = 0, lociK = 0;
     int* countM = (int *)malloc(sizeof(int)*(end-start+1));
     memset(countM, 0, sizeof(int)*(end-start+1)); // init 0
@@ -395,6 +394,8 @@ int bm_overlap(binaMethFile_t *ifp1, binaMethFile_t *ifp2, char *chrom, int star
     for(i=0;i<slen; i++){
         //sscanf((const char *)regions[i], "%s:%d-%d", chrom, &start, &end);
         if(DEBUG>1) fprintf(stderr, "slen %d %d chrom %s %d %d %d", slen, i, chrom, start, end, slen);
+        bmOverlappingIntervals_t *o1;
+        bmOverlappingIntervals_t *o2;
         o1 = bmGetOverlappingIntervals(ifp1, chrom, start, end+1);
         o2 = bmGetOverlappingIntervals(ifp2, chrom, start, end+1);
         if(!o1 || !o2) {
@@ -445,10 +446,11 @@ int bm_overlap(binaMethFile_t *ifp1, binaMethFile_t *ifp2, char *chrom, int star
                 if(countM[o1->start[j]-start] == 2){
                     for(k=lociK; k<o2->l; k++) {
                         //if(o1->start[j] == 2144615) {fprintf(stderr, "1111 %s\n", chrom);}
+                        //printf("%d %d %d %d\n", j, k, o1->start[j], o2->start[k]);
+                        if(o2->start[k]>o1->start[j]) break;
                         if(o1->start[j] != o2->start[k]){
                             continue;
                         }
-                        if(o2->start[k]>o1->start[j]) break;
 
                         //if(o2->start[k] == 2144615) {fprintf(stderr, "2222 %s\n", chrom);}
                         lociK = k;
@@ -491,11 +493,11 @@ int bm_overlap(binaMethFile_t *ifp1, binaMethFile_t *ifp2, char *chrom, int star
             }
 
         }
+        bmDestroyOverlappingIntervals(o1);
+        bmDestroyOverlappingIntervals(o2);
     }
 
     //free(chrom);
-    bmDestroyOverlappingIntervals(o1);
-    bmDestroyOverlappingIntervals(o2);
     free(countM);
     return 0;
 }
@@ -503,7 +505,7 @@ int bm_overlap(binaMethFile_t *ifp1, binaMethFile_t *ifp2, char *chrom, int star
 int bm_overlap_mul_calp(binaMethFile_t **ifp1s, int sizeifp, char *chrom, int start, int end, uint8_t strand, int Nsample1, Regression &full_regression, Regression &null_regression, vector<PvalLocus> &pvals, unsigned long &NcountC, \
     float Pcutoff, float methdiff, unsigned long chrom_offset, char *filtercontext){
 
-    bmOverlappingIntervals_t *o1;
+//    bmOverlappingIntervals_t *o1;
     //fprintf(stderr, "process region %s %d %d\n", chrom, start, end);
     int slen = 1, i =0, j = 0;
     int* countM = (int *)malloc(sizeof(int)*(end-start+1));
@@ -513,6 +515,7 @@ int bm_overlap_mul_calp(binaMethFile_t **ifp1s, int sizeifp, char *chrom, int st
     if(DEBUG>1) fprintf(stderr, "slen %d %d chrom %s %d %d %d", slen, i, chrom, start, end, slen);
     int total = 0, loci = 0;
     for(i=0;i<sizeifp;i++){
+        bmOverlappingIntervals_t *o1;
         o1 = bmGetOverlappingIntervals(ifp1s[i], chrom, start, end+1);
         if(!o1) {
             fprintf(stderr, "Received an error somewhere!\n");
@@ -542,9 +545,9 @@ int bm_overlap_mul_calp(binaMethFile_t **ifp1s, int sizeifp, char *chrom, int st
                 }
             }
         }
+        bmDestroyOverlappingIntervals(o1);
     }
     if(total == 0){
-        bmDestroyOverlappingIntervals(o1);
         free(countM);
         return 0;
     }
@@ -557,6 +560,7 @@ int bm_overlap_mul_calp(binaMethFile_t **ifp1s, int sizeifp, char *chrom, int st
     double pval = 0;
 
     for(i=0;i<sizeifp;i++){
+        bmOverlappingIntervals_t *o1;
         o1 = bmGetOverlappingIntervals(ifp1s[i], chrom, start, end+1);
         if(!o1) {
             fprintf(stderr, "Received an error somewhere!\n");
@@ -598,6 +602,7 @@ int bm_overlap_mul_calp(binaMethFile_t **ifp1s, int sizeifp, char *chrom, int st
             }
 
         }
+        bmDestroyOverlappingIntervals(o1);
     }
 
     full_regression.props.chrom.clear();
@@ -638,16 +643,22 @@ int bm_overlap_mul_calp(binaMethFile_t **ifp1s, int sizeifp, char *chrom, int st
                         cover2 += total_count;
                     }
                 }
+                //printf("%d %d %d %d %d\n", i, meth_count, total_count, meth_count, total_count);
                 if(geneid) { row_stream >> full_regression.props.name;}
 
                 //cal p-value
-                fit(full_regression);
-                null_regression.props = full_regression.props;
-                fit(null_regression);
                 double meth_diff=fabs(double(countC1)/cover1 - double(countC2)/cover2);
-                if(meth_diff>=methdiff)
+                if(meth_diff>=methdiff) {
+                    fit(full_regression);
+                    null_regression.props = full_regression.props;
+                    fit(null_regression);
                     pval = loglikratio_test(null_regression.max_loglik, full_regression.max_loglik);
-                else pval = 1;
+                }else {
+                    pval = 1;
+                    NcountC++;
+                    continue;
+                }
+
                 // If error occured in the fitting algorithm (i.e. p-val is nan or -nan).
                 pval= ( (pval != pval) ? -1 : pval);
                 //fprintf(stderr, "%s %d %s %f\n", chrom, full_regression.props.position, full_regression.props.context.c_str(), pval);
@@ -675,7 +686,7 @@ int bm_overlap_mul_calp(binaMethFile_t **ifp1s, int sizeifp, char *chrom, int st
     }
 
     //free(chrom);
-    bmDestroyOverlappingIntervals(o1);
+    //bmDestroyOverlappingIntervals(o1);
     for(i=0;i<end-start+1;i++){
         free(printmr[i]);
     }
@@ -687,7 +698,6 @@ int bm_overlap_mul_calp(binaMethFile_t **ifp1s, int sizeifp, char *chrom, int st
 }
 
 int bm_overlap_mul(binaMethFile_t **ifp1s, int sizeifp, char *chrom, int start, int end, uint8_t strand, int Nsample1){
-    bmOverlappingIntervals_t *o1;
     //fprintf(stderr, "process region %s %d %d\n", chrom, start, end);
     int slen = 1, i =0, j = 0;
     int* countM = (int *)malloc(sizeof(int)*(end-start+1));
@@ -697,6 +707,7 @@ int bm_overlap_mul(binaMethFile_t **ifp1s, int sizeifp, char *chrom, int start, 
     if(DEBUG>1) fprintf(stderr, "slen %d %d chrom %s %d %d %d", slen, i, chrom, start, end, slen);
     int total = 0, loci = 0;
     for(i=0;i<sizeifp;i++){
+        bmOverlappingIntervals_t *o1;
         o1 = bmGetOverlappingIntervals(ifp1s[i], chrom, start, end+1);
         if(!o1) {
             fprintf(stderr, "Received an error somewhere!\n");
@@ -719,9 +730,9 @@ int bm_overlap_mul(binaMethFile_t **ifp1s, int sizeifp, char *chrom, int start, 
                 }
             }
         }
+        bmDestroyOverlappingIntervals(o1);
     }
     if(total == 0){
-        bmDestroyOverlappingIntervals(o1);
         free(countM);
         return 0;
     }
@@ -733,6 +744,7 @@ int bm_overlap_mul(binaMethFile_t **ifp1s, int sizeifp, char *chrom, int start, 
     char *tempchar = (char *)malloc(20);
 
     for(i=0;i<sizeifp;i++){
+        bmOverlappingIntervals_t *o1;
         o1 = bmGetOverlappingIntervals(ifp1s[i], chrom, start, end+1);
         if(!o1) {
             fprintf(stderr, "Received an error somewhere!\n");
@@ -774,6 +786,7 @@ int bm_overlap_mul(binaMethFile_t **ifp1s, int sizeifp, char *chrom, int start, 
             }
 
         }
+        bmDestroyOverlappingIntervals(o1);
     }
 
     for(i=0;i<end-start+1;i++){
@@ -783,7 +796,6 @@ int bm_overlap_mul(binaMethFile_t **ifp1s, int sizeifp, char *chrom, int start, 
     }
 
     //free(chrom);
-    bmDestroyOverlappingIntervals(o1);
     for(i=0;i<end-start+1;i++){
         free(printmr[i]);
     }

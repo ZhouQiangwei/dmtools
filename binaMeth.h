@@ -249,7 +249,7 @@ typedef struct {
     bmRTree_t *idx; /**<The index for the full dataset.*/
     bmWriteBuffer_t *writeBuffer; /**<The buffer used for writing.*/
     int isWrite; /**<0: Opened for reading, 1: Opened for writing.*/
-    int type; /**<0: binaMeth, 1: bigBed.*/
+    int type; /**<0: binaMeth, 1: bigBed.*/ //now store version and type infor
     int mtype;
     /* 0: bigmeth, 1: bigmeth for region with ID, 2: bigmeth for region without ID, 3: ID with strand */
     /**<0: binaMeth, 1: bigBed.*/
