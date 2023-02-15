@@ -5,7 +5,7 @@
 CPP = $(shell pwd)
 SOURCES = $(wildcard *.cpp)
 OBJECTS = $(patsubst %.cpp,%.o,$(SOURCES))
-PROGS = bam2bm bmtools bmDMR
+PROGS = bam2dm dmtools dmDMR
 
 CC = gcc
 AR = ar
@@ -58,7 +58,7 @@ lib-shared: libBinaMeth.so
 doc:
 	doxygen
 
-OBJS = io.o bmValues.o bmRead.o bmStats.o bmWrite.o
+OBJS = io.o dmValues.o dmRead.o dmStats.o dmWrite.o
 
 .c.o:
 	$(CC) -I. $(CFLAGS) $(INCLUDES) -c -o $@ $<
@@ -87,15 +87,15 @@ test/testRemote: libBinaMeth.a
 test/testWrite: libBinaMeth.a
 	$(CC) -o $@ -I. $(CFLAGS) test/testWrite.c libBinaMeth.a $(LIBS)
 
-bmtools: libBinaMeth.so
-	$(CC) -o $@ -I. -L. $(CFLAGS) bmtools.c -lBinaMeth $(LIBS) -Wl,-rpath $(CPP) -lpthread
+dmtools: libBinaMeth.so
+	$(CC) -o $@ -I. -L. $(CFLAGS) dmtools.c -lBinaMeth $(LIBS) -Wl,-rpath $(CPP) -lpthread
 
-bmDMR:
+dmDMR:
 	g++ $(CFLAGS) -c -o regression.o regression.cpp
-	g++ $(CFLAGS) -o bmDMR bmDMR.cpp regression.o -I. -L. -lBinaMeth -Wl,-rpath $(CPP) -lgsl -lgslcblas -lm -lz
+	g++ $(CFLAGS) -o dmDMR dmDMR.cpp regression.o -I. -L. -lBinaMeth -Wl,-rpath $(CPP) -lgsl -lgslcblas -lm -lz
 
-bam2bm:
-	g++ $(CFLAGS) bam2bm.cpp -o bam2bm -m64 -I. -L. -lz -lBinaMeth -Wl,-rpath $(CPP) $(LDFLAGS_SUB)
+bam2dm:
+	g++ $(CFLAGS) bam2dm.cpp -o bam2dm -m64 -I. -L. -lz -lBinaMeth -Wl,-rpath $(CPP) $(LDFLAGS_SUB)
 
 test/exampleWrite: libBinaMeth.so
 	$(CC) -o $@ -I. -L. $(CFLAGS) test/exampleWrite.c -lBinaMeth $(LIBS) -Wl,-rpath .
@@ -103,13 +103,13 @@ test/exampleWrite: libBinaMeth.so
 test/testIterator: libBinaMeth.a
 	$(CC) -o $@ -I. $(CFLAGS) test/testIterator.c libBinaMeth.a $(LIBS)
 
-install: bam2bm bmtools bmDMR
+install: bam2dm dmtools dmDMR
 
-test: test/testLocal test/testRemote test/testWrite test/testLocal bmtools test/exampleWrite test/testRemoteManyContigs test/testIterator
+test: test/testLocal test/testRemote test/testWrite test/testLocal dmtools test/exampleWrite test/testRemoteManyContigs test/testIterator
 	./test/test.py
 
 clean:
-	rm -f *.o libBinaMeth.a libBinaMeth.so *.pico test/testLocal test/testRemote test/testWrite bmtools bmDMR bam2bm test/exampleWrite test/testRemoteManyContigs test/testIterator
+	rm -f *.o libBinaMeth.a libBinaMeth.so *.pico test/testLocal test/testRemote test/testWrite dmtools dmDMR bam2dm test/exampleWrite test/testRemoteManyContigs test/testIterator
 	make clean -C htslib
 
 install-old: libBinaMeth.a libBinaMeth.so

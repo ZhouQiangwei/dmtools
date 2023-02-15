@@ -4,7 +4,7 @@
 #include <string.h>
 #include <math.h>
 #include "binaMeth.h"
-#include "bmCommon.h"
+#include "dmCommon.h"
 
 /// @cond SKIP
 struct val_t {
@@ -1071,7 +1071,7 @@ int writeIndex(binaMethFile_t *fp) {
 //This may or may not produce the requested number of zoom levels
 int makeZoomLevels(binaMethFile_t *fp) {
     uint32_t meanBinSize, i;
-    uint32_t multiplier = 4, zoom = 10, maxZoom = 0;
+    uint32_t multiplier = 4, zoom = 10, maxZoom = 0; // 4 10 0
     // for methylation data, not good for zoom in old version, modified by qwzhou at 2022.38, above line is old, below is new
     //uint32_t multiplier = 10, zoom = 10, maxZoom = 0; // 10 100 0
 

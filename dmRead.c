@@ -1,5 +1,5 @@
 #include "binaMeth.h"
-#include "bmCommon.h"
+#include "dmCommon.h"
 #include <stdlib.h>
 #include <math.h>
 #include <string.h>

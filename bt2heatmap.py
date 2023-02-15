@@ -99,8 +99,9 @@ def readmatrix(filename, nsample, label, processed, plotidx):
         return
     #print（dict_data）
     if(nsample>1):
-        for key, val in dict_data.items():
-            if(len(val)/linelen<nsample):
+        #for key, val in dict_data.items():
+        for key in list(dict_data.keys()):
+            if(len(dict_data[key])/linelen<nsample):
                 del dict_data[key] 
 
     if(len(dict_data)==0):
@@ -111,7 +112,7 @@ def readmatrix(filename, nsample, label, processed, plotidx):
     totalline += len(dict_data)
     group_boundaries.append(totalline)
     global num_groups
-    num_groups+=1
+    num_groups=num_groups+1
     group_labels.append(filename)
 
     print(sample_labels, group_boundaries)
@@ -137,10 +138,10 @@ def readmr(filename, nsample, label, processed, plotidx):
             kv=line.strip().split('\t')
             #print(kv)
             #按照键，把值写进去
-            if(len(kv)>=7):
-                dict_data.setdefault(kv[6],[]).append(float(float(kv[4])/int(kv[5])))
+            if(len(kv)>=6):
+                dict_data.setdefault(kv[5],[]).append(float(float(kv[3])/int(kv[4])))
             else:
-                dict_data.setdefault(kv[0]+"_"+kv[1]+"_"+kv[2],[]).append(float(float(kv[4])/int(kv[5])))
+                dict_data.setdefault(kv[0]+"_"+kv[1]+"_"+kv[2],[]).append(float(float(kv[3])/int(kv[4])))
 
     linelen=1
     if plotidx == 0:
@@ -172,7 +173,7 @@ def readmr(filename, nsample, label, processed, plotidx):
     totalline += len(dict_data)
     group_boundaries.append(totalline)
     global num_groups
-    num_groups+=1
+    num_groups=num_groups+1
     group_labels.append(filename)
 
     print(sample_labels, group_boundaries)
@@ -296,7 +297,8 @@ def getArgs(args=None):
                         'heatmap. If more than one region is being '
                         'plotted, a list of labels separated by spaces is required. '
                         'If a label itself contains a space, then quotes are '
-                        'needed. For example, --groupLabels label_1, "label 2". ',
+                        'needed. For example, --groupLabels label_1, "label 2". '
+                        'should be same length as --kmeans if kmeans valid',
                         nargs='+')
     parser.add_argument("-sl", "--startlabel", 
                         default="start", 
@@ -381,7 +383,7 @@ def getArgs(args=None):
                         help='List of sample numbers (order as in matrix), that are used for clustering by '
                         '--kmeans or --hclust if not given, all samples are taken into account for clustering. '
                         'Example: --ClusterUsingSamples 1 3',
-                        type=int, nargs='+')
+                        type=int, nargs='+',default=[1])
     parser.add_argument(
                         '--kmeans',
                         help='Number of clusters to compute. When this option is set, the matrix is split into clusters '
@@ -630,7 +632,7 @@ def prepare_layout(mymatrix, heatmapsize, showSummaryPlot, showColorbar, perGrou
         # numbers to heatmapheigt fractions
         height_ratio = np.concatenate([[sumplot_height, spacer_height], height_ratio])
 
-    #print(numrows, numcols, height_ratio, width_ratio)
+    print(numrows, numcols, height_ratio, width_ratio)
     grids = gridspec.GridSpec(numrows, numcols, height_ratios=height_ratio, width_ratios=width_ratio)
 
     return grids
@@ -976,7 +978,7 @@ def plotheatmaper(mymatrix, outFileName,
         #  When no box is plotted the space between heatmaps is reduced
         plt.subplots_adjust(wspace=0.05, hspace=0.01, top=0.85, bottom=0, left=0.04, right=0.96)
 
-    plt.savefig(outFileName, bbox_inches='tight', pdd_inches=0, dpi=dpi, format=image_format)
+    plt.savefig(outFileName, bbox_inches='tight', dpi=dpi, format=image_format) #pdd_inches=0,
     plt.close()
 
 def sort_groups(mymatrix, sort_using='mean', sort_method='no', sample_list=None):
@@ -1020,6 +1022,7 @@ def sort_groups(mymatrix, sort_using='mean', sort_method='no', sample_list=None)
     for idx in range(len(group_labels)):
         start = group_boundaries[idx]
         end = group_boundaries[idx + 1]
+        print("ssseee", start, end, idx, len(group_labels))
         order = matrix_avgs[start:end].argsort()
         if sort_method == 'descend':
             order = order[::-1]
@@ -1082,7 +1085,9 @@ def hmcluster(mymatrix, k, evaluate_silhouette=True, method='kmeans', clustering
     # reorder clusters based on mean
     cluster_order = np.argsort(_clustered_mean)[::-1]
     # create groups using the clustering
+    global group_labels
     group_labels = []
+    global group_boundaries
     group_boundaries = [0]
     _clustered_matrix = []
     cluster_number = 1
@@ -1090,6 +1095,7 @@ def hmcluster(mymatrix, k, evaluate_silhouette=True, method='kmeans', clustering
         group_labels.append("cluster_{}".format(cluster_number))
         cluster_number += 1
         cluster_ids = _cluster_ids_list[cluster]
+        print("cluster_number", cluster_number, len(cluster_ids), len(group_labels))
         group_boundaries.append(group_boundaries[-1] +
                                         len(cluster_ids))
         _clustered_matrix.append(matrix[cluster_ids, :])
@@ -1103,7 +1109,7 @@ def set_group_labels(new_labels):
     """
     global group_labels
     if len(new_labels) != len(group_labels):
-        raise ValueError("length new labels != length original labels")
+        raise ValueError("length new labels != length original labels, -z zlabel")
     group_labels = new_labels
 
 def set_sample_labels(new_labels):
@@ -1215,7 +1221,10 @@ if __name__ == '__main__':
     if sortRegions == 'keep':
         sortRegions = 'no'  # These are the same thing
     if mykmeans is not None:
+        print("Performing kmeans clustering.")
+        num_groups = mykmeans
         frame=hmcluster(frame, mykmeans, method='kmeans', clustering_samples=clusterUsingSamples)
+        print("group_boundaries",len(group_boundaries))
     elif myhclust is not None:
         print("Performing hierarchical clustering."
               "Please note that it might be very slow for large datasets.\n")
@@ -1244,7 +1253,10 @@ if __name__ == '__main__':
                     sort_method=sortRegions,
                     sample_list=sortUsingSamples)
     print(frame)
-    print("num_samples ", num_samples)
+    print("num_samples ", num_samples, num_groups)
+    boxAroundHeatmaps = True
+    if args.boxAroundHeatmaps == 'no':
+        boxAroundHeatmaps = False
     plotheatmaper(frame, filename,
                colorMapDict=colormap_dict,
                plotTitle='',
@@ -1261,7 +1273,7 @@ if __name__ == '__main__':
                linesAtTickMarks=args.linesAtTickMarks,
                image_format=image_format,
                legend_location='upper-left',
-               box_around_heatmaps=args.boxAroundHeatmaps,
+               box_around_heatmaps=boxAroundHeatmaps,
                label_rotation=0.0,
                dpi=200,
                interpolation_method='gaussian',
