@@ -1,5 +1,5 @@
 #include "binaMeth.h"
-#include "bmCommon.h"
+#include "dmCommon.h"
 #include <errno.h>
 #include <stdlib.h>
 #include <zlib.h>
@@ -402,7 +402,7 @@ double *intweightedMean_array(bmOverlappingIntervals_t* ints, uint32_t start, ui
     return output;
 }
 
-void intweightedMean_array_count(bmOverlappingIntervals_t* ints, uint32_t start, uint32_t end, uint16_t version, uint8_t strand, uint16_t *countC, uint16_t *countCT) {
+void intweightedMean_array_count(bmOverlappingIntervals_t* ints, uint32_t start, uint32_t end, uint16_t version, uint8_t strand, uint32_t *countC, uint32_t *countCT) {
     uint32_t i, start_use, end_use;
     unsigned int Tsize = 4;
     uint32_t coverC = 0;
@@ -898,7 +898,7 @@ error:
     return NULL;
 }
 
-double *bmStatsFromFull(binaMethFile_t *fp, char *chrom, uint32_t start, uint32_t end, uint32_t nBins, uint32_t movestep, enum bmStatsType type, uint8_t strand, uint8_t context) {
+double *bmStatsFromFull(binaMethFile_t *fp, char *chrom, uint32_t start, uint32_t end, uint32_t nBins, uint32_t binsize, uint32_t movestep, enum bmStatsType type, uint8_t strand, uint8_t context) {
     bmOverlappingIntervals_t *ints = NULL;
     double *output = malloc(sizeof(double)*nBins);
     uint32_t i, pos = start, end2;
@@ -907,9 +907,10 @@ double *bmStatsFromFull(binaMethFile_t *fp, char *chrom, uint32_t start, uint32_
     for(i=0; i<nBins; i++) {
         //end2 = start + ((double)(end-start)*(i+1))/((int) nBins);
         if(i==0){
-            end2 = start + ((double)(end-start)*(i+1))/((int) nBins);
+            end2 = start + binsize;// + ((double)(end-start)*(i+1))/((int) nBins);
         }else{
-            end2 = start + movestep*(i+1);
+            //end2 = start + movestep*(i+1);
+            end2 = end2 + movestep;
         }
         ints = bmGetOverlappingIntervals(fp, chrom, pos, end2);
 
@@ -950,7 +951,7 @@ double *bmStatsFromFull(binaMethFile_t *fp, char *chrom, uint32_t start, uint32_
     return output;
 }
 
-double *bmStatsFromFull_array(binaMethFile_t *fp, char *chrom, uint32_t start, uint32_t end, uint32_t nBins, uint32_t movestep, enum bmStatsType type, uint8_t strand) {
+double *bmStatsFromFull_array(binaMethFile_t *fp, char *chrom, uint32_t start, uint32_t end, uint32_t nBins, uint32_t binsize, uint32_t movestep, enum bmStatsType type, uint8_t strand) {
     bmOverlappingIntervals_t *ints = NULL;
     unsigned int Tsize = 4;
     double *output = malloc(sizeof(double)*nBins*Tsize);
@@ -961,9 +962,10 @@ double *bmStatsFromFull_array(binaMethFile_t *fp, char *chrom, uint32_t start, u
     for(i=0,k=0; i<nBins; i++) {
         //end2 = start + ((double)(end-start)*(i+1))/((int) nBins);
         if(i==0){
-            end2 = start + ((double)(end-start)*(i+1))/((int) nBins);
+            end2 = start + binsize;//((double)(end-start)*(i+1))/((int) nBins);
         }else{
-            end2 = start + movestep*(i+1);
+            //end2 = start + movestep*(i+1);
+            end2 = end2 + movestep;
         }
         ints = bmGetOverlappingIntervals(fp, chrom, pos, end2);
 
@@ -998,21 +1000,22 @@ double *bmStatsFromFull_array(binaMethFile_t *fp, char *chrom, uint32_t start, u
     return output;
 }
 
-void bmStatsFromFull_array_count(binaMethFile_t *fp, char *chrom, uint32_t start, uint32_t end, uint32_t nBins, uint32_t movestep, enum bmStatsType type, uint8_t strand, uint16_t *countC, uint16_t *countCT) {
+void bmStatsFromFull_array_count(binaMethFile_t *fp, char *chrom, uint32_t start, uint32_t end, uint32_t nBins, uint32_t binsize, uint32_t movestep, enum bmStatsType type, uint8_t strand, uint32_t *countC, uint32_t *countCT) {
     bmOverlappingIntervals_t *ints = NULL;
     unsigned int Tsize = 4;
     //double *output = malloc(sizeof(double)*nBins*Tsize);
     uint32_t i, pos = start, end2, j, k;
     if(!countC || !countCT) return;
-    uint16_t *out_C = malloc(sizeof(uint16_t)*Tsize);
-    uint16_t *out_CT = malloc(sizeof(uint16_t)*Tsize);
+    uint32_t *out_C = malloc(sizeof(uint32_t)*Tsize);
+    uint32_t *out_CT = malloc(sizeof(uint32_t)*Tsize);
 
     for(i=0,k=0; i<nBins; i++) {
         //end2 = start + ((double)(end-start)*(i+1))/((int) nBins);
         if(i==0){
-            end2 = start + ((double)(end-start)*(i+1))/((int) nBins);
+            end2 = start + binsize; //+ ((double)(end-start)*(i+1))/((int) nBins);
         }else{
-            end2 = start + movestep*(i+1);
+            //end2 = start + movestep*(i+1);
+            end2 = end2 + movestep;
         }
         ints = bmGetOverlappingIntervals(fp, chrom, pos, end2);
 
@@ -1045,33 +1048,33 @@ void bmStatsFromFull_array_count(binaMethFile_t *fp, char *chrom, uint32_t start
 
 //Returns a list of floats of length nBins that must be free()d
 //On error, NULL is returned
-double *bmStats(binaMethFile_t *fp, char *chrom, uint32_t start, uint32_t end, uint32_t nBins, uint32_t movestep, enum bmStatsType type, uint8_t strand, uint8_t context) {
+double *bmStats(binaMethFile_t *fp, char *chrom, uint32_t start, uint32_t end, uint32_t nBins, uint32_t binsize, uint32_t movestep, enum bmStatsType type, uint8_t strand, uint8_t context) {
     //int32_t level = determineZoomLevel(fp, ((double)(end-start))/((int) nBins));
     uint32_t tid = bmGetTid(fp, chrom);
     if(tid == (uint32_t) -1) return NULL;
 
     //if(level == -1 || level == 0)
-    return bmStatsFromFull(fp, chrom, start, end, nBins, movestep, type, strand, context);
+    return bmStatsFromFull(fp, chrom, start, end, nBins, binsize, movestep, type, strand, context);
     //return bmStatsFromZoom(fp, level, tid, start, end, nBins, type);
 }
 
-double *bmStats_array(binaMethFile_t *fp, char *chrom, uint32_t start, uint32_t end, uint32_t nBins, uint32_t movestep, enum bmStatsType type, uint8_t strand) {
+double *bmStats_array(binaMethFile_t *fp, char *chrom, uint32_t start, uint32_t end, uint32_t nBins, uint32_t binsize, uint32_t movestep, enum bmStatsType type, uint8_t strand) {
     //int32_t level = determineZoomLevel(fp, ((double)(end-start))/((int) nBins));
     uint32_t tid = bmGetTid(fp, chrom);
     if(tid == (uint32_t) -1) return NULL;
 
     //if(level == -1 || level == 0)
-    return bmStatsFromFull_array(fp, chrom, start, end, nBins, movestep, type, strand);
+    return bmStatsFromFull_array(fp, chrom, start, end, nBins, binsize, movestep, type, strand);
     //return bmStatsFromZoom(fp, level, tid, start, end, nBins, type);
 }
 
-void bmStats_array_count(binaMethFile_t *fp, char *chrom, uint32_t start, uint32_t end, uint32_t nBins, uint32_t movestep, enum bmStatsType type, uint8_t strand, uint16_t *countC, uint16_t *countCT) {
+void bmStats_array_count(binaMethFile_t *fp, char *chrom, uint32_t start, uint32_t end, uint32_t nBins, uint32_t binsize, uint32_t movestep, enum bmStatsType type, uint8_t strand, uint32_t *countC, uint32_t *countCT) {
     //int32_t level = determineZoomLevel(fp, ((double)(end-start))/((int) nBins));
     uint32_t tid = bmGetTid(fp, chrom);
     if(tid == (uint32_t) -1) return;
 
     //if(level == -1 || level == 0)
-    bmStatsFromFull_array_count(fp, chrom, start, end, nBins, movestep, type, strand, countC, countCT);
+    bmStatsFromFull_array_count(fp, chrom, start, end, nBins, binsize, movestep, type, strand, countC, countCT);
     //return bmStatsFromZoom(fp, level, tid, start, end, nBins, type);
     return;
 }

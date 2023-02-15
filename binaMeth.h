@@ -2,7 +2,7 @@
 #define LIBBIGWIG_H
 
 #include "binaMethIO.h"
-#include "bmValues.h"
+#include "dmValues.h"
 #include <inttypes.h>
 #include <zlib.h>
 
@@ -508,9 +508,9 @@ bmOverlappingIntervals_t *bmGetValues(binaMethFile_t *fp, char *chrom, uint32_t 
  * @see bmStatsType
  * @return A pointer to an array of double precission floating point values. Note that binaMeth files only hold 32-bit values, so this is done to help prevent overflows.
  */
-double *bmStats(binaMethFile_t *fp, char *chrom, uint32_t start, uint32_t end, uint32_t nBins, uint32_t movestep, enum bmStatsType type, uint8_t strand, uint8_t context);
-double *bmStats_array(binaMethFile_t *fp, char *chrom, uint32_t start, uint32_t end, uint32_t nBins, uint32_t movestep, enum bmStatsType type, uint8_t strand);
-void bmStats_array_count(binaMethFile_t *fp, char *chrom, uint32_t start, uint32_t end, uint32_t nBins, uint32_t movestep, enum bmStatsType type, uint8_t strand, uint16_t *countC, uint16_t *countCT);
+double *bmStats(binaMethFile_t *fp, char *chrom, uint32_t start, uint32_t end, uint32_t nBins, uint32_t binsize, uint32_t movestep, enum bmStatsType type, uint8_t strand, uint8_t context);
+double *bmStats_array(binaMethFile_t *fp, char *chrom, uint32_t start, uint32_t end, uint32_t nBins, uint32_t binsize, uint32_t movestep, enum bmStatsType type, uint8_t strand);
+void bmStats_array_count(binaMethFile_t *fp, char *chrom, uint32_t start, uint32_t end, uint32_t nBins, uint32_t binsize, uint32_t movestep, enum bmStatsType type, uint8_t strand, uint32_t *countC, uint32_t *countCT);
 
 /*!
  * @brief Determines per-interval binaMeth statistics
@@ -524,8 +524,8 @@ void bmStats_array_count(binaMethFile_t *fp, char *chrom, uint32_t start, uint32
  * @see bmStatsType
  * @return A pointer to an array of double precission floating point values. Note that binaMeth files only hold 32-bit values, so this is done to help prevent overflows.
 */
-double *bmStatsFromFull(binaMethFile_t *fp, char *chrom, uint32_t start, uint32_t end, uint32_t nBins, uint32_t movestep, enum bmStatsType type, uint8_t strand, uint8_t context);
-double *bmStatsFromFull_array(binaMethFile_t *fp, char *chrom, uint32_t start, uint32_t end, uint32_t nBins, uint32_t movestep, enum bmStatsType type, uint8_t strand);
+double *bmStatsFromFull(binaMethFile_t *fp, char *chrom, uint32_t start, uint32_t end, uint32_t nBins, uint32_t binsize, uint32_t movestep, enum bmStatsType type, uint8_t strand, uint8_t context);
+double *bmStatsFromFull_array(binaMethFile_t *fp, char *chrom, uint32_t start, uint32_t end, uint32_t nBins, uint32_t binsize, uint32_t movestep, enum bmStatsType type, uint8_t strand);
 
 //Writer functions
 

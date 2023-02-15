@@ -80,13 +80,13 @@ double loglikratio_test(double null_loglik, double full_loglik);
 int checkcomma(char* inbmfiles);
 
 #define MAX_LINE_PRINT 1000000
-const char* Help_String="bmDMR [options] -p <prefix of result> -1 [Sample1-methbm,..] -2 [sample2-methbm,..] \n"
+const char* Help_String="dmDMR [options] -p <prefix of result> -1 [Sample1-methdm,..] -2 [sample2-methdm,..] \n"
                 "\nExample:\n"
-        		"\tbmDMR -1 s1.bm -2 s2.bm -p prefix --mindmc 5 --minstep 200\n"
+        		"\tdmDMR -1 s1.dm -2 s2.dm -p prefix --mindmc 5 --minstep 200\n"
                 "\nUsage:\n"
         		"\t-p            output file prefix\n"
-                "\t-1            sample1 methy bm files, sperate by comma.\n"
-                "\t-2            sample2 methy bm files, sperate by comma.\n"
+                "\t-1            sample1 methy dm files, sperate by comma.\n"
+                "\t-2            sample2 methy dm files, sperate by comma.\n"
                 "\t--mindmc      min dmc sites in dmr region. [default : 4]\n"
                 "\t--minstep     min step in bp [default : 100]\n"
                 "\t--maxdis      max length of dmr [default : 0]\n"

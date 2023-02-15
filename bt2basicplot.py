@@ -42,13 +42,29 @@ def getArgs(args=None):
     parser.add_argument("-l", "--label", default='wildtype', 
                         help="Labels of samples, sperate by space. eg. -l CG CHG", 
                         nargs='+')
-    parser.add_argument("--chr_select", default='chr1', 
-                        help="chromosome selected for boxplot and hexsin, default chr1. all means used all.", 
+    parser.add_argument("--chr_select", default='all', 
+                        help="chromosome selected for boxplot and hexsin, default all. all means used all.", 
                         )
+    parser.add_argument("-p", "--plotmode", default='boxnplot',
+                        help="plot mode, [boxplot, boxnplot, all] default boxnplot.",
+                        )
+    parser.add_argument("--plotpoint", default='N',
+                        help="plot point inside boxplot or boxnplot, defalt N.",
+                        )
+    parser.add_argument("--pointsize", default=1,
+                        choices=[1,2,3,4],
+                        help="point size while plot point.",
+                        type=int)
+
     ## coverfile
     parser.add_argument("-c", "--coverfile", 
                         default='', 
                         help="DNA AverMethylevel files, seperate by space. eg. wildtype.NCcoverage.txt", 
+                        nargs='+')
+    # me stats
+    parser.add_argument("-s", "--statsfile",
+                        default='',
+                        help="DNA AverMethylevel stats file",
                         nargs='+')
     parser.add_argument('--outfilename', '-o',
                        help='Output file name prefix.',
@@ -115,13 +131,141 @@ def get_cmap(n, name='hsv'):
 
 #a549.bt2.NCcoverage.txt
 #[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
-def readcoverfile(coverfile, NCcovergae):
+def readcoverfile(coverfile, xdata, NCcovergae):
     with open(coverfile, 'r') as mdata:
+        nline=0
         for line in mdata:
             line=line.strip('\n')
             Ncover=line.split()
-            NCcovergae.append(Ncover[1:])
-    print(NCcovergae[0])
+            nline+=1
+            if nline == 1 and len(xdata)==0 :
+                xdata.append(Ncover[1:])
+            elif nline>1:
+                NCcovergae.append(Ncover[1:])
+    #print(NCcovergae[0])
+
+def readstatsfile(cfile, Sxdata, Sydaya, Slydata):
+    with open(cfile, 'r') as mdata:
+        nline=0
+        for line in mdata:
+            line=line.strip('\n')
+            Nstats=line.split()
+            nline+=1
+            if nline == 1 and len(Sxdata)==0 :
+                Sxdata.append(Nstats)
+            elif nline>1:
+                #if len(Sydaya) == 0:
+                #    for i in range(5):
+                #        j=[]
+                #        Sydaya.append(j)
+                #for i in range(0, len(Nstats), 1):
+                #    Sydaya[i].append(Nstats[i])
+                Sydaya.append(list(map(eval, Nstats)))
+                Slydata.append(list(map(eval, Nstats)))
+
+def plotbarh(results, category_names, outfilename, mydpi, image_format, legend, legendsize):
+    """
+    Parameters
+    ----------
+    results : dict
+        A mapping from question labels to a list of answers per category.
+        It is assumed all lists contain the same number of entries and that
+        it matches the length of *category_names*.
+    category_names : list of str
+        The category labels.
+    """
+    labels = list(results.keys())
+    data = np.array(list(results.values()))
+    data_cum = data.cumsum(axis=1)
+    category_colors = plt.colormaps['RdYlGn_r'](
+        np.linspace(0.15, 0.85, data.shape[1]))
+
+    fig, ax = plt.subplots(figsize=(5.2, 3))
+    ax.invert_yaxis()
+    #ax.xaxis.set_visible(False)
+    ax.set_xlim(0, np.sum(data, axis=1).max())
+
+    for i, (colname, color) in enumerate(zip(category_names, category_colors)):
+        print((colname,color))
+        widths = data[:, i]
+        starts = data_cum[:, i] - widths
+        print("widths", widths, "ccc", data_cum)
+
+        rects = ax.barh(labels, widths, left=starts, height=0.5,
+                        label=colname, color=color)
+        #rects = ax.bar(labels, widths, bottom=starts, width=0.5,
+        #                label=colname, color=color)
+
+        # number label
+        #r, g, b, _ = color
+        #text_color = 'white' if r * g * b < 0.5 else 'darkgrey'
+        #ax.bar_label(rects, label_type='center', color=text_color)
+
+    #if legend < 11:
+    #    plt.legend(loc=legend, prop={'size': legendsize}, frameon=False)
+    #elif legend == 11:
+    #    plt.legend(bbox_to_anchor=(1.01, 0.05), loc=3, borderaxespad=0, prop={'size': legendsize}, frameon=False)
+
+    plt.xlabel("Count")
+    plt.ylabel("Samples")
+    plt.title("DNA methylation level category")
+
+    plt.legend(ncol=5, bbox_to_anchor=(0.98, -0.02), loc=4, frameon=False, bbox_transform=fig.transFigure,
+        fontsize='small') #ncol=len(category_names), bbox_to_anchor=(0, 1),
+
+    fig.tight_layout()
+    plt.savefig(outfilename, dpi=mydpi, format=image_format)
+    #return fig, ax
+
+
+def plotbar(xlabels, ydata, lydata, samplelabels, outfilename, mydpi, image_format, legend, legendsize):
+    #plt.style.use('fivethirtyeight')
+    fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(5, 6))
+    # 此处的 _ 下划线表示将循环取到的值放弃，只得到[0,1,2,3,4]
+    xlabel = [xlabels[0]]
+    ind = [x for x, _ in enumerate(xlabel)] 
+    # line plot
+    #plt.plot(ind, y_data, linestyle="--")
+    #plt.plot(ind, y2_data+y_data, linestyle="-.")
+    Ny = len(ydata[0])
+    print(ind, Ny, xlabel)
+    #if Ny > 1:
+    #    for i in range(0,Ny,1):
+    #        plt.plot(ind, lydata[i], linestyle="--")
+    Ny = len(ydata)
+    #绘制堆叠图
+    #plt.bar(ind, bronzes, width=0.5, label='bronzes', width=0.67)
+    #plt.bar(ind, silvers, width=0.5, label='silvers', color='silver', width=0.67, bottom=bronzes)
+    #plt.bar(ind, golds, width=0.5, label='golds', color='gold', width=0.67, bottom=silvers+bronzes)
+    #mybottom = ydata[0]
+    #for i in range(0,Ny,1):
+    #    if i == 0:
+    #        plt.bar(ind, ydata[i], width=0.6, label=samplelabels[i])
+    #    else:
+    #        for j in range(1,i-1,1):
+    #            mybottom = mybottom + ydata[i]
+    #        plt.bar(ind, ydata[i], width=0.6, label=samplelabels[i], bottom=mybottom)
+    print('ydaya', ydata)
+    df = pd.DataFrame(ydata, index=samplelabels, columns=['a', 'b', 'c', 'd', 'e'])
+    print(df.index, samplelabels, xlabel, ydata[0], "sam", df, df['a'], "EEE")
+    ax.bar(df.index, df['a'], width=0.6, label="[0-0.2)")
+    ax.bar(df.index, df['b'], width=0.6, label="[0.2-0.4)", bottom=df['a'])
+    ax.bar(df.index, df['c'], width=0.6, label="[0.4-0.6)", bottom=df['a']+df['b'])
+    ax.bar(df.index, df['d'], width=0.6, label="[0.6-0.8)", bottom=df['a']+df['b']+df['c'])
+    ax.bar(df.index, df['e'], width=0.6, label="[0.8-1)", bottom=df['a']+df['b']+df['c']+df['d'])
+    #设置坐标轴
+    if legend < 11:
+        plt.legend(loc=legend, prop={'size': legendsize}, frameon=False)
+    elif legend == 11:
+        plt.legend(bbox_to_anchor=(1.01, 0.05), loc=3, borderaxespad=0, prop={'size': legendsize}, frameon=False)
+    #plt.xticks(df.index, xlabel) 
+    plt.ylabel("Count") 
+    plt.xlabel("Samples") 
+    plt.legend(loc="upper right") 
+    plt.title("DNA methylation level category")
+    fig.tight_layout()
+    #plt.show()
+    plt.savefig(outfilename, dpi=mydpi, format=image_format)
 
 '''
 line style
@@ -160,13 +304,15 @@ marker
 '|'	vline marker
 '_'	hline marker
 '''
+import matplotlib.ticker as ticker
 legendsize=10
-def plotline(NCcovergae, outfilename, mydpi, image_format, legend, label):
+def plotline(x, NCcovergae, outfilename, mydpi, image_format, legend, label):
     #x = np.linspace(0, 10, 500)
     #y = np.sin(x)
-    x = [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+    #x = [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
     #y = list(map(eval, NCcovergae[0]))
     #fig, ax = plt.subplots()
+    x = list(map(eval, x[0]))
     figextend = 0
     if legend == 11:
         figextend = 2
@@ -174,23 +320,32 @@ def plotline(NCcovergae, outfilename, mydpi, image_format, legend, label):
 
     colors= ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
     linstyle = ['-', '--', '-.', ':']
-    #marker = ['']
-    for idx in range(0, len(NCcovergae), 2):
-        print(int(idx/2))
+    marker = ['o', 'v', '^', 'x', '*', '+', '1', '2', '>', '<', '3', '4', 'h', 'H']
+    for idx in range(0, len(NCcovergae)-1, 2):
         y = list(map(eval, NCcovergae[idx]))
         ax[0].plot(x, y, color=colors[int(idx/2)] ,marker='o', linestyle='dashed', label=label[int(idx/2)],
           linewidth=1, markersize=3)
-    ax[0].set_title("The number of C meet coverage > x[idx]")
-    ax[0].set_xlabel("Coverage")
-    ax[0].set_ylabel("Number of cytocines")
+    x_major_locator=ticker.MultipleLocator(1)
+    ax[0].xaxis.set_major_locator(x_major_locator)
+    ax[0].set_title("The number of C meet coverage > x[idx]", fontsize=16)
+    ax[0].set_xlabel("Coverage", fontsize=14)
+    ax[0].set_ylabel("Number of cytocines", fontsize=14)
 
     # Using plot(..., dashes=...) to set the dashing when creating a line
+    ymin=1
     for idx in range(1, len(NCcovergae), 2):
         y = list(map(eval, NCcovergae[idx]))
-        ax[1].plot(x, y, dashes=[6, 2]) #, label='Coverage percent' 
-    ax[1].set_title("Coverage percent")
-    ax[1].set_xlabel("Coverage")
-    ax[1].set_ylabel("Percent")
+        ax[1].plot(x, y, marker=marker[int(idx/2)], linestyle='dashed', linewidth=1) #, label='Coverage percent' 
+        ymin = min(y) if min(y)<ymin else ymin
+    ymin = ymin - 0.02
+    if ymin < 0:
+        ymin = 0
+    x_major_locator=ticker.MultipleLocator(1)
+    ax[1].xaxis.set_major_locator(x_major_locator)
+    ax[1].set_title("Coverage percent", fontsize=16)
+    ax[1].set_xlabel("#Cs meet >= coverage", fontsize=14)
+    ax[1].set_ylabel("Percent", fontsize=14)
+    ax[1].set(ylim=(ymin, 1.005))
     if legend < 11:
         plt.legend(loc=legend, prop={'size': legendsize}, frameon=False, labels=label)
     elif legend == 11:
@@ -198,11 +353,14 @@ def plotline(NCcovergae, outfilename, mydpi, image_format, legend, label):
     
     #ax[0].legend()
     #ax[1].legend()
+    fig.tight_layout()
     plt.savefig(outfilename, dpi=mydpi, format=image_format)
     #plt.show()
 
-def readmethfile(methlevel, methleveldf, filename, context, chr_choice):
+dict_data = {}
+def readmethfile(methlevel, methleveldf, filename, label, chr_choice, nsample, processed):
     # chr pos strand mC mCT ID
+    global dict_data
     with open(filename, 'r') as mdata:
         for line in mdata:
             data = line.split()
@@ -210,10 +368,25 @@ def readmethfile(methlevel, methleveldf, filename, context, chr_choice):
             if chr_choice != 'all' and chrom != chr_choice:
                 continue
             mr = int(mC)/int(cover)
-            methlevel.setdefault(context,[]).append(float(mr))
+            methlevel.setdefault(label,[]).append(float(mr))
             ## df
             methleveldf.setdefault("meth",[]).append(float(mr))
-            methleveldf.setdefault("context",[]).append(context)
+            methleveldf.setdefault("context",[]).append(label)
+            dict_data.setdefault(chrom+':'+pos,[]).append(float(mr))
+
+    if(processed+1<nsample):
+        return
+    if(nsample>1):
+        #for key, val in dict_data.items():
+        for key in list(dict_data.keys()):
+            if(len(dict_data[key])<nsample):
+                del dict_data[key]
+
+    if(len(dict_data)==0):
+        print("The merged matrix data is zero")
+        exit()
+    frame = pd.DataFrame.from_dict(dict_data,orient = 'index')
+    return frame
 
 '''
 sns.set
@@ -404,6 +577,7 @@ def pointcorplot(mdata, outfilename, mydpi, image_format):
     ax.set_ylabel("DNA methylation", fontsize= 12)
     ax.set_title("DNA methylation density")
     plt.colorbar()
+    fig.tight_layout()
     plt.savefig(outfilename, dpi=mydpi, format=image_format)
     #plt.show()
 
@@ -448,7 +622,8 @@ def corplot(mdata, outfilename, mydpi, image_format):
     ax.set_title("DNA methylation hexbin log")
     cb = fig.colorbar(hb, ax=ax)
     cb.set_label('log10(me)')
-    
+
+    fig.tight_layout()
     plt.savefig(outfilename, dpi=mydpi, format=image_format)
     #plt.show()
 
@@ -457,7 +632,7 @@ box plot and violin plot
 '''
 #from beeswarm import *
 def plotboxplot(fig, axs, mdata, mdatadf, notch, vert, showbox, showfliers, showmeans, showmedians, boxprops, medianprops,
-              meanprops, capprops, whiskerprops, fontsize):
+              meanprops, capprops, whiskerprops, fontsize, plotpoint, pointsize):
 
     # generate some random test data
     #all_data = [np.random.normal(0, std, 100) for std in range(6, 10)]
@@ -506,7 +681,6 @@ def plotboxplot(fig, axs, mdata, mdatadf, notch, vert, showbox, showfliers, show
         patch.set_linestyle('--')
         patch.set_linewidth('1.5')
     
-   
     # adding horizontal grid lines
     ##for ax in axs:
     #axs.yaxis.grid(True)
@@ -523,7 +697,7 @@ def plotboxplot(fig, axs, mdata, mdatadf, notch, vert, showbox, showfliers, show
     #bottom = -0.01
     #axs.set_ylim(bottom, top)
     axs.set_xticklabels(labels,
-                    rotation=45, fontsize=12)
+                    rotation=0, fontsize=12) #rotation=45
     
     mdatadf = pd.DataFrame.from_dict(mdatadf)
     '''
@@ -537,10 +711,10 @@ def plotboxplot(fig, axs, mdata, mdatadf, notch, vert, showbox, showfliers, show
 
     xl="context"
     yl="meth"
-
-    ax = sns.swarmplot(data=mdatadf, x=xl, y=yl,
-                   color='grey', alpha=0.5, size=4,        #颜色，透明度，大小
-                   linewidth=0.5, edgecolor='gray',        #边线宽度，边线颜色
+    if plotpoint == 'Y':
+        ax = sns.swarmplot(data=mdatadf, x=xl, y=yl,
+                   alpha=0.5, size=pointsize, #color='grey', size=4,        #颜色，透明度，大小
+                   #linewidth=0.5, #edgecolor='gray',        #边线宽度，边线颜色
                    ax=axs,
                    )
     #plt.ylim([-0.01,1.2])
@@ -550,7 +724,7 @@ def plotboxplot(fig, axs, mdata, mdatadf, notch, vert, showbox, showfliers, show
 violin plot
 '''
 def plotviolinplot(fig, axs, mdata, mdatadf, vert, showmeans, showmedians, 
-              fontsize, bw_method, showextrema, bxlw, inner):
+              fontsize, bw_method, showextrema, bxlw, inner, plotpoint, pointsize):
 
     #fig, axs = plt.subplots(nrows=1, ncols=2, figsize=(9, 4))
 
@@ -564,38 +738,50 @@ def plotviolinplot(fig, axs, mdata, mdatadf, vert, showmeans, showmedians,
     #print(all_data)
 
     # plot violin plot
-    pos = np.arange(len(labels))
-    vplot = axs.violinplot(all_data,
-                    showmeans=showmeans,
-                    showmedians=showmedians,
-                    vert=vert,  # vertical box alignment
-                    showextrema=showextrema, # 
-                    bw_method=bw_method, #str, scalar or callable, optional, This can be 'scott', 'silverman', scott
-                    widths=0.5, #array-like, default: 0.5, Either a scalar or a vector that sets the maximal width of each violin
-                    positions=pos,
-                    )
-    
-    if inner == 'box':
-        for i,d in enumerate(all_data):
-            #print(i,d)
-            min_value,quantile1, median, quantile3, max_value = np.percentile(d, [0, 25, 50, 75, 100])
-            length = (max_value - min_value)*0.005
-            print(median)
-            axs.vlines(i+1, median, median+length, lw=bxlw, zorder=4, color="red", linestyle='-')
-            #axs[0].scatter(i+1, median, color='white',zorder=4)
-            axs.vlines(i+1,quantile1, quantile3, lw=bxlw, zorder=3, linestyle='-')
-            axs.vlines(i+1,min_value, max_value, zorder=2, linestyle='-')
-            axs.vlines(i+1, max_value, max_value+length, lw=bxlw, zorder=5, color="red", linestyle='-')
+    pos = np.arange(1, len(labels)+1)
+    mdatadf = pd.DataFrame.from_dict(mdatadf)
+    print(mdatadf, "xxxx")
+    xl="context"
+    yl="meth"
+    #sns.violinplot(data=mdatadf, x=xl, y=yl, split=True, cut=0)
+    g=sns.catplot(data=mdatadf, kind='boxen', x=xl, y=yl, 
+                      )
+    #plt.title("DNA methylation level")
+    plt.xlabel("Samples")
+    plt.ylabel("DNA methylation level")
+    return
+    #vplot = axs.violinplot(all_data,
+    #                showmeans=showmeans,
+    #                showmedians=showmedians,
+    #                vert=vert,  # vertical box alignment
+    #                showextrema=showextrema, # 
+    #                bw_method=bw_method, #str, scalar or callable, optional, This can be 'scott', 'silverman', scott
+    #                widths=0.5, #array-like, default: 0.5, Either a scalar or a vector that sets the maximal width of each violin
+    #                positions=pos,
+    #                )
+
+    #if inner == 'box':
+    #    for i,d in enumerate(all_data):
+    #        #print(i,d)
+    #        min_value,quantile1, median, quantile3, max_value = np.percentile(d, [0, 25, 50, 75, 100])
+    #        length = (max_value - min_value)*0.005
+    #        print(median)
+
+    #        axs.vlines(i+1, median, median+length, lw=bxlw, zorder=4, color="red", linestyle='-')
+    #        ##axs[0].scatter(i+1, median, color='white',zorder=4)
+    #        #axs.vlines(i+1,quantile1, quantile3, lw=bxlw, zorder=3, linestyle='-')
+    #        #axs.vlines(i+1,min_value, max_value, zorder=2, linestyle='-')
+    #        #axs.vlines(i+1, max_value, max_value+length, lw=bxlw, zorder=5, color="red", linestyle='-')
         
     axs.set_title('DNA methylation violin plot')
     
-    colors = ['red', 'lightblue', 'lightgreen', 'red']
-    # add fill color
-    for patch, color in zip(vplot['bodies'], colors):
-        patch.set_facecolor(color)
-        patch.set_edgecolor('red') ## 边框
-        patch.set_linestyle('--') #'-' or 'solid', '--' or 'dashed', '-.' or 'dashdot', ':' or 'dotted', ''
-        patch.set_linewidth(1.5)
+    #colors = ['red', 'lightblue', 'lightgreen', 'red']
+    ## add fill color
+    #for patch, color in zip(vplot['bodies'], colors):
+    #    patch.set_facecolor(color)
+    #    patch.set_edgecolor('red') ## 边框
+    #    patch.set_linestyle('--') #'-' or 'solid', '--' or 'dashed', '-.' or 'dashdot', ':' or 'dotted', ''
+    #    patch.set_linewidth(1.5)
 
     # adding horizontal grid lines
     #for ax in axs:
@@ -604,17 +790,18 @@ def plotviolinplot(fig, axs, mdata, mdatadf, vert, showmeans, showmedians,
     axs.set_xlabel('Four separate samples')
     axs.set_ylabel('Observed values')
 
-    # add x-tick labels
-    plt.setp(axs, xticks=[y + 1 for y in range(len(all_data))],
-            xticklabels=labels)
-    #plt.show()
+    ## add x-tick labels
+    #plt.setp(axs, xticks=[y + 1 for y in range(len(all_data))],
+    #        xticklabels=labels)
+    ##plt.show()
 
-    mdatadf = pd.DataFrame.from_dict(mdatadf)
-    xl="context"
-    yl="meth"
-    ax = sns.swarmplot(data=mdatadf, x=xl, y=yl,
-                   color='grey', alpha=0.5, size=4,        #颜色，透明度，大小
-                   linewidth=0.5, edgecolor='gray',        #边线宽度，边线颜色
+    if plotpoint == 'Y':
+        mdatadf = pd.DataFrame.from_dict(mdatadf)
+        xl="context"
+        yl="meth"
+        ax = sns.swarmplot(data=mdatadf, x=xl, y=yl,
+                   alpha=0.5, size=pointsize, #color='grey', alpha=0.5, size=4,        #颜色，透明度，大小
+                   #linewidth=0.5, #edgecolor='gray',        #边线宽度，边线颜色
                    ax=axs,
                    )
     
@@ -640,19 +827,48 @@ if __name__ == '__main__':
     #lastlegend = args.lastlegend
     label=args.label
     
-    if args.mrfile=='' and args.coverfile == '':
+    if args.mrfile=='' and args.coverfile == '' and args.statsfile == '':
         print("should predifined input mr files!")
-        exit()
+        sys.exit(0)
 
     if args.coverfile != '':
         coverfs = args.coverfile
         Nfiles = len(coverfs)
         NCcovergae=[]
+        xdata=[]
         for cfile in coverfs:
-            readcoverfile(cfile, NCcovergae)
+            readcoverfile(cfile, xdata, NCcovergae)
         
         outfilename = outfileprefix + ".cover." + image_format
-        plotline(NCcovergae, outfilename, mydpi, image_format, legend, label)
+        plotline(xdata, NCcovergae, outfilename, mydpi, image_format, legend, label)
+
+    if args.statsfile != '':
+        statsf = args.statsfile
+        Nfiles = len(statsf)
+        Sydaya=[]
+        Slydata=[]
+        Sxdata=[]
+        for cfile in statsf:
+            readstatsfile(cfile, Sxdata, Sydaya, Slydata)
+
+        if len(label) < Nfiles:
+            print("Label number < files, so use filename as labels")
+            label = []
+            for cfile in statsf:
+                label.append(cfile)
+        elif len(label) > Nfiles:
+            label = label[:Nfiles]
+
+        outfilename = outfileprefix + ".stats." + image_format
+        category_names = ['[0-0.2)', '[0.2-0.4)',
+                              '[0.4-0.6)', '[0.6-0.8)', '[0.8-1]']
+        #results = {'m1': Sydaya[0], 'm2': Sydaya[1]}
+        results={}
+        for i in range(0, len(Sydaya)):
+            results[label[i]] = Sydaya[i]
+        outfilename2 = outfileprefix + ".stats.h." + image_format
+        plotbarh(results, category_names, outfilename2, mydpi, image_format, legend, legendsize)
+        plotbar(label, Sydaya, Slydata, label, outfilename, mydpi, image_format, legend, legendsize)
 
     if args.mrfile == '':
         exit()
@@ -660,12 +876,29 @@ if __name__ == '__main__':
     methleveldf = {}
     mefiles = args.mrfile
     Nmrfile = len(mefiles)
+    if len(label) < Nmrfile:
+        print("Label number < files, so use filename as labels")
+        label = []
+        for cfile in mefiles:
+            label.append(cfile)
+    elif len(label) > Nmrfile:
+        label = label[:Nmrfile]
+
     chr_select = args.chr_select
+    i=0
     for mefile in mefiles:
-        readmethfile(methlevel, methleveldf, mefile, mefile, chr_select)
-    print(chr_select, methlevel)
+        newframe = readmethfile(methlevel, methleveldf, mefile, label[i], chr_select, len(label), i)
+        i+=1
+    ##methleveldf = frame
+    print(newframe[0].values)
+    newmethlevel = {}
+    for i in range(len(label)):
+        for x in newframe[i].values:
+            print(x)
+            newmethlevel.setdefault(label[i],[]).append(float(x))
+    #print(chr_select, methlevel)
     colors = sample(all_colors, Nmrfile)
-    print(colors)
+    #print(colors)
     notch = False
     vert = True
     showbox = True
@@ -682,26 +915,39 @@ if __name__ == '__main__':
     bw_method = 'scott'
     showextrema = True
     bxlw = 9
-    inner = 'box'
+    inner = 'box---'
     #plotboxplotsns(methlevel)
     #plotboxsns(methlevel, "meth", "context", 'h')
     #plotboxsns(methlevel, "context", "meth", 'v')
     #plotviolionsns(methlevel, "meth", "context", 'h')
     #plotviolionsns(methlevel, "context", "meth", 'v')
+    plotmode = args.plotmode
+    plotpoint = args.plotpoint
+    pointsize = args.pointsize
+
     outfilename = outfileprefix + ".boxp." + image_format
-    fig, axs = plt.subplots(nrows=1, ncols=2, figsize=(9, 4))
-    print(methlevel)
-    plotboxplot(fig, axs[0], methlevel, methleveldf, notch, vert, showbox, showfliers, showmeans, showmedians, boxprops, medianprops,
-              meanprops, capprops, whiskerprops, fontsize)
-    
-    plotviolinplot(fig, axs[1], methlevel, methleveldf, vert, showmeans, showmedians, 
-              fontsize, bw_method, showextrema, bxlw, inner)
+    if plotmode == "all":
+        fig, axs = plt.subplots(nrows=1, ncols=2, figsize=(9, 4))
+        plotboxplot(fig, axs[0], methlevel, methleveldf, notch, vert, showbox, showfliers, showmeans, showmedians, boxprops, medianprops,
+                      meanprops, capprops, whiskerprops, fontsize, plotpoint, pointsize)
+        plotviolinplot(fig, axs[1], methlevel, methleveldf, vert, showmeans, showmedians,
+                      fontsize, bw_method, showextrema, bxlw, inner, plotpoint, pointsize)
+    else:
+        fig, axs = plt.subplots(nrows=1, ncols=1, figsize=(4, 4))
+        if plotmode == "boxplot":
+            plotboxplot(fig, axs, methlevel, methleveldf, notch, vert, showbox, showfliers, showmeans, showmedians, boxprops, medianprops,
+                           meanprops, capprops, whiskerprops, fontsize, plotpoint, pointsize)
+        elif plotmode == "boxnplot":
+            plotviolinplot(fig, axs, methlevel, methleveldf, vert, showmeans, showmedians,
+                          fontsize, bw_method, showextrema, bxlw, inner, plotpoint, pointsize)
+    fig.tight_layout()
     plt.savefig(outfilename, dpi=mydpi, format=image_format)
     #plt.show()
     
-    outfilename = outfileprefix + ".corplot1." + image_format
-    corplot(methlevel, outfilename, mydpi, image_format)
-    #pointcorplot(methlevel)
-    outfilename = outfileprefix + ".corplot2." + image_format
-    pointcorplot(methlevel, outfilename, mydpi, image_format)
+    if len(methlevel) > 1:
+        outfilename = outfileprefix + ".corplot1." + image_format
+        corplot(newmethlevel, outfilename, mydpi, image_format)
+        #pointcorplot(methlevel)
+        outfilename = outfileprefix + ".corplot2." + image_format
+        pointcorplot(newmethlevel, outfilename, mydpi, image_format)
     
