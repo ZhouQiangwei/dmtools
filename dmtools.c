@@ -108,7 +108,7 @@ const char* Help_String_mr2dm="Command Format :  dmtools mr2dm [opnions] -g geno
         "\t [mr2dm] mode paramaters, required\n"
 		"\t-g                    chromosome size file.\n"
         "\t-m                    methratio file\n"
-        "\t-o|--outdm            output BM file\n"
+        "\t-o|--outdm            output DM file\n"
         "\t [mr2dm] mode paramaters, options\n"
         "\t-C                    print coverage\n"
         "\t-S                    print strand\n"
@@ -133,7 +133,7 @@ const char* Help_String_mr2dm="Command Format :  dmtools mr2dm [opnions] -g geno
 const char* Help_String_view="Command Format :  dmtools view [opnions] -i meth.dm\n"
 		"\nUsage:\n"
         "\t [view] mode paramaters, required\n"
-        "\t-i                    input BM file\n"
+        "\t-i                    input DM file\n"
         "\t [view] mode paramaters, options\n"
         "\t-o                    output file [stdout]\n"
         "\t-r                    region for view, can be seperated by space. chr1:1-2900 chr2:1-200\n"
@@ -150,7 +150,7 @@ const char* Help_String_view="Command Format :  dmtools view [opnions] -i meth.d
 const char* Help_String_stats="Command Format :  dmtools stats [opnions] -i meth.dm\n"
         "\nUsage:\n"
         "\t [stats] mode paramaters, required\n"
-        "\t-i                    input BM file\n"
+        "\t-i                    input DM file\n"
         "\t [stats] mode paramaters, options\n"
         "\t-o                    output file [stdout]\n"
         "\t--tc                  total number of cytosine and guanine in genome, we will use the number of site in dm file if you not provide --tc\n"
@@ -3118,7 +3118,9 @@ void write_dm(binaMethFile_t *ifp, char* region, FILE* outfileF, char *outformat
     printL = main_view_bm(ifp, region, outfileF, outformat, ofp, chromsUse, starts, ends, values, coverages, strands, contexts,
          entryid);
     if(strcmp(outformat, "dm") == 0) {
-        if(start == 0 && printL>0){
+        //if(start == 0 && printL>0){
+        //这里需要加个判断，要写入的区域是否已经存在相同染色体，如果存在用bmAppendIntervals
+        if(printL>0){
             int response = bmAddIntervals(ofp, chromsUse, starts, ends, values, coverages, strands, contexts,
             entryid, printL);
             if(response) {
@@ -3162,7 +3164,7 @@ int main_view_all(binaMethFile_t *ifp, FILE* outfileF, char *outformat, binaMeth
                 continue;
             }
         }
-        fprintf(stderr, "view all process %s\t%ld\n", chrom, len);
+        fprintf(stderr, "process %s\t%ld\n", chrom, len);
         while(start<len){
             if(end>len){
                 end = len;
@@ -3294,7 +3296,7 @@ int main_view_bm(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outfor
                             Fcover[cover]++;
                         }else Fcover[15]++;
                     }else{
-                        fprintf(stderr, "Undetected coverage information in BM file, please check and reprint!\n");
+                        fprintf(stderr, "Undetected coverage information in DM file, please check and reprint!\n");
                         exit(0);
                     }
                 }else{
@@ -3441,6 +3443,13 @@ int main_view(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outformat
         uint8_t *strands = malloc(sizeof(uint8_t) * MAX_LINE_PRINT);
         uint8_t *contexts = malloc(sizeof(uint8_t) * MAX_LINE_PRINT);
         for(i=0;i<slen; i++){
+            chrom = strtok(regions[i], ",:-");
+            start = atoi(strtok(NULL,",:-"));
+            end = atoi(strtok(NULL,",:-"));
+            if(end-start>1000000) {
+                fprintf(stderr, "view region bigger than 1Mb, exit;");
+                exit(0);
+            }
             write_dm(ifp, regions[i], outfileF, outformat, ofp, chromsUse, starts, ends, values, coverages, strands, contexts, entryid);
         }
         //free mem
@@ -3455,6 +3464,10 @@ int main_view(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outformat
             chrom = strtok(regions[i], ",:-");
             start = atoi(strtok(NULL,",:-"));
             end = atoi(strtok(NULL,",:-")); // + 1;
+            if(end-start>1000000) {
+                fprintf(stderr, "view region bigger than 1Mb, exit;");
+                exit(0);
+            }
             //strand = strtok(NULL,",:-");
             //sscanf((const char *)regions[i], "%s:%d-%d", chrom, &start, &end);
             if(DEBUG>1) fprintf(stderr, "slen %d %d chrom %s %d %d %d", slen, i, chrom, start, end, slen);
@@ -3497,7 +3510,7 @@ int main_view(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outformat
                                 Fcover[cover]++;
                             }else Fcover[15]++;
                         }else{
-                            fprintf(stderr, "Undetected coverage information in BM file, please check and reprint!\n");
+                            fprintf(stderr, "Undetected coverage information in DM file, please check and reprint!\n");
                             exit(0);
                         }
                     }else if(strcmp(outformat, "txt") == 0) {
@@ -3602,7 +3615,7 @@ int main_view_bedfile(char *inbmF, char *bedfile, int type, FILE* outfileF, char
                             Fcover[cover]++;
                         }else Fcover[15]++;
                     }else{
-                        fprintf(stderr, "Undetected coverage information in BM file, please check and reprint!\n");
+                        fprintf(stderr, "Undetected coverage information in DM file, please check and reprint!\n");
                         exit(0);
                     }
                 }else if(strcmp(outformat, "txt") == 0) {
