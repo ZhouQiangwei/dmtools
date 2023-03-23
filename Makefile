@@ -112,6 +112,9 @@ clean:
 	rm -f *.o libBinaMeth.a libBinaMeth.so *.pico test/testLocal test/testRemote test/testWrite dmtools dmDMR bam2dm test/exampleWrite test/testRemoteManyContigs test/testIterator
 	make clean -C htslib
 
+cleandm:
+	rm dmtools
+
 install-old: libBinaMeth.a libBinaMeth.so
 	install -d $(prefix)/lib $(prefix)/include
 	install libBinaMeth.a $(prefix)/lib

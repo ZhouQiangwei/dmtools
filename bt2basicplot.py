@@ -152,7 +152,7 @@ def readstatsfile(cfile, Sxdata, Sydaya, Slydata):
             Nstats=line.split()
             nline+=1
             if nline == 1 and len(Sxdata)==0 :
-                Sxdata.append(Nstats)
+                Sxdata.append(Nstats[1:])
             elif nline>1:
                 #if len(Sydaya) == 0:
                 #    for i in range(5):
@@ -160,8 +160,8 @@ def readstatsfile(cfile, Sxdata, Sydaya, Slydata):
                 #        Sydaya.append(j)
                 #for i in range(0, len(Nstats), 1):
                 #    Sydaya[i].append(Nstats[i])
-                Sydaya.append(list(map(eval, Nstats)))
-                Slydata.append(list(map(eval, Nstats)))
+                Sydaya.append(list(map(eval, Nstats[1:])))
+                Slydata.append(list(map(eval, Nstats[1:])))
 
 def plotbarh(results, category_names, outfilename, mydpi, image_format, legend, legendsize):
     """
@@ -185,12 +185,14 @@ def plotbarh(results, category_names, outfilename, mydpi, image_format, legend, 
     #ax.xaxis.set_visible(False)
     ax.set_xlim(0, np.sum(data, axis=1).max())
 
+    print('size', len(category_names), len(category_colors))
     for i, (colname, color) in enumerate(zip(category_names, category_colors)):
         print((colname,color))
         widths = data[:, i]
         starts = data_cum[:, i] - widths
         print("widths", widths, "ccc", data_cum)
 
+        print('xxx', labels, widths, starts)
         rects = ax.barh(labels, widths, left=starts, height=0.5,
                         label=colname, color=color)
         #rects = ax.bar(labels, widths, bottom=starts, width=0.5,
@@ -220,7 +222,7 @@ def plotbarh(results, category_names, outfilename, mydpi, image_format, legend, 
 
 def plotbar(xlabels, ydata, lydata, samplelabels, outfilename, mydpi, image_format, legend, legendsize):
     #plt.style.use('fivethirtyeight')
-    fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(5, 6))
+    fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(5, 5))
     # 此处的 _ 下划线表示将循环取到的值放弃，只得到[0,1,2,3,4]
     xlabel = [xlabels[0]]
     ind = [x for x, _ in enumerate(xlabel)] 
@@ -306,6 +308,35 @@ marker
 '''
 import matplotlib.ticker as ticker
 legendsize=10
+def plotline11(x, NCcovergae, outfilename, mydpi, image_format, legend, label):
+    x = list(map(eval, x[0]))
+    print('xxx', x)
+    figextend = 0
+    if legend == 11:
+        figextend = 2
+    fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(5+figextend, 4))
+
+    colors= ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
+    linstyle = ['-', '--', '-.', ':']
+    marker = ['o', 'v', '^', 'x', '*', '+', '1', '2', '>', '<', '3', '4', 'h', 'H']
+    for idx in range(0, len(NCcovergae), 1):
+        y = NCcovergae[idx] #list(map(eval, NCcovergae[idx]))
+        ax.plot(x, y, color=colors[idx] ,marker='o', linestyle='dashed', label=label[idx],
+          linewidth=1, markersize=3)
+    #x_major_locator=ticker.MultipleLocator(1)
+    #ax.xaxis.set_major_locator(x_major_locator)
+    ax.set_title("The number of C in bins", fontsize=16)
+    ax.set_xlabel("Methy level", fontsize=14)
+    ax.set_ylabel("Number of cytocines", fontsize=14)
+
+    if legend < 11:
+        plt.legend(loc=legend, prop={'size': legendsize}, frameon=False, labels=label)
+    elif legend == 11:
+        plt.legend(bbox_to_anchor=(1.01, 0.05), loc=3, borderaxespad=0, prop={'size': legendsize}, frameon=False, labels=label)
+
+    fig.tight_layout()
+    plt.savefig(outfilename, dpi=mydpi, format=image_format)
+
 def plotline(x, NCcovergae, outfilename, mydpi, image_format, legend, label):
     #x = np.linspace(0, 10, 500)
     #y = np.sin(x)
@@ -313,6 +344,7 @@ def plotline(x, NCcovergae, outfilename, mydpi, image_format, legend, label):
     #y = list(map(eval, NCcovergae[0]))
     #fig, ax = plt.subplots()
     x = list(map(eval, x[0]))
+    print('xxx', x)
     figextend = 0
     if legend == 11:
         figextend = 2
@@ -839,6 +871,7 @@ if __name__ == '__main__':
         for cfile in coverfs:
             readcoverfile(cfile, xdata, NCcovergae)
         
+        print(xdata, NCcovergae, len(NCcovergae))
         outfilename = outfileprefix + ".cover." + image_format
         plotline(xdata, NCcovergae, outfilename, mydpi, image_format, legend, label)
 
@@ -860,15 +893,28 @@ if __name__ == '__main__':
             label = label[:Nfiles]
 
         outfilename = outfileprefix + ".stats." + image_format
+        #category_names = [[x] for x in Sxdata]
         category_names = ['[0-0.2)', '[0.2-0.4)',
                               '[0.4-0.6)', '[0.6-0.8)', '[0.8-1]']
         #results = {'m1': Sydaya[0], 'm2': Sydaya[1]}
         results={}
         for i in range(0, len(Sydaya)):
             results[label[i]] = Sydaya[i]
-        outfilename2 = outfileprefix + ".stats.h." + image_format
-        plotbarh(results, category_names, outfilename2, mydpi, image_format, legend, legendsize)
-        plotbar(label, Sydaya, Slydata, label, outfilename, mydpi, image_format, legend, legendsize)
+        print('results', results, category_names, Sxdata, Slydata)
+        plotline11(Sxdata, Slydata, outfilename, mydpi, image_format, legend, label)
+        if len(Slydata[0]) == 5:
+            outfilename = outfileprefix + ".stats.bar." + image_format
+            outfilename2 = outfileprefix + ".stats.barh." + image_format
+            plotbarh(results, category_names, outfilename2, mydpi, image_format, legend, legendsize)
+            # 计算每个数组的总和
+            sums = [sum(x) for x in Sydaya]
+            
+            # 对每个数组进行除法运算
+            for i in range(len(Sydaya)):
+                for j in range(len(Sydaya[i])):
+                    Sydaya[i][j] /= sums[i]
+
+            plotbar(label, Sydaya, Slydata, label, outfilename, mydpi, image_format, legend, legendsize)
 
     if args.mrfile == '':
         exit()

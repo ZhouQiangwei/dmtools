@@ -58,6 +58,10 @@ void bmPrintIndexNode(bmRTreeNode_t *node, int level);
 char *fastStrcat(char *s, char *t);
 void onlyexecuteCMD(const char *cmd, const char *errorinfor);
 size_t get_executable_path( char* processdir,char* processname, size_t len);
+unsigned long get_chr_len(binaMethFile_t *bm, char* chrom);
+int main_view_bm(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outformat, binaMethFile_t *ofp, \
+    char** chromsUse, uint32_t* starts, uint32_t* ends, float* values, uint16_t* coverages, uint8_t* strands, \
+    uint8_t* contexts, char** entryid);
 
 #define MAX_LINE_PRINT 1000000
 #define MAX_BUFF_PRINT 20000000
@@ -66,7 +70,7 @@ const char* Help_String_main="Command Format :  dmtools <mode> [opnions]\n"
         "\t  [mode]         bam2dm mr2dm view viewheader overlap regionstats bodystats profile chromstats\n\n"
         "\t  bam2dm         calculate DNA methylation (BM format) with BAM file\n"
         "\t  mr2dm          convert txt meth file to dm format\n"
-        "\t  view           dm format to txt meth\n"
+        "\t  view           dm format to txt/dm meth\n"
         "\t  viewheader     view header of dm file\n"
         "\t  overlap        overlap cytosine site with more than two dm files\n"
         "\t  regionstats    calculate DNA methylation level of per region\n"
@@ -87,11 +91,16 @@ const char* Help_String_bam2dm="Command Format :  dmtools bam2dm [options] -g ge
 		"\t-Q                    caculate the methratio while read QulityScore >= Q. default:20\n"
 		"\t-c|--coverage         >= <INT> coverage. default:4\n"
 		"\t--maxcoverage         <= <INT> coverage. default:500\n"
-		"\t-nC		             >= <INT> nCs per region. default:1\n"
+		"\t-nC                   >= <INT> nCs per region. default:1\n"
 		"\t-r|--remove_dup       REMOVE_DUP, default:false\n"
         "\t--mrtxt               print prefix.methratio.txt file\n"
         "\t--zl                  The maximum number of zoom levels. [0-10], default: 2\n"
         "\t-i|--input            Sam format file, sorted by chrom.\n"
+        "\t-C                    print coverage in DM file\n"
+        "\t-S                    print strand in DM file\n"
+        "\t--Cx                  print context in DM file\n"
+        "\t-E                    print end in DM file\n"
+        "\t--Id                  print ID in DM file\n"
         "\t-h|--help";
 
 const char* Help_String_mr2dm="Command Format :  dmtools mr2dm [opnions] -g genome.fa.fai -m methratio.txt -o outmeth.dm\n"
@@ -128,12 +137,13 @@ const char* Help_String_view="Command Format :  dmtools view [opnions] -i meth.d
         "\t [view] mode paramaters, options\n"
         "\t-o                    output file [stdout]\n"
         "\t-r                    region for view, can be seperated by space. chr1:1-2900 chr2:1-200\n"
+        "\t--chr                 chromosome for view\n"
         "\t--bed                 bed file for view, format: chrom start end (strand).\n"
         "\t--strand              [0/1/2] strand for show, 0 represent '+' positive strand, 1 '-' negative strand, 2 '.' all information\n"
         "\t--context             [0/1/2/3] context for show, 0 represent 'C/ALL' context, 1 'CG' context, 2 'CHG' context, 3 'CHH' context.\n"
         "\t--mincover            >= minumum coverage show, default: 0\n"
         "\t--maxcover            <= maximum coverage show, default: 10000\n"
-        "\t--outformat           txt or dm format\n"
+        "\t--outformat           txt or dm format [txt]\n"
         "\t--zl                  The maximum number of zoom levels. [0-10], valid for dm out\n"
 		"\t-h|--help";
 
@@ -148,6 +158,7 @@ const char* Help_String_stats="Command Format :  dmtools stats [opnions] -i meth
         "\t--bed                 bed file for calculate stats, format: chrom start end (strand).\n"
         "\t--strand              [0/1/2] strand for show, 0 represent '+' positive strand, 1 '-' negative strand, 2 '.' all information\n"
         "\t--context             [0/1/2/3] context for show, 0 represent 'C/ALL' context, 1 'CG' context, 2 'CHG' context, 3 'CHH' context.\n"
+        "\t-s                    size of bin for count cytosine number.\n"
         "\t--mincover            >= minumum coverage show, default: 0\n"
         "\t--maxcover            <= maximum coverage show, default: 10000\n"
         "\t-h|--help";
@@ -271,7 +282,10 @@ int maxcover = 10000;
 int printcoverage = 0; // print countC and countCT instead of methratio
 int NTHREAD = 10;
 int *Fcover;
-unsigned long mP1 = 0, mP2 = 0, mP3 = 0, mP4 = 0, mP5 = 0;
+unsigned long *mPs;
+//mP1 = 0, mP2 = 0, mP3 = 0, mP4 = 0, mP5 = 0;
+int statsSize = 10;
+int alwaysprint = 0;
 
 int main(int argc, char *argv[]) {
     binaMethFile_t *fp = NULL;
@@ -482,6 +496,10 @@ int main(int argc, char *argv[]) {
                 filter_context = atoi(argv[++i]);
             }else if(strcmp(argv[i], "--sort") == 0){
                 strcpy(sortY, argv[++i]);
+            }else if(strcmp(argv[i], "-s") == 0){
+               statsSize = atoi(argv[++i]);
+            }else if(strcmp(argv[i], "--ap") == 0){
+               alwaysprint = 1;
             }else if(strcmp(argv[i], "--zl") == 0){
                 zoomlevel = atoi(argv[++i]);
             }else if(strcmp(argv[i], "--fcontext") == 0){
@@ -508,6 +526,7 @@ int main(int argc, char *argv[]) {
         upstream = regionextend; downstream = regionextend;
     }
 
+    mPs = calloc(statsSize, sizeof(unsigned long));
     if(strcmp(mode, "bam2dm") == 0){
         fprintf(stderr, "calculate DNA methylation level with dm format\n");
         //exe location
@@ -950,7 +969,18 @@ int main(int argc, char *argv[]) {
             fprintf(outfp_bm, "\n");
 
             // print stats
-            fprintf(outfp_stats, "m1\tm2\tm3\tm4\tm5\n%ld\t%ld\t%ld\t%ld\t%ld\n", mP1, mP2, mP3, mP4, mP5);
+            //fprintf(outfp_stats, "m1\tm2\tm3\tm4\tm5\n%ld\t%ld\t%ld\t%ld\t%ld\n", mP1, mP2, mP3, mP4, mP5);
+            fprintf(outfp_stats, "catary\t0");
+            for(i=1; i<statsSize; i++){
+              fprintf(outfp_stats, "\t%.2f", ((float)(i))/statsSize);
+            }
+            fprintf(outfp_stats, "\n");
+
+            fprintf(outfp_stats, "percent\t%ld", mPs[0]);
+            for(i=1; i< statsSize; i++){
+                fprintf(outfp_stats, "\t%ld", mPs[i]);
+            }
+            fprintf(outfp_stats, "\n");
         }
 
         fprintf(stderr, "Done and free mem\n");
@@ -1042,14 +1072,22 @@ int main(int argc, char *argv[]) {
                     outfp_chg = outfp;
                     outfp_chh = outfp;
                 }else{
-                    strcpy(outfile_temp, outfile); strcat(outfile_temp, ".c");
-                    outfp = File_Open(outfile_temp,"w");
-                    strcpy(outfile_temp, outfile); strcat(outfile_temp, ".cg");
-                    outfp_cg = File_Open(outfile_temp,"w");
-                    strcpy(outfile_temp, outfile); strcat(outfile_temp, ".chg");
-                    outfp_chg = File_Open(outfile_temp,"w");
-                    strcpy(outfile_temp, outfile); strcat(outfile_temp, ".chh");
-                    outfp_chh = File_Open(outfile_temp,"w");
+                    if(filter_context == 0 || filter_context == 4) {
+                        strcpy(outfile_temp, outfile); strcat(outfile_temp, ".c");
+                        outfp = File_Open(outfile_temp,"w");
+                    }
+                    if(filter_context == 0 || filter_context == 4 || filter_context == 1) {
+                        strcpy(outfile_temp, outfile); strcat(outfile_temp, ".cg");
+                        outfp_cg = File_Open(outfile_temp,"w");
+                    }
+                    if(filter_context == 0 || filter_context == 4 || filter_context == 2) {
+                        strcpy(outfile_temp, outfile); strcat(outfile_temp, ".chg");
+                        outfp_chg = File_Open(outfile_temp,"w");
+                    }
+                    if(filter_context == 0 || filter_context == 4 || filter_context == 3) {
+                        strcpy(outfile_temp, outfile); strcat(outfile_temp, ".chh");
+                        outfp_chh = File_Open(outfile_temp,"w");
+                    }
                     free(outfile_temp);
                 }
             }else{
@@ -1082,8 +1120,14 @@ int main(int argc, char *argv[]) {
         }
         free(inbmfile);
         if(printcoverage>0) {
-            fclose(outfp);
-            if(outfile && print2one == 0) { fclose(outfp_cg); fclose(outfp_chg); fclose(outfp_chh); }
+            if(filter_context == 0 || filter_context == 4) {
+                fclose(outfp);
+            }
+            if(outfile && print2one == 0) { 
+                if(filter_context == 0 || filter_context == 4 || filter_context == 1) fclose(outfp_cg);
+                if(filter_context == 0 || filter_context == 4 || filter_context == 2) fclose(outfp_chg); 
+                if(filter_context == 0 || filter_context == 4 || filter_context == 3) fclose(outfp_chh); 
+            }
         }
         fclose(outfp_mean);
         if(outfile) free(outfile);
@@ -2494,6 +2538,10 @@ int calprofile(char *inbmfile, int upstream, int downstream, double profilestep,
     while(fgets(PerLine,2000,Fbedfile)!=NULL){
         if(PerLine[0] == '#') continue;
         sscanf(PerLine, "%s%d%d%s", chrom, &start, &end, strand);
+        if(!(strand[0]=='+' || strand[0]=='-' || strand[0]=='.')) {
+            strand[0] = '.';
+            strand[1] = '\0';
+        }
         if(end-start < splitN) continue;
         Nprocess++;
         if(Nprocess%5000==0) fprintf(stderr, "Processed %d regions\n", Nprocess);
@@ -2728,22 +2776,22 @@ void calregion_weighted_print(binaMethFile_t *fp, char* chrom, int start, int en
         if(format == 1 || format == 2 || format == 0){ //bed gtf etc
             if(context >= 4){
                 if(countCT[0]>0) { // C
-                    fprintf(outfileF_c, "%s\t%d\t%c\t%d\t%d%s\n", chrom, start, strand[0], countC[0], countCT[0], print_geneid);
+                    fprintf(outfileF_c, "%s\t%d\t%d\t%d\t%d\t%c%s\n", chrom, start, end, countC[0], countCT[0], strand[0], print_geneid);
                 }
                 if(countCT[1]>0) { // CG
-                    fprintf(outfileF_cg, "%s\t%d\t%c\t%d\t%d%s\n", chrom, start, strand[0], countC[1], countCT[1], print_geneid);
+                    fprintf(outfileF_cg, "%s\t%d\t%d\t%d\t%d\t%c%s\n", chrom, start, end, countC[1], countCT[1], strand[0], print_geneid);
                 }
                 if(countCT[2]>0) {
-                    fprintf(outfileF_chg, "%s\t%d\t%c\t%d\t%d%s\n", chrom, start, strand[0], countC[2], countCT[2], print_geneid);
+                    fprintf(outfileF_chg, "%s\t%d\t%d\t%d\t%d\t%c%s\n", chrom, start, end, countC[2], countCT[2], strand[0], print_geneid);
                 }
                 if(countCT[3]>0) {
-                    fprintf(outfileF_chh, "%s\t%d\t%c\t%d\t%d%s\n", chrom, start, strand[0], countC[3], countCT[3], print_geneid);
+                    fprintf(outfileF_chh, "%s\t%d\t%d\t%d\t%d\t%c%s\n", chrom, start, end, countC[3], countCT[3], strand[0], print_geneid);
                 }
             }else if(countCT[context]>0) { // print_context
-                if(context == 0) fprintf(outfileF_c, "%s\t%d\t%c\t%d\t%d%s\n", chrom, start, strand[0], countC[context], countCT[context], print_geneid);
-                else if(context == 1) fprintf(outfileF_cg, "%s\t%d\t%c\t%d\t%d%s\n", chrom, start, strand[0], countC[context], countCT[context], print_geneid);
-                else if(context == 2) fprintf(outfileF_chg, "%s\t%d\t%c\t%d\t%d%s\n", chrom, start, strand[0], countC[context], countCT[context], print_geneid);
-                else if(context == 3) fprintf(outfileF_chh, "%s\t%d\t%c\t%d\t%d%s\n", chrom, start, strand[0], countC[context], countCT[context], print_geneid);
+                if(context == 0) fprintf(outfileF_c, "%s\t%d\t%d\t%d\t%d\t%c%s\n", chrom, start, end, countC[context], countCT[context], strand[0], print_geneid);
+                else if(context == 1) fprintf(outfileF_cg, "%s\t%d\t%d\t%d\t%d\t%c%s\n", chrom, start, end, countC[context], countCT[context], strand[0], print_geneid);
+                else if(context == 2) fprintf(outfileF_chg, "%s\t%d\t%d\t%d\t%d\t%c%s\n", chrom, start, end, countC[context], countCT[context], strand[0], print_geneid);
+                else if(context == 3) fprintf(outfileF_chh, "%s\t%d\t%d\t%d\t%d\t%c%s\n", chrom, start, end, countC[context], countCT[context], strand[0], print_geneid);
             }
         }
 
@@ -2762,36 +2810,40 @@ void calregion_print(binaMethFile_t *fp, char* chrom, int start, int end, int sp
         if(format == 1 || format == 2){ // gtf gff
             if(context >= 4){
                 if(!isnan(stats[0])) { //C
-                    fprintf(outfileF, "%s\t%d\t%c\t%f\tC\t%s\n", chrom, start, strand[0], stats[0], geneid);
+                    fprintf(outfileF, "%s\t%d\t%d\t%f\tC\t%c\t%s\n", chrom, start, end, stats[0], strand[0], geneid);
                 }
                 if(!isnan(stats[1])) { //CG
-                    fprintf(outfileF, "%s\t%d\t%c\t%f\tCG\t%s\n", chrom, start, strand[0], stats[1], geneid);
+                    fprintf(outfileF, "%s\t%d\t%d\t%f\tCG\t%c\t%s\n", chrom, start, end, stats[1], strand[0], geneid);
                 }
                 if(!isnan(stats[2])) { //CHG
-                    fprintf(outfileF, "%s\t%d\t%c\t%f\tCHG\t%s\n", chrom, start, strand[0], stats[2], geneid);
+                    fprintf(outfileF, "%s\t%d\t%d\t%f\tCHG\t%c\t%s\n", chrom, start, end, stats[2], strand[0], geneid);
                 }
                 if(!isnan(stats[3])) { //CHH
-                    fprintf(outfileF, "%s\t%d\t%c\t%f\tCHH\t%s\n", chrom, start, strand[0], stats[3], geneid);
+                    fprintf(outfileF, "%s\t%d\t%d\t%f\tCHH\t%c\t%s\n", chrom, start, end, stats[3], strand[0], geneid);
                 }
             }else if(!isnan(stats[context])) { //print_context
-                fprintf(outfileF, "%s\t%d\t%c\t%f\t%s\t%s\n", chrom, start, strand[0], stats[context], print_context, geneid);
+                fprintf(outfileF, "%s\t%d\t%d\t%f\t%s\t%c\t%s\n", chrom, start, end, stats[context], print_context, strand[0], geneid);
+            }else if(alwaysprint == 1){
+                fprintf(outfileF, "%s\t%d\t%d\tNA\t%s\t%c\t%s\n", chrom, start, end, print_context, strand[0], geneid);
             }
         }else{ //bed or region
             if(context >= 4){
                 if(!isnan(stats[0])) { //C
-                    fprintf(outfileF, "%s\t%d\t%c\t%f\tC\n", chrom, start, strand[0], stats[0]);
+                    fprintf(outfileF, "%s\t%d\t%d\t%f\tC\t%c\n", chrom, start, end, stats[0], strand[0]);
                 }
                 if(!isnan(stats[1])) { //CG
-                    fprintf(outfileF, "%s\t%d\t%c\t%f\tCG\n", chrom, start, strand[0], stats[1]);
+                    fprintf(outfileF, "%s\t%d\t%d\t%f\tCG\t%c\n", chrom, start, end, stats[1], strand[0]);
                 }
                 if(!isnan(stats[2])) { //CHG
-                    fprintf(outfileF, "%s\t%d\t%c\t%f\tCHG\n", chrom, start, strand[0], stats[2]);
+                    fprintf(outfileF, "%s\t%d\t%d\t%f\tCHG\t%c\n", chrom, start, end, stats[2], strand[0]);
                 }
                 if(!isnan(stats[3])) { //CHH
-                    fprintf(outfileF, "%s\t%d\t%c\t%f\tCHH\n", chrom, start, strand[0], stats[3]);
+                    fprintf(outfileF, "%s\t%d\t%d\t%f\tCHH\t%c\n", chrom, start, end, stats[3], strand[0]);
                 }
             }else if(!isnan(stats[context])) { //print_context
-                fprintf(outfileF, "%s\t%d\t%c\t%f\t%s\n", chrom, start, strand[0], stats[context],print_context);
+                fprintf(outfileF, "%s\t%d\t%d\t%f\t%s\t%c\n", chrom, start, end, stats[context], print_context, strand[0]);
+            }else if(alwaysprint == 1){
+                fprintf(outfileF, "%s\t%d\t%d\tNA\t%s\t%c\n", chrom, start, end, print_context, strand[0]);
             }
         }
     }
@@ -2818,6 +2870,10 @@ int calregionstats_file(char *inbmfile, char *method, char *bedfile, int format,
         if(PerLine[0] == '#') continue;
         if(format == 0){
             sscanf(PerLine, "%s%d%d%s", chrom, &start, &end, strand);
+            if(!(strand[0]=='+' || strand[0]=='-' || strand[0]=='.')) {
+                strand[0] = '.';
+                strand[1] = '\0';
+            }
         }else if(format == 1){
             sscanf(PerLine, "%s\t%*s\t%*s\t%d\t%d\t%*s\t%s\t%*s\t%*s%s", chrom, &start, &end, strand, geneid);
             delete_char2(geneid, '"', ';');
@@ -2958,6 +3014,10 @@ int calbodystats_file(char *inbmfile, char *method, char *bedfile, int format, u
         if(PerLine[0] == '#') continue;
         if(format == 0){ //bed
             sscanf(PerLine, "%s%d%d%s", chrom, &start, &end, strand);
+            if(!(strand[0]=='+' || strand[0]=='-' || strand[0]=='.')) {
+                strand[0] = '.';
+                strand[1] = '\0';
+            }
         }else if(format == 1){
             sscanf(PerLine, "%s\t%*s\t%*s\t%d\t%d\t%*s\t%s\t%*s\t%*s%s", chrom, &start, &end, strand, geneid);
             delete_char2(geneid, '"', ';');
@@ -3053,6 +3113,29 @@ int calbodystats(char *inbmfile, char *method, char *region, uint8_t pstrand, ui
     return 0;
 }
 
+void write_dm(binaMethFile_t *ifp, char* region, FILE* outfileF, char *outformat, binaMethFile_t *ofp, char **chromsUse, uint32_t *starts, uint32_t *ends, float *values, uint16_t *coverages, uint8_t *strands, uint8_t *contexts, char **entryid){
+    int printL = 0;
+    printL = main_view_bm(ifp, region, outfileF, outformat, ofp, chromsUse, starts, ends, values, coverages, strands, contexts,
+         entryid);
+    if(strcmp(outformat, "dm") == 0) {
+        if(start == 0 && printL>0){
+            int response = bmAddIntervals(ofp, chromsUse, starts, ends, values, coverages, strands, contexts,
+            entryid, printL);
+            if(response) {
+                fprintf(stderr, "bmAddIntervals 0\n");
+                return -1;
+            }
+            printL = 0;
+        }else if(printL>0){
+            if(bmAppendIntervals(ofp, starts, ends, values, coverages, strands, contexts, entryid, printL)) {
+                fprintf(stderr, "bmAppendIntervals 2\n");
+                return -1;
+            }
+            printL = 0;
+        }
+    }
+}
+
 int main_view_all(binaMethFile_t *ifp, FILE* outfileF, char *outformat, binaMethFile_t *ofp, char* filterchrom){
 
     int SEGlen = 1000000;
@@ -3079,32 +3162,34 @@ int main_view_all(binaMethFile_t *ifp, FILE* outfileF, char *outformat, binaMeth
                 continue;
             }
         }
-        fprintf(stderr, "process %s\t%ld\n", chrom, len);
+        fprintf(stderr, "view all process %s\t%ld\n", chrom, len);
         while(start<len){
             if(end>len){
                 end = len;
             }
             sprintf(region, "%s:%d-%d\n", chrom, start, end);
-//            fprintf(stderr, "ccx %s\n", region);
-            printL = main_view_bm(ifp, region, outfileF, outformat, ofp, chromsUse, starts, ends, values, coverages, strands, contexts, 
-                entryid);
-            if(strcmp(outformat, "bm") == 0) {
-                if(start == 0 && printL>0){
-                    int response = bmAddIntervals(ofp, chromsUse, starts, ends, values, coverages, strands, contexts, 
-                    entryid, printL);
-                    if(response) {
-                        fprintf(stderr, "bmAddIntervals 0\n");
-                        return -1;
-                    }
-                    printL = 0;
-                }else if(printL>0){
-                    if(bmAppendIntervals(ofp, starts, ends, values, coverages, strands, contexts, entryid, printL)) {
-                        fprintf(stderr, "bmAppendIntervals 2\n");
-                        return -1;
-                    }
-                    printL = 0;
-                }
-            }
+            //fprintf(stderr, "ccx %s\n", region);
+            write_dm(ifp, region, outfileF, outformat, ofp, chromsUse, starts, ends, values, coverages, strands, contexts, entryid);
+
+            //printL = main_view_bm(ifp, region, outfileF, outformat, ofp, chromsUse, starts, ends, values, coverages, strands, contexts, 
+            //    entryid);
+            //if(strcmp(outformat, "dm") == 0) {
+            //    if(start == 0 && printL>0){
+            //        int response = bmAddIntervals(ofp, chromsUse, starts, ends, values, coverages, strands, contexts, 
+            //        entryid, printL);
+            //        if(response) {
+            //            fprintf(stderr, "bmAddIntervals 0\n");
+            //            return -1;
+            //        }
+            //        printL = 0;
+            //    }else if(printL>0){
+            //        if(bmAppendIntervals(ofp, starts, ends, values, coverages, strands, contexts, entryid, printL)) {
+            //            fprintf(stderr, "bmAppendIntervals 2\n");
+            //            return -1;
+            //        }
+            //        printL = 0;
+            //    }
+            //}
             start += SEGlen;
             end += SEGlen;
         }
@@ -3172,7 +3257,7 @@ int main_view_bm(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outfor
                     }
                 }
 
-                if(strcmp(outformat, "bm") == 0){
+                if(strcmp(outformat, "dm") == 0){
                     chromsUse[Nprint] = strdup(chrom);
                     starts[Nprint] = o->start[j];
                     if(ifp->hdr->version & BM_END){
@@ -3191,16 +3276,17 @@ int main_view_bm(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outfor
                         contexts[Nprint] = o->context[j];
                     }
                     if(ifp->hdr->version & BM_ID) {
-                        entryid[Nprint] = o->entryid[j];
+                        strcpy(entryid[Nprint], o->entryid[j]);
                     }
                     Nprint++;
                 }else if(strcmp(outformat, "stats") == 0) {
                     methlevel = o->value[j];
-                    if(methlevel>=0.8) mP5++;
-                    else if(methlevel >= 0.6) mP4++;
-                    else if(methlevel >= 0.4) mP3++;
-                    else if(methlevel >= 0.2) mP2++;
-                    else mP1++;
+                    //if(methlevel>=0.8) mP5++;
+                    //else if(methlevel >= 0.6) mP4++;
+                    //else if(methlevel >= 0.4) mP3++;
+                    //else if(methlevel >= 0.2) mP2++;
+                    //else mP1++;
+                    mPs[(int)(methlevel*statsSize - 0.01/statsSize)]++;
 
                     if(ifp->hdr->version & BM_COVER) {
                         cover = o->coverage[j]-1;
@@ -3242,10 +3328,7 @@ int main_view_bm(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outfor
                     tempstore = fastStrcat(tempstore, tempchar);
                     Nprint++;
                     if(Nprint>10000) {
-                        if(strcmp(outformat, "txt") == 0) fprintf(outfileF,"%s",pszBuf);
-                        else if(strcmp(outformat, "bm") == 0) {
-                            //bm out
-                        }
+                        fprintf(outfileF,"%s",pszBuf);
                         Nprint = 0;
                     }
                 }
@@ -3257,7 +3340,7 @@ int main_view_bm(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outfor
     if(Nprint>0) {
         if(strcmp(outformat, "txt") == 0) {
             fprintf(outfileF,"%s",pszBuf);
-        } else if(strcmp(outformat, "bm") == 0) {
+        } else if(strcmp(outformat, "dm") == 0) {
             ;//bm out, just skip
         }
     }
@@ -3292,6 +3375,10 @@ int main_view_file(binaMethFile_t *ifp, char *bedfile, FILE* outfileF, char *out
     while(fgets(PerLine,2000,Fbedfile)!=NULL){
         if(PerLine[0] == '#') continue;
         sscanf(PerLine, "%s%d%d%s", chrom, &start, &end, strand);
+        if(!(strand[0]=='+' || strand[0]=='-' || strand[0]=='.')) {
+             strand[0] = '.';
+             strand[1] = '\0';
+        }
         if(end<start){
             fprintf(stderr, "Warning, chromosome start bigger than end, %s %d %d", chrom, start, end);
             continue;
@@ -3343,99 +3430,120 @@ int main_view(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outformat
     char *tempstore = pszBuf;
     char *tempchar = malloc(20);
     int Nprint = 0; int cover = 0; float methlevel = 0;
-    //char *strand = malloc(100*sizeof(char)); int strand;
-    for(i=0;i<slen; i++){
-        chrom = strtok(regions[i], ",:-");
-        start = atoi(strtok(NULL,",:-"));
-        end = atoi(strtok(NULL,",:-")); // + 1;
-        //strand = strtok(NULL,",:-");
-        //sscanf((const char *)regions[i], "%s:%d-%d", chrom, &start, &end);
-        if(DEBUG>1) fprintf(stderr, "slen %d %d chrom %s %d %d %d", slen, i, chrom, start, end, slen);
-        bmOverlappingIntervals_t *o;
-        o = bmGetOverlappingIntervals(ifp, chrom, start, end+1);
-        if(!o) goto error;
-        if(DEBUG>1) fprintf(stderr, "\no->l %ld %ld %d\n", o->l, o->m, ifp->type);
-        //fprintf(stderr, "--- version --- %d\n", ifp->hdr->version);
-        if(o->l) {
-            for(j=0; j<o->l; j++) {
-                if(ifp->hdr->version & BM_COVER){
-                    if(!(o->coverage[j]>=mincover && o->coverage[j]<=maxcover)){
-                        continue;
-                    }
-                }
-                if(filter_strand != 2 && ifp->hdr->version & BM_STRAND) {
-                    if(o->strand[j] != filter_strand){
-                        continue;
-                    }
-                }
-                if(filter_context!=0 && filter_context<4 && ifp->hdr->version & BM_CONTEXT){
-                    if(o->context[j] != filter_context){
-                        continue;
-                    }
-                }
-                if(strcmp(outformat, "stats") == 0) {
-                    methlevel = o->value[j];
-                    if(methlevel>=0.8) mP5++;
-                    else if(methlevel >= 0.6) mP4++;
-                    else if(methlevel >= 0.4) mP3++;
-                    else if(methlevel >= 0.2) mP2++;
-                    else mP1++;
+    if(strcmp(outformat, "dm") == 0) {
+        char **chromsUse = malloc(sizeof(char*)*MAX_LINE_PRINT);
+        char **entryid = malloc(sizeof(char*)*MAX_LINE_PRINT);
+        uint32_t *chrLens = malloc(sizeof(uint32_t) * MAX_LINE_PRINT);
+        uint32_t *starts = malloc(sizeof(uint32_t) * MAX_LINE_PRINT);
+        uint32_t *ends = malloc(sizeof(uint32_t) * MAX_LINE_PRINT);
+        float *values = malloc(sizeof(float) * MAX_LINE_PRINT);
+        uint16_t *coverages = malloc(sizeof(uint16_t) * MAX_LINE_PRINT);
+        uint8_t *strands = malloc(sizeof(uint8_t) * MAX_LINE_PRINT);
+        uint8_t *contexts = malloc(sizeof(uint8_t) * MAX_LINE_PRINT);
+        for(i=0;i<slen; i++){
+            write_dm(ifp, regions[i], outfileF, outformat, ofp, chromsUse, starts, ends, values, coverages, strands, contexts, entryid);
+        }
+        //free mem
+        for(i =0; i < MAX_LINE_PRINT; i++){
+            free(chromsUse[i]); free(entryid[i]);
+        }
+        free(chromsUse); free(entryid); free(starts);
+        free(ends); free(values); free(coverages); free(strands); free(contexts);
+    }else{
+        //char *strand = malloc(100*sizeof(char)); int strand;
+        for(i=0;i<slen; i++){
+            chrom = strtok(regions[i], ",:-");
+            start = atoi(strtok(NULL,",:-"));
+            end = atoi(strtok(NULL,",:-")); // + 1;
+            //strand = strtok(NULL,",:-");
+            //sscanf((const char *)regions[i], "%s:%d-%d", chrom, &start, &end);
+            if(DEBUG>1) fprintf(stderr, "slen %d %d chrom %s %d %d %d", slen, i, chrom, start, end, slen);
 
-                    if(ifp->hdr->version & BM_COVER) {
-                        cover = o->coverage[j]-1;
-                        if(cover>=0 && cover < 15){
-                            Fcover[cover]++;
-                        }else Fcover[15]++;
-                    }else{
-                        fprintf(stderr, "Undetected coverage information in BM file, please check and reprint!\n");
-                        exit(0);
-                    }
-                }else if(strcmp(outformat, "txt") == 0) {
-                    //fprintf(stderr, "1\t%ld\t%ld\t%f\t%ld\t%d\t%d\n", o->start[i], o->end[i], o->value[i], o->coverage[i],
-                    //o->strand[i], o->context[i]);   %"PRIu32"
-                    sprintf(tempchar, "%s\t%ld", chrom, o->start[j]);
-                    tempstore = fastStrcat(tempstore, tempchar);
-                    if(ifp->hdr->version & BM_END) { //ifp->type
-                        sprintf(tempchar, "\t%"PRIu32"", o->end[j]);
-                        tempstore = fastStrcat(tempstore, tempchar);
-                    }
-                    sprintf(tempchar, "\t%f", o->value[j]);
-                    tempstore = fastStrcat(tempstore, tempchar);
-                    if(ifp->hdr->version & BM_COVER) {
-                        sprintf(tempchar, "\t%"PRIu16"", o->coverage[j]);
-                        tempstore = fastStrcat(tempstore, tempchar);
-                    }
-                    if(ifp->hdr->version & BM_STRAND){
-                        sprintf(tempchar, "\t%s", strand_str[o->strand[j]]);
-                        tempstore = fastStrcat(tempstore, tempchar);
-                    }
-                    if(ifp->hdr->version & BM_CONTEXT) {
-                        sprintf(tempchar, "\t%s", context_str[o->context[j]]);
-                        tempstore = fastStrcat(tempstore, tempchar);
-                    }
-                    if(ifp->hdr->version & BM_ID) {
-                        sprintf(tempchar, "\t%s", o->entryid[j]);
-                        tempstore = fastStrcat(tempstore, tempchar);
-                    }
-                    sprintf(tempchar, "\n");
-                    tempstore = fastStrcat(tempstore, tempchar);
-                    Nprint++;
-                    if(Nprint>10000) {
-                        if(strcmp(outformat, "txt") == 0) fprintf(outfileF,"%s",pszBuf);
-                        else if(strcmp(outformat, "bm") == 0) {
-                            //bm out
+            bmOverlappingIntervals_t *o;
+            o = bmGetOverlappingIntervals(ifp, chrom, start, end+1);
+            if(!o) goto error;
+            if(DEBUG>1) fprintf(stderr, "\no->l %ld %ld %d\n", o->l, o->m, ifp->type);
+            //fprintf(stderr, "--- version --- %d\n", ifp->hdr->version);
+            if(o->l) {
+                for(j=0; j<o->l; j++) {
+                    if(ifp->hdr->version & BM_COVER){
+                        if(!(o->coverage[j]>=mincover && o->coverage[j]<=maxcover)){
+                            continue;
                         }
-                        Nprint = 0;
+                    }
+                    if(filter_strand != 2 && ifp->hdr->version & BM_STRAND) {
+                        if(o->strand[j] != filter_strand){
+                            continue;
+                        }
+                    }
+                    if(filter_context!=0 && filter_context<4 && ifp->hdr->version & BM_CONTEXT){
+                        if(o->context[j] != filter_context){
+                            continue;
+                        }
+                    }
+
+                    if(strcmp(outformat, "stats") == 0) {
+                        methlevel = o->value[j];
+                        //if(methlevel>=0.8) mP5++;
+                        //else if(methlevel >= 0.6) mP4++;
+                        //else if(methlevel >= 0.4) mP3++;
+                        //else if(methlevel >= 0.2) mP2++;
+                        //else mP1++;
+                        mPs[(int)(methlevel*statsSize - 0.01/statsSize)]++;
+
+                        if(ifp->hdr->version & BM_COVER) {
+                            cover = o->coverage[j]-1;
+                            if(cover>=0 && cover < 15){
+                                Fcover[cover]++;
+                            }else Fcover[15]++;
+                        }else{
+                            fprintf(stderr, "Undetected coverage information in BM file, please check and reprint!\n");
+                            exit(0);
+                        }
+                    }else if(strcmp(outformat, "txt") == 0) {
+                        //fprintf(stderr, "1\t%ld\t%ld\t%f\t%ld\t%d\t%d\n", o->start[i], o->end[i], o->value[i], o->coverage[i],
+                        //o->strand[i], o->context[i]);   %"PRIu32"
+                        sprintf(tempchar, "%s\t%ld", chrom, o->start[j]);
+                        tempstore = fastStrcat(tempstore, tempchar);
+                        if(ifp->hdr->version & BM_END) { //ifp->type
+                            sprintf(tempchar, "\t%"PRIu32"", o->end[j]);
+                            tempstore = fastStrcat(tempstore, tempchar);
+                        }
+                        sprintf(tempchar, "\t%f", o->value[j]);
+                        tempstore = fastStrcat(tempstore, tempchar);
+                        if(ifp->hdr->version & BM_COVER) {
+                            sprintf(tempchar, "\t%"PRIu16"", o->coverage[j]);
+                            tempstore = fastStrcat(tempstore, tempchar);
+                        }
+                        if(ifp->hdr->version & BM_STRAND){
+                            sprintf(tempchar, "\t%s", strand_str[o->strand[j]]);
+                            tempstore = fastStrcat(tempstore, tempchar);
+                        }
+                        if(ifp->hdr->version & BM_CONTEXT) {
+                            sprintf(tempchar, "\t%s", context_str[o->context[j]]);
+                            tempstore = fastStrcat(tempstore, tempchar);
+                        }
+                        if(ifp->hdr->version & BM_ID) {
+                            sprintf(tempchar, "\t%s", o->entryid[j]);
+                            tempstore = fastStrcat(tempstore, tempchar);
+                        }
+                        sprintf(tempchar, "\n");
+                        tempstore = fastStrcat(tempstore, tempchar);
+                        Nprint++;
+                        if(Nprint>10000) {
+                            fprintf(outfileF,"%s",pszBuf);
+                            Nprint = 0;
+                        }
                     }
                 }
             }
+            bmDestroyOverlappingIntervals(o);
         }
-        bmDestroyOverlappingIntervals(o);
     }
 
     if(Nprint>0) {
         if(strcmp(outformat, "txt") == 0) fprintf(outfileF,"%s",pszBuf);
-        else if(strcmp(outformat, "bm") == 0) {
+        else if(strcmp(outformat, "dm") == 0) {
             //bm out
         }
         Nprint = 0;
@@ -3481,11 +3589,12 @@ int main_view_bedfile(char *inbmF, char *bedfile, int type, FILE* outfileF, char
             for(j=0; j<o->l; j++) {
                 if(strcmp(outformat, "stats") == 0) {
                     methlevel = o->value[j];
-                    if(methlevel>=0.8) mP5++;
-                    else if(methlevel >= 0.6) mP4++;
-                    else if(methlevel >= 0.4) mP3++;
-                    else if(methlevel >= 0.2) mP2++;
-                    else mP1++;
+                    //if(methlevel>=0.8) mP5++;
+                    //else if(methlevel >= 0.6) mP4++;
+                    //else if(methlevel >= 0.4) mP3++;
+                    //else if(methlevel >= 0.2) mP2++;
+                    //else mP1++;
+                    mPs[(int)(methlevel*statsSize - 0.01/statsSize)]++;
 
                     if(ifp->hdr->version & BM_COVER) {
                         cover = o->coverage[j]-1;
@@ -3606,6 +3715,10 @@ int bm_overlap_file_mul(char *inbmFs, char *bedfile){
     while(fgets(PerLine,2000,Fbedfile)!=NULL){
         if(PerLine[0] == '#') continue;
         sscanf(PerLine, "%s%d%d%s", chrom, &start, &end, strand);
+        if(!(strand[0]=='+' || strand[0]=='-' || strand[0]=='.')) {
+            strand[0] = '.';
+            strand[1] = '\0';
+        }
         if(end<start){
             fprintf(stderr, "Warning, chromosome start bigger than end, %s %d %d", chrom, start, end);
             continue;
@@ -3655,6 +3768,10 @@ int bm_overlap_file(char *inbmF1, char *inbmF2, char *bedfile){
     while(fgets(PerLine,2000,Fbedfile)!=NULL){
         if(PerLine[0] == '#') continue;
         sscanf(PerLine, "%s%d%d%s", chrom, &start, &end, strand);
+        if(!(strand[0]=='+' || strand[0]=='-' || strand[0]=='.')) {
+            strand[0] = '.';
+            strand[1] = '\0';
+        }
         if(end<start){
             fprintf(stderr, "Warning, chromosome start bigger than end, %s %d %d", chrom, start, end);
             continue;
@@ -4152,4 +4269,20 @@ size_t get_executable_path( char* processdir,char* processname, size_t len)
 	strcpy(processname, path_end);
 	*path_end = '\0';
 	return (size_t)(path_end - processdir);
+}
+
+unsigned long get_chr_len(binaMethFile_t *bm, char* chrom){
+    int64_t i64;
+    unsigned long chrlen = 0;
+    //Chromosome idx/name/length
+    if(bm->cl) {
+        for(i64=0; i64<bm->cl->nKeys; i64++) {
+            //fprintf(stderr, "  %"PRIu64"\t%s\t%"PRIu32"\n", i64, bm->cl->chrom[i64], bm->cl->len[i64]);
+            if(strcmp(bm->cl->chrom[i64], chrom) == 0) {
+                chrlen = bm->cl->len[i64];
+                fprintf(stderr, "Chromosome List %s %ld\n", chrom, chrlen);
+            }
+        }
+    }
+    return chrlen;
 }
