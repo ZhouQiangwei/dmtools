@@ -63,7 +63,7 @@ int main_view_bm(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outfor
     char** chromsUse, uint32_t* starts, uint32_t* ends, float* values, uint16_t* coverages, uint8_t* strands, \
     uint8_t* contexts, char** entryid);
 
-#define MAX_LINE_PRINT 1000000
+#define MAX_LINE_PRINT 1000100
 #define MAX_BUFF_PRINT 20000000
 const char* Help_String_main="Command Format :  dmtools <mode> [opnions]\n"
 		"\nUsage:\n"
@@ -166,7 +166,7 @@ const char* Help_String_stats="Command Format :  dmtools stats [opnions] -i meth
 const char* Help_String_addzm="Command Format :  dmtools addzm [opnions] -i meth.dm -o meth.zm2.dm\n"
 		"\nUsage: add zoom levels for dm\n"
         "\t [addzm] mode paramaters, required\n"
-        "\t-i                    input mbigwig file\n"
+        "\t-i                    input DM file\n"
         "\t [addzm] mode paramaters, options\n"
         "\t-o                    output dm file\n"
         "\t--zl                  The maximum number of zoom levels. [0-10], valid for dm out\n"
@@ -181,26 +181,26 @@ const char* Help_String_addzm="Command Format :  dmtools addzm [opnions] -i meth
 const char* Help_String_viewheader="Command Format :  dmtools viewheader -i meth.dm\n"
 		"\nUsage:\n"
         "\t [view] mode paramaters, required\n"
-        "\t-i                    input mbigwig file\n"
+        "\t-i                    input DM file\n"
 		"\t-h|--help";
 
 const char* Help_String_overlap="Command Format :  dmtools overlap [opnions] -i meth1.dm -i2 meth2.dm\n"
 		"\nUsage:\n"
         "\t [overlap] mode paramaters, required\n"
-        "\t-i                    input mbigwig file\n"
-        "\t-i2                   input mbigwig file2\n"
+        "\t-i                    input DM file\n"
+        "\t-i2                   input DM file2\n"
         "\t [overlap] mode paramaters, options\n"
         //"\t-o                    output file [stdout]\n"
         "\t-r                    region for view, can be seperated by space. chr1:1-2900 chr2:1-200\n"
         "\t--bed                 bed file for view, format: chrom start end [strand].\n"
         "\t [overlap] mode paramaters\n"
-        "\t--dmfiles             input mbigwig files, seperated by comma. This is no need if you provide -i and -i2.\n"
+        "\t--dmfiles             input DM files, seperated by comma. This is no need if you provide -i and -i2.\n"
 		"\t-h|--help";
 
 const char* Help_String_regionstats="Command Format :  dmtools regionstats [opnions] -i dm --bed bedfile\n"
 		"\nUsage:\n"
         "\t [regionstats] mode paramaters, required\n"
-        "\t-i                    input mbigwig file\n"
+        "\t-i                    input DM file\n"
         "\t--bed                 bed file for view, format: chrom start end [strand].\n"
         "\t--gtf                 gtf file for view, format: chrom * * start end * strand * xx geneid.\n"
         "\t--gff                 gff file for view, format: chrom * * start end * strand * xx=geneid.\n"
@@ -219,7 +219,7 @@ const char* Help_String_regionstats="Command Format :  dmtools regionstats [opni
 const char* Help_String_bodystats="Command Format :  dmtools bodystats [opnions] -i dm --bed bedfile\n"
 		"\nUsage:\n"
         "\t [bodystats] mode paramaters, required\n"
-        "\t-i                    input mbigwig file\n"
+        "\t-i                    input DM file\n"
         "\t--bed                 bed file for view, format: chrom start end [strand].\n"
         "\t--gtf                 gtf file for view, format: chrom * * start end * strand * xx geneid.\n"
         "\t--gff                 gff file for view, format: chrom * * start end * strand * xx=geneid.\n"
@@ -237,7 +237,7 @@ const char* Help_String_bodystats="Command Format :  dmtools bodystats [opnions]
 const char* Help_String_profile="Command Format :  dmtools profile [opnions] -i meth.dm --bed bedfile\n"
 		"\nUsage:\n"
         "\t [profile] mode paramaters, required\n"
-        "\t-i                    input mbigwig file\n"
+        "\t-i                    input DM file\n"
         "\t--bed                 bed file for view, format: chrom start end [strand].\n"
         "\t--gtf                 gtf file for view, format: chrom * * start end * strand * xx geneid.\n"
         "\t--gff                 gff file for view, format: chrom * * start end * strand * xx=geneid.\n"
@@ -260,7 +260,7 @@ const char* Help_String_profile="Command Format :  dmtools profile [opnions] -i 
 const char* Help_String_chromstats="Command Format :  dmtools chromstats [opnions] -i meth.dm\n"
 		"\nUsage:\n"
         "\t [chromstats] mode paramaters, required\n"
-        "\t-i                    input mbigwig file\n"
+        "\t-i                    input DM file\n"
         "\t [chromstats] mode paramaters, options\n"
         "\t-o                    output file [stdout]\n"
         "\t--method              weighted/ mean/ min/ max/ cover/ dev\n"
@@ -3113,14 +3113,14 @@ int calbodystats(char *inbmfile, char *method, char *region, uint8_t pstrand, ui
     return 0;
 }
 
-void write_dm(binaMethFile_t *ifp, char* region, FILE* outfileF, char *outformat, binaMethFile_t *ofp, char **chromsUse, uint32_t *starts, uint32_t *ends, float *values, uint16_t *coverages, uint8_t *strands, uint8_t *contexts, char **entryid){
+void write_dm(binaMethFile_t *ifp, char* region, FILE* outfileF, char *outformat, binaMethFile_t *ofp, char **chromsUse, uint32_t *starts, uint32_t *ends, float *values, uint16_t *coverages, uint8_t *strands, uint8_t *contexts, char **entryid, int newchr){
     int printL = 0;
     printL = main_view_bm(ifp, region, outfileF, outformat, ofp, chromsUse, starts, ends, values, coverages, strands, contexts,
          entryid);
     if(strcmp(outformat, "dm") == 0) {
         //if(start == 0 && printL>0){
         //这里需要加个判断，要写入的区域是否已经存在相同染色体，如果存在用bmAppendIntervals
-        if(printL>0){
+        if(newchr == 0 && printL>0){
             int response = bmAddIntervals(ofp, chromsUse, starts, ends, values, coverages, strands, contexts,
             entryid, printL);
             if(response) {
@@ -3171,7 +3171,7 @@ int main_view_all(binaMethFile_t *ifp, FILE* outfileF, char *outformat, binaMeth
             }
             sprintf(region, "%s:%d-%d\n", chrom, start, end);
             //fprintf(stderr, "ccx %s\n", region);
-            write_dm(ifp, region, outfileF, outformat, ofp, chromsUse, starts, ends, values, coverages, strands, contexts, entryid);
+            write_dm(ifp, region, outfileF, outformat, ofp, chromsUse, starts, ends, values, coverages, strands, contexts, entryid, start);
 
             //printL = main_view_bm(ifp, region, outfileF, outformat, ofp, chromsUse, starts, ends, values, coverages, strands, contexts, 
             //    entryid);
@@ -3299,7 +3299,7 @@ int main_view_bm(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outfor
                         fprintf(stderr, "Undetected coverage information in DM file, please check and reprint!\n");
                         exit(0);
                     }
-                }else{
+                }else if(strcmp(outformat, "txt") == 0){
                     //fprintf(stderr, "1\t%ld\t%ld\t%f\t%ld\t%d\t%d\n", o->start[i], o->end[i], o->value[i], o->coverage[i],
                     //o->strand[i], o->context[i]);   //%"PRIu32"
                     sprintf(tempchar, "%s\t%ld", chrom, o->start[j]);
@@ -3332,6 +3332,8 @@ int main_view_bm(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outfor
                     if(Nprint>10000) {
                         fprintf(outfileF,"%s",pszBuf);
                         Nprint = 0;
+                        pszBuf[0] = '\0';
+                        tempstore = pszBuf;
                     }
                 }
             }
@@ -3424,7 +3426,7 @@ int main_view(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outformat
     
     while (substr != NULL) {
         strcpy(regions[slen++], substr);
-        substr = strtok(NULL,"\\");
+        substr = strtok(NULL,";");
     }
 
     char *chrom = malloc(100*sizeof(char)); int start=0, end=0;
@@ -3443,14 +3445,14 @@ int main_view(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outformat
         uint8_t *strands = malloc(sizeof(uint8_t) * MAX_LINE_PRINT);
         uint8_t *contexts = malloc(sizeof(uint8_t) * MAX_LINE_PRINT);
         for(i=0;i<slen; i++){
-            chrom = strtok(regions[i], ",:-");
-            start = atoi(strtok(NULL,",:-"));
-            end = atoi(strtok(NULL,",:-"));
+            //chrom = strtok(regions[i], ",:-");
+            //start = atoi(strtok(NULL,",:-"));
+            //end = atoi(strtok(NULL,",:-"));
             if(end-start>1000000) {
                 fprintf(stderr, "view region bigger than 1Mb, exit;");
                 exit(0);
             }
-            write_dm(ifp, regions[i], outfileF, outformat, ofp, chromsUse, starts, ends, values, coverages, strands, contexts, entryid);
+            write_dm(ifp, regions[i], outfileF, outformat, ofp, chromsUse, starts, ends, values, coverages, strands, contexts, entryid, 0);
         }
         //free mem
         for(i =0; i < MAX_LINE_PRINT; i++){
@@ -3546,6 +3548,8 @@ int main_view(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outformat
                         if(Nprint>10000) {
                             fprintf(outfileF,"%s",pszBuf);
                             Nprint = 0;
+                            pszBuf[0] = '\0';
+                            tempstore = pszBuf;
                         }
                     }
                 }
