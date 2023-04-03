@@ -67,9 +67,10 @@ const char *strand_str[] = {"+", "-", "."};
 const char *context_str[] = {"C", "CG", "CHG", "CHH"};
 int bm_overlap_all(char *inbmF1, char *inbmF2, int n1, int n2, uint8_t pstrand, vector<PvalLocus> &pvals, unsigned long &NcountC, float Pcutoff, float methdiff, char *filtercontext);
 int bm_overlap_all_mul(char *inbmFs, uint8_t pstrand);
-int bm_overlap_all_mul_sep(char *inbmFs1, char *inbmFs2, uint8_t pstrand, vector<PvalLocus> &pvals, unsigned long &NcountC, float Pcutoff, float methdiff, char* filtercontext);
+int bm_overlap_all_mul_sep(char *inbmFs1, char *inbmFs2, uint8_t pstrand, vector<PvalLocus> &pvals, unsigned long &NcountC, float Pcutoff, float methdiff, char* filtercontext, int processAll);
 int bm_overlap_mul(binaMethFile_t **ifp1s, int sizeifp, char *chrom, int start, int end, uint8_t strand, int Nsample1);
 int bm_overlap_mul_calp(binaMethFile_t **ifp1s, int sizeifp, char *chrom, int start, int end, uint8_t strand, int Nsample1, Regression &full_regression, Regression &null_regression, vector<PvalLocus> &pvals, unsigned long &NcountC, float Pcutoff, float methdiff, unsigned long chrom_offset, char* filtercontext);
+int bm_overlap_mul_calp_add(binaMethFile_t **ifp1s, int sizeifp, char *chrom, int start, int end, uint8_t strand, int Nsample1, Regression &full_regression, Regression &null_regression, vector<PvalLocus> &pvals, unsigned long &NcountC, float Pcutoff, float methdiff, unsigned long chrom_offset, char* filtercontext);
 int bm_overlap(binaMethFile_t *ifp1, binaMethFile_t *ifp2, char *chrom, int start, int end, uint8_t strand,vector<PvalLocus> &loci,
     unsigned long &NcountC, float Pcutoff, float methdiff, unsigned long chrom_offset, char* filtercontext);
 void adjust(vector<PvalLocus> &loci, unsigned long NcountC);
@@ -95,6 +96,7 @@ const char* Help_String="dmDMR [options] -p <prefix of result> -1 [Sample1-methd
                 "\t--methdiff    the cutoff of methylation differention. default: 0.25 [CpG]\n"
                 "\t--element     caculate gene or TE etc function elements.\n"
                 "\t--context     Context for DM. C/CG/CHG/CHH, [C]\n"
+                "\t--dmall       Process all sites, not only full samples sites, only valid while with replicates. [0/1], default: 1"
                 //"\t-L           predefinded regions or loci.\n"
                 "\t-h|--help";
 int main(int argc, char *argv[]) {
@@ -114,6 +116,7 @@ int main(int argc, char *argv[]) {
     strcpy(mrformat, "methratio");
     char *filtercontext = (char *)malloc(10);
     strcpy(filtercontext, "C");
+    int processAll = 0;
 
     string dmc_outfile;
     string dmr_outfile;
@@ -155,6 +158,8 @@ int main(int argc, char *argv[]) {
             inbm_mul = 1;
         }else if(strcmp(argv[i], "-2") == 0){
             strcpy(bmfile2, argv[++i]);
+        }else if(strcmp(argv[i], "--dmall") == 0){
+            processAll=atoi(argv[++i]);
         }else if(strcmp(argv[i], "--pvalue") == 0){
             Pcutoff = atof(argv[++i]);
         }else if(strcmp(argv[i], "--fdr") == 0){
@@ -182,7 +187,7 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "start overlap and calculate p-value for cytosine site with cutoff %f %f %f\n", Pcutoff, fdr_cutoff, methdiff);
         if(checkcomma(inbmfile) || checkcomma(bmfile2)){
             fprintf(stderr, "with replication, run beta-bionormal test\n");
-            bm_overlap_all_mul_sep(inbmfile, bmfile2, pstrand, pvals, NcountC, Pcutoff, methdiff, filtercontext);
+            bm_overlap_all_mul_sep(inbmfile, bmfile2, pstrand, pvals, NcountC, Pcutoff, methdiff, filtercontext, processAll);
         }else{
             fprintf(stderr, "without replication, run p-value test\n");
             bm_overlap_all(inbmfile, bmfile2, 1, 1, pstrand, pvals, NcountC, Pcutoff, methdiff, filtercontext);
@@ -211,7 +216,7 @@ int checkcomma(char* inbmfiles) {
     return 0;
 }
 
-int bm_overlap_all_mul_sep(char *inbmFs1, char *inbmFs2, uint8_t pstrand, vector<PvalLocus> &pvals, unsigned long &NcountC, float Pcutoff, float methdiff, char* filtercontext){
+int bm_overlap_all_mul_sep(char *inbmFs1, char *inbmFs2, uint8_t pstrand, vector<PvalLocus> &pvals, unsigned long &NcountC, float Pcutoff, float methdiff, char* filtercontext, int processAll){
     int Nsample1 = 0;
     char *substr= strtok(inbmFs1, ",");
     char infiles[1000][200] = {""};
@@ -281,8 +286,12 @@ int bm_overlap_all_mul_sep(char *inbmFs1, char *inbmFs2, uint8_t pstrand, vector
             if(end>len){
                 end = len;
             }
-            fprintf(stderr, "processing %s:%d-%d\n", chrom, start, end);
-            bm_overlap_mul_calp(ifps, sizeifp, chrom, start, end, pstrand, Nsample1, full_regression, null_regression, pvals, NcountC, Pcutoff, methdiff, chrom_offset, filtercontext);
+            // fprintf(stderr, "processing %s:%d-%d\n", chrom, start, end);
+            if(processAll == 0){
+                bm_overlap_mul_calp(ifps, sizeifp, chrom, start, end, pstrand, Nsample1, full_regression, null_regression, pvals, NcountC, Pcutoff, methdiff, chrom_offset, filtercontext);
+            }else{
+                bm_overlap_mul_calp_add(ifps, sizeifp, chrom, start, end, pstrand, Nsample1, full_regression, null_regression, pvals, NcountC, Pcutoff, methdiff, chrom_offset, filtercontext);
+            }
             start += SEGlen;
             end += SEGlen;
         }
@@ -510,7 +519,7 @@ int bm_overlap_mul_calp(binaMethFile_t **ifp1s, int sizeifp, char *chrom, int st
     int slen = 1, i =0, j = 0;
     int* countM = (int *)malloc(sizeof(int)*(end-start+1));
     memset(countM, 0, sizeof(int)*(end-start+1)); // init 0
-    
+
     //sscanf((const char *)regions[i], "%s:%d-%d", chrom, &start, &end);
     if(DEBUG>1) fprintf(stderr, "slen %d %d chrom %s %d %d %d", slen, i, chrom, start, end, slen);
     int total = 0, loci = 0;
@@ -547,7 +556,8 @@ int bm_overlap_mul_calp(binaMethFile_t **ifp1s, int sizeifp, char *chrom, int st
         }
         bmDestroyOverlappingIntervals(o1);
     }
-    if(total == 0){
+
+    if(total == 0) {
         free(countM);
         return 0;
     }
@@ -591,7 +601,7 @@ int bm_overlap_mul_calp(binaMethFile_t **ifp1s, int sizeifp, char *chrom, int st
                         sprintf(tempchar,"\t%f", o1->value[j]);
                         strcat(printmr[loci], tempchar);
                     }
-                    
+
                     if(i==sizeifp-1){ // last i
                         if(ifp1s[i]->hdr->version & BM_ID){
                             sprintf(tempchar,"\t%s", o1->entryid[j]);
@@ -612,7 +622,7 @@ int bm_overlap_mul_calp(binaMethFile_t **ifp1s, int sizeifp, char *chrom, int st
     int nsamples=0;
     for(i=0;i<end-start+1;i++){
         if(countM[i] == sizeifp){ // print merge results
-            if(Nsample1 == 0) printf("%s\n",printmr[i]);
+            if(Nsample1 == 0) printf("%s\n",printmr[i]); //only print merged sites
             else {
                 //chr1    1958197 CG  -   6   8   6   8   0   5   0   5
                 istringstream row_stream(printmr[i]);
@@ -694,7 +704,280 @@ int bm_overlap_mul_calp(binaMethFile_t **ifp1s, int sizeifp, char *chrom, int st
     free(printmr);
     free(countM);
     return 0;
-    
+}
+
+int bm_overlap_mul_calp_add(binaMethFile_t **ifp1s, int sizeifp, char *chrom, int start, int end, uint8_t strand, int Nsample1, Regression &full_regression, Regression &null_regression, vector<PvalLocus> &pvals, unsigned long &NcountC, \
+    float Pcutoff, float methdiff, unsigned long chrom_offset, char *filtercontext){
+
+//    bmOverlappingIntervals_t *o1;
+    //fprintf(stderr, "process region %s %d %d\n", chrom, start, end);
+    int slen = 1, i =0, j = 0;
+    int* countM = (int *)malloc(sizeof(int)*(end-start+1));
+    memset(countM, 0, sizeof(int)*(end-start+1)); // init 0
+
+    int* countM_s1 = (int *)malloc(sizeof(int)*(end-start+1));
+    memset(countM_s1, 0, sizeof(int)*(end-start+1));
+
+    //sscanf((const char *)regions[i], "%s:%d-%d", chrom, &start, &end);
+    if(DEBUG>1) fprintf(stderr, "slen %d %d chrom %s %d %d %d", slen, i, chrom, start, end, slen);
+    int total = 0, loci = 0, total_s =0;
+    for(i=0;i<sizeifp;i++){
+        bmOverlappingIntervals_t *o1;
+        o1 = bmGetOverlappingIntervals(ifp1s[i], chrom, start, end+1);
+        if(!o1) {
+            fprintf(stderr, "Received an error somewhere!\n");
+            return -1;
+        };
+        //fprintf(stderr, "--- version --- %d\n", ifp1->hdr->version);
+        if(o1->l) {
+            for(j=0; j<o1->l; j++) {
+                loci = o1->start[j]-start;
+                if(strand!=2){
+                    if(ifp1s[i]->hdr->version & BM_STRAND){
+                        if(strand != o1->strand[j]){
+                            continue;
+                        }
+                    }
+                }
+                if(strcmp(filtercontext, "C")!=0){
+                    if(ifp1s[i]->hdr->version & BM_CONTEXT){
+                        if(strcmp(filtercontext, context_str[o1->context[j]])!=0){
+                            continue;
+                        }
+                    }
+                }
+                countM[loci]++;
+                if(i<Nsample1) { // only count the number of sample1
+                    countM_s1[loci]++;
+                }
+                if(countM[loci] == sizeifp){
+                    total++;
+                }
+                if(countM_s1[loci]>0 && countM[loci]-countM_s1[loci]>0) {
+                    total_s++;
+                }
+            }
+        }
+        bmDestroyOverlappingIntervals(o1);
+    }
+
+    //if(total>0) fprintf(stderr,"%d %d\n", total, total_s);
+    if(total == 0 && total_s == 0){
+        free(countM);
+        return 0;
+    }
+
+    char **printmr = (char **)malloc(sizeof(char*)*(end-start+1));
+    for(i=0;i<end-start+1;i++){
+        printmr[i] = (char *)malloc(200+sizeifp*20);
+    }
+    char *tempchar = (char *)malloc(20);
+    double pval = 0;
+
+    int* countC1s = (int *)malloc(sizeof(int)*(end-start+1));
+    memset(countC1s, 0, sizeof(int)*(end-start+1));
+    int* coverC1s = (int *)malloc(sizeof(int)*(end-start+1));
+    memset(coverC1s, 0, sizeof(int)*(end-start+1));
+
+    int* countC2s = (int *)malloc(sizeof(int)*(end-start+1));
+    memset(countC2s, 0, sizeof(int)*(end-start+1));
+    int* coverC2s = (int *)malloc(sizeof(int)*(end-start+1));
+    memset(coverC2s, 0, sizeof(int)*(end-start+1));
+
+    char* contexts = (char *)malloc(sizeof(char)*(end-start+1));
+    memset(contexts, 0, sizeof(char)*(end-start+1));
+    int* locis = (int *)malloc(sizeof(int)*(end-start+1));
+    memset(locis, 0, sizeof(int)*(end-start+1));
+    char* strands = (char *)malloc(sizeof(int)*(end-start+1));
+    memset(strands, 0, sizeof(char)*(end-start+1));
+
+    for(i=0;i<sizeifp;i++){
+        bmOverlappingIntervals_t *o1;
+        o1 = bmGetOverlappingIntervals(ifp1s[i], chrom, start, end+1);
+        if(!o1) {
+            fprintf(stderr, "Received an error somewhere!\n");
+            return -1;
+        };
+        if(o1->l){
+            for(j=0; j<o1->l; j++) {
+                loci = o1->start[j]-start;
+                if(countM[loci] == sizeifp){
+                    if(i == 0){ // file idx, file 0
+                        sprintf(printmr[loci],"%s\t%ld", chrom, o1->start[j]);
+                        if(ifp1s[i]->hdr->version & BM_CONTEXT){
+                            sprintf(tempchar,"\t%s", context_str[o1->context[j]]);
+                            strcat(printmr[loci], tempchar);
+                        }
+                        if(ifp1s[i]->hdr->version & BM_STRAND){
+                            sprintf(tempchar,"\t%s", strand_str[o1->strand[j]]);
+                            strcat(printmr[loci], tempchar);
+                        }
+                    }
+
+                    if(ifp1s[i]->hdr->version & BM_COVER){
+                        sprintf(tempchar,"\t%d", (int)((double)o1->value[j]*o1->coverage[j] + 0.5));
+                        strcat(printmr[loci], tempchar);
+                        sprintf(tempchar,"\t%u", o1->coverage[j]);
+                        strcat(printmr[loci], tempchar);
+                    }else{
+                        sprintf(tempchar,"\t%f", o1->value[j]);
+                        strcat(printmr[loci], tempchar);
+                    }
+
+                    if(i==sizeifp-1){ // last i
+                        if(ifp1s[i]->hdr->version & BM_ID){
+                            sprintf(tempchar,"\t%s", o1->entryid[j]);
+                            strcat(printmr[loci], tempchar);
+                        }
+                    }
+                }else if(countM_s1[loci]>0 && countM[loci]-countM_s1[loci]>0) { //sample1 and sample2 have cover in this site
+                    if(coverC1s[loci] == 0){ // file idx, file 0
+                        contexts[loci] = o1->context[j];
+                        locis[loci] = o1->start[j];
+                        strands[loci] = o1->strand[j];
+                        //plocus.name=o1->entryid[j];
+                    }
+                    if(i<Nsample1) { //sample1
+                        countC1s[loci] += (int)((double)o1->value[j]*o1->coverage[j] + 0.5);
+                        coverC1s[loci] += o1->coverage[j];
+                    }else{
+                        countC2s[loci] += (int)((double)o1->value[j]*o1->coverage[j] + 0.5);
+                        coverC2s[loci] += o1->coverage[j];
+                    }
+                }
+            }
+
+        }
+        bmDestroyOverlappingIntervals(o1);
+    }
+
+    full_regression.props.chrom.clear();
+    full_regression.props.chrom = chrom;
+    string chromtmp = "";
+    int nsamples=0;
+    unsigned int countC1=0, cover1=0, countC2=0, cover2=0;
+    for(i=0;i<end-start+1;i++){
+        if(countM[i] == sizeifp){ // print merge results
+            if(Nsample1 == 0) printf("%s\n",printmr[i]); //only print merged sites
+            else {
+                //chr1    1958197 CG  -   6   8   6   8   0   5   0   5
+                istringstream row_stream(printmr[i]);
+                full_regression.props.position = 0;
+                full_regression.props.strand.clear();
+                full_regression.props.context.clear();
+                full_regression.props.meth.clear();
+                full_regression.props.total.clear();
+                full_regression.props.name.clear();
+
+                row_stream >> chromtmp;
+                row_stream >> full_regression.props.position;
+                row_stream >> full_regression.props.context;
+                row_stream >> full_regression.props.strand;
+
+                size_t total_count, meth_count;
+                countC1=0, cover1=0, countC2=0, cover2=0;
+                nsamples=0;
+                while (row_stream >> meth_count >> total_count ) {
+                    full_regression.props.total.push_back(total_count);
+                    full_regression.props.meth.push_back(meth_count);
+                    nsamples++;
+                    if(nsamples <= Nsample1){
+                        countC1 += meth_count;
+                        cover1 += total_count;
+                    }else{
+                        countC2 += meth_count;
+                        cover2 += total_count;
+                    }
+                }
+                //printf("%d %d %d %d %d\n", i, meth_count, total_count, meth_count, total_count);
+                if(geneid) { row_stream >> full_regression.props.name;}
+
+                //cal p-value
+                double meth_diff=fabs(double(countC1)/cover1 - double(countC2)/cover2);
+                if(meth_diff>=methdiff) {
+                    fit(full_regression);
+                    null_regression.props = full_regression.props;
+                    fit(null_regression);
+                    pval = loglikratio_test(null_regression.max_loglik, full_regression.max_loglik);
+                }else {
+                    pval = 1;
+                    NcountC++;
+                    continue;
+                }
+
+                // If error occured in the fitting algorithm (i.e. p-val is nan or -nan).
+                pval= ( (pval != pval) ? -1 : pval);
+                //fprintf(stderr, "%s %d %s %f\n", chrom, full_regression.props.position, full_regression.props.context.c_str(), pval);
+                if(meth_diff>=methdiff && pval<=Pcutoff){
+                    PvalLocus plocus;
+                    plocus.raw_pval = pval;
+                    plocus.coverage_factor=cover1;
+                    plocus.meth_factor=countC1;
+                    plocus.coverage_rest=cover2;
+                    plocus.meth_rest=countC2;
+                    plocus.chrom=chrom;
+                    plocus.context=full_regression.props.context;
+                    plocus.position=full_regression.props.position;
+                    plocus.sign=full_regression.props.strand;
+                    if(geneid)
+                        plocus.name=full_regression.props.name;
+                    else
+                        plocus.name="";
+                    plocus.pos = chrom_offset + 1 + plocus.position;
+                    pvals.push_back(plocus);
+                }
+                NcountC++;
+            }
+        }else if(countM_s1[i]>0 && countM[i]-countM_s1[i]>0) {
+            countC1 = countC1s[i];
+            cover1 = coverC1s[i];
+            countC2 = countC2s[i];
+            cover2 = coverC2s[i];
+            double meth_diff=fabs(double(countC1)/cover1 - double(countC2)/cover2);
+            double pval = 1;
+            if(meth_diff>=methdiff)
+                pval = fishers_exact(countC1,cover1,countC2,cover2);
+
+            if(pval>1 || pval<0) pval=1;
+
+            if(meth_diff>=methdiff && pval<=Pcutoff){
+                PvalLocus plocus;
+                plocus.raw_pval = pval;
+                plocus.coverage_factor=cover1;
+                plocus.meth_factor=countC1;
+                plocus.coverage_rest=cover2;
+                plocus.meth_rest=countC2;
+                plocus.chrom=chrom;
+                plocus.context=context_str[contexts[i]];
+                plocus.position=locis[i];
+                plocus.sign=strand_str[strands[i]];
+                //if(ifp1->hdr->version & BM_ID)
+                //    plocus.name=o1->entryid[j];
+                //else
+                    plocus.name="";
+                plocus.pos = chrom_offset + 1 + plocus.position;
+                //meth_diff = fabs(meth_diff);
+                //#pragma omp critical
+                pvals.push_back(plocus);
+            }
+            //#pragma omp critical
+            if(meth_diff>=methdiff)
+                NcountC++;
+        }
+    }
+
+    //free(chrom);
+    //bmDestroyOverlappingIntervals(o1);
+    for(i=0;i<end-start+1;i++){
+        free(printmr[i]);
+    }
+    free(tempchar);
+    free(printmr);
+    free(countM);
+    free(countM_s1);
+    free(countC1s); free(coverC1s); free(countC2s); free(coverC2s);
+    free(contexts); free(strands); free(locis);
+    return 0;
 }
 
 int bm_overlap_mul(binaMethFile_t **ifp1s, int sizeifp, char *chrom, int start, int end, uint8_t strand, int Nsample1){

@@ -1,0 +1,6 @@
+#DMplotcor --outFileCorMatrix
+	'aza_rep1'	'aza_rep2'	'wt_rep1'	'wt_rep2'
+'aza_rep1'	1.0000	0.9836	0.9613	0.9625
+'aza_rep2'	0.9836	1.0000	0.9649	0.9659
+'wt_rep1'	0.9613	0.9649	1.0000	0.9931
+'wt_rep2'	0.9625	0.9659	0.9931	1.0000

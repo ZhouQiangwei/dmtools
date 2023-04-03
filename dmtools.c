@@ -29,6 +29,8 @@ FILE* File_Open(const char* File_Name,const char* Mode);
 char *strand_str[] = {"+", "-", "."};
 char *context_str[] = {"C", "CG", "CHG", "CHH"};
 int main_view_all(binaMethFile_t *fp, FILE* outfileF, char *outformat, binaMethFile_t *ofp, char* filterchrom);
+void printchrmeth(binaMethFile_t *bm, char* chrom, FILE* outfileF);
+void printchrmeth_bsrate(binaMethFile_t *bm, char* chrom, FILE* outfileF, float *bsrate, int *bscount);
 int main_view(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outformat, binaMethFile_t *ofp);
 int main_view_bedfile(char *inbmF, char *bedfile, int type, FILE* outfileF, char *outformat, binaMethFile_t *ofp);
 int calchromstats(char *inbmfile, char *method, int chromstep, int stepoverlap, uint8_t strand, uint8_t context, FILE* outfileF, FILE* outfileF_c, FILE* outfileF_cg, FILE* outfileF_chg, FILE* outfileF_chh);
@@ -67,16 +69,18 @@ int main_view_bm(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outfor
 #define MAX_BUFF_PRINT 20000000
 const char* Help_String_main="Command Format :  dmtools <mode> [opnions]\n"
 		"\nUsage:\n"
-        "\t  [mode]         bam2dm mr2dm view viewheader overlap regionstats bodystats profile chromstats\n\n"
+        "\t  [mode]         bam2dm mr2dm view ebsrate viewheader overlap regionstats bodystats profile chromstats\n\n"
         "\t  bam2dm         calculate DNA methylation (BM format) with BAM file\n"
         "\t  mr2dm          convert txt meth file to dm format\n"
         "\t  view           dm format to txt/dm meth\n"
+        "\t  ebsrate        estimate bisulfite conversion rate\n"
         "\t  viewheader     view header of dm file\n"
         "\t  overlap        overlap cytosine site with more than two dm files\n"
         "\t  regionstats    calculate DNA methylation level of per region\n"
         "\t  bodystats      calculate DNA methylation level of body, upstream and downstream.\n"
         "\t  profile        calculate DNA methylation profile\n"
         "\t  chromstats     calculate DNA methylation level across chromosome\n"
+        "\t  chrmeth        calculate DNA methylation level of chromosomes\n"
         "\t  addzm          add or change zoom levels for dm format, need for browser visulization\n"
         "\t  stats          coverage and methylation level distribution of data\n";
 
@@ -183,6 +187,23 @@ const char* Help_String_viewheader="Command Format :  dmtools viewheader -i meth
         "\t [view] mode paramaters, required\n"
         "\t-i                    input DM file\n"
 		"\t-h|--help";
+
+const char* Help_String_bscr="Command Format :  dmtools ebsrate -i meth.dm\n"
+        "\nUsage:\n"
+        "\t [view] mode paramaters, required\n"
+        "\t-i                    input DM file\n"
+        "\t-o                    output file\n"
+        "\t--bsmode              chh or chr mode, suggest chh for human, mouse etc.\n"
+        "\t--chr                 chromosome used for calculate bisulfite convertion rate, default, chrM and chrC\n"
+        "\t-h|--help";
+
+const char* Help_String_chrmeth="Command Format :  dmtools chrmeth -i meth.dm\n"
+        "\nUsage:\n"
+        "\t [view] mode paramaters, required\n"
+        "\t-i                    input DM file\n"
+        "\t-o                    output file\n"
+        "\t--chr                 chromosome for cal.\n, default, all"
+        "\t-h|--help";
 
 const char* Help_String_overlap="Command Format :  dmtools overlap [opnions] -i meth1.dm -i2 meth2.dm\n"
 		"\nUsage:\n"
@@ -343,6 +364,7 @@ int main(int argc, char *argv[]) {
     char *profilemode_str = malloc(sizeof(char)*10);
     double bodyX = 1; // N times of bin size for gene body
     int matrixX = 5; int print2one = 0; // print all matrix to one file.
+    char* bsrmode = NULL;
     if(argc>3){
         strcpy(mode, argv[1]);
         // mr2bam view overlap region
@@ -357,6 +379,10 @@ int main(int argc, char *argv[]) {
            fprintf(stderr, "%s\n", Help_String_stats);
         }else if(strcmp(mode, "viewheader") == 0){
            fprintf(stderr, "%s\n", Help_String_viewheader); 
+        }else if(strcmp(mode, "ebsrate") == 0){
+           fprintf(stderr, "%s\n", Help_String_bscr);
+        }else if(strcmp(mode, "chrmeth") == 0){
+           fprintf(stderr, "%s\n", Help_String_chrmeth);
         }else if(strcmp(mode, "overlap") == 0){
            fprintf(stderr, "%s\n", Help_String_overlap); 
         }else if(strcmp(mode, "regionstats") == 0){
@@ -436,6 +462,9 @@ int main(int argc, char *argv[]) {
             }else if(strcmp(argv[i], "--chrom") == 0 || strcmp(argv[i], "--chr") == 0){
                 filterchrom = malloc(200);
                 strcpy(filterchrom, argv[++i]);
+            }else if(strcmp(argv[i], "--bsmode") == 0){
+                bsrmode = malloc(100);
+                strcpy(bsrmode, argv[++i]);
             }else if(strcmp(argv[i], "--stepmove") == 0){
                 stepoverlap = atoi(argv[++i]);
             }else if(strcmp(argv[i], "-p") == 0){
@@ -1013,10 +1042,68 @@ int main(int argc, char *argv[]) {
         return 0;
     }
 
+    if(strcmp(mode, "ebsrate")==0 || strcmp(mode, "chrmeth")==0){
+        if(strcmp(mode, "ebsrate")==0) {
+            fprintf(stderr, "dm bs-c-rate\n");
+            if(bsrmode == NULL) {
+                bsrmode = malloc(100);
+                strcpy(bsrmode, "chr");
+            }
+        }
+        if(strcmp(mode, "chrmeth")==0) fprintf(stderr, "dm chrom meth\n");
+        FILE *outfp_mean;
+        if(outfile) {
+            outfp_mean = File_Open(outfile,"w");
+            free(outfile);
+        }else {
+            outfp_mean = stdout;
+        }
+        uint32_t type = BMtype(inbmfile, NULL);
+        binaMethFile_t *ifp = NULL;
+        ifp = bmOpen(inbmfile, NULL, "r");
+        ifp->type = ifp->hdr->version;
+        if(strcmp(mode, "ebsrate") == 0) {
+            float bsrate = 0; int bscount = 0;
+            fprintf(outfp_mean, "##bs rate calculated by %s\n", bsrmode);
+            if(strcmp(bsrmode, "chh") == 0) {
+                fprintf(stderr, "ebsrate chh mode\n");
+                calchh(ifp, outfp_mean);
+            }else if(filterchrom == NULL) {
+                fprintf(stderr, "ebsrate chr mode\n");
+                printchrmeth_bsrate(ifp, "chrM", outfp_mean, &bsrate, &bscount);
+                printchrmeth_bsrate(ifp, "ChrM", outfp_mean, &bsrate, &bscount);
+                if(bscount>0) {
+                    fprintf(outfp_mean, "##estimated bs rate by chrM level\n");
+                    fprintf(outfp_mean, "bsrate\t%f\n", bsrate/bscount);
+                }
+                bsrate = 0; bscount = 0;
+                printchrmeth_bsrate(ifp, "chrC", outfp_mean, &bsrate, &bscount);
+                printchrmeth_bsrate(ifp, "ChrC", outfp_mean, &bsrate, &bscount);
+                if(bscount>0) {
+                    fprintf(outfp_mean, "##estimated bs rate by chrC level\n");
+                    fprintf(outfp_mean, "bsrate\t%f\n", bsrate/bscount);
+                }
+            }else{
+                fprintf(stderr, "ebsrate chr %s mode\n", filterchrom);
+                printchrmeth_bsrate(ifp, filterchrom, outfp_mean, &bsrate, &bscount);
+                fprintf(outfp_mean, "##estimated bs rate by %s level\n", filterchrom);
+                fprintf(outfp_mean, "bsrate\t%f\n", bsrate/bscount);
+            }
+            free(bsrmode);
+        }else {
+            printchrmeth(ifp, filterchrom, outfp_mean);
+        }
+        free(inbmfile);
+        bmClose(ifp);
+        if(filterchrom) free(filterchrom);
+        fclose(outfp_mean);
+        return 0;
+    }
+
     //overlap
     if(strcmp(mode, "overlap")==0){
-        fprintf(stderr, "[Mode] ------------- overlap %s %s\n", inbmfile, bmfile2);
         if(inbm_mul == 1){
+            fprintf(stderr, "[Mode] ------------- overlap %s\n", inbmfiles);
             if(!region && !bedfile){
                 bm_overlap_all_mul(inbmfiles, filter_strand);
             }else if(region){
@@ -1030,6 +1117,7 @@ int main(int argc, char *argv[]) {
             }
             free(inbmfiles); 
         }else{
+            fprintf(stderr, "[Mode] ------------- overlap %s %s\n", inbmfile, bmfile2);
             if(!region && !bedfile){
                 bm_overlap_all(inbmfile, bmfile2, 1, 1, filter_strand);
             }else if(region){
@@ -1214,7 +1302,8 @@ int main(int argc, char *argv[]) {
         if(printcoverage == 0) {
             if(outfile) {
                 char* outfile_aver_temp = malloc(sizeof(char)*200);
-                strcpy(outfile_aver_temp, outfile); strcat(outfile_aver_temp, ".chrom");
+                strcpy(outfile_aver_temp, outfile);
+                //strcat(outfile_aver_temp, ".chrom");
                 outfp_mean = File_Open(outfile_aver_temp,"w");
                 free(outfile_aver_temp);
             }else {
@@ -1225,7 +1314,7 @@ int main(int argc, char *argv[]) {
         FILE *outfp, *outfp_cg, *outfp_chg, *outfp_chh;
         if(printcoverage>0) {
             if(outfile){
-                strcat(outfile , ".chrom.cover");
+                strcat(outfile , ".cover");
                 char* outfile_temp = malloc(sizeof(char)*200);
                 if(print2one != 0){ // dont write to one file
                     strcpy(outfile_temp, outfile);
@@ -2850,6 +2939,58 @@ void calregion_print(binaMethFile_t *fp, char* chrom, int start, int end, int sp
     free(print_context);
 }
 
+void calregion_print_bsrate(binaMethFile_t *fp, char* chrom, int start, int end, int splitN, char* method, int pstrand, int format, char* geneid, uint8_t context, char* strand, FILE* outfileF, float *bsrate, int* bscount){
+    int binsize = end-start;
+    double *stats = Sregionstats_array(fp, chrom, start, end, splitN, binsize, end-start, method, pstrand);
+    //int i = 0;
+    char* print_context = malloc(sizeof(char)*5);
+    getcontext(context, print_context);
+    if(stats) {
+        if(format == 1 || format == 2){ // gtf gff
+            if(context >= 4){
+                if(!isnan(stats[0])) { //C
+                    (*bsrate)+=stats[0]; (*bscount)++;
+                    fprintf(outfileF, "%s\t%d\t%d\t%f\tC\t%c\t%s\n", chrom, start, end, stats[0], strand[0], geneid);
+                }
+                if(!isnan(stats[1])) { //CG
+                    fprintf(outfileF, "%s\t%d\t%d\t%f\tCG\t%c\t%s\n", chrom, start, end, stats[1], strand[0], geneid);
+                }
+                if(!isnan(stats[2])) { //CHG
+                    fprintf(outfileF, "%s\t%d\t%d\t%f\tCHG\t%c\t%s\n", chrom, start, end, stats[2], strand[0], geneid);
+                }
+                if(!isnan(stats[3])) { //CHH
+                    fprintf(outfileF, "%s\t%d\t%d\t%f\tCHH\t%c\t%s\n", chrom, start, end, stats[3], strand[0], geneid);
+                }
+            }else if(!isnan(stats[context])) { //print_context
+                fprintf(outfileF, "%s\t%d\t%d\t%f\t%s\t%c\t%s\n", chrom, start, end, stats[context], print_context, strand[0], geneid);
+            }else if(alwaysprint == 1){
+                fprintf(outfileF, "%s\t%d\t%d\tNA\t%s\t%c\t%s\n", chrom, start, end, print_context, strand[0], geneid);
+            }
+        }else{ //bed or region
+            if(context >= 4){
+                if(!isnan(stats[0])) { //C
+                    (*bsrate)+=stats[0]; (*bscount)++;
+                    fprintf(outfileF, "%s\t%d\t%d\t%f\tC\t%c\n", chrom, start, end, stats[0], strand[0]);
+                }
+                if(!isnan(stats[1])) { //CG
+                    fprintf(outfileF, "%s\t%d\t%d\t%f\tCG\t%c\n", chrom, start, end, stats[1], strand[0]);
+                }
+                if(!isnan(stats[2])) { //CHG
+                    fprintf(outfileF, "%s\t%d\t%d\t%f\tCHG\t%c\n", chrom, start, end, stats[2], strand[0]);
+                }
+                if(!isnan(stats[3])) { //CHH
+                    fprintf(outfileF, "%s\t%d\t%d\t%f\tCHH\t%c\n", chrom, start, end, stats[3], strand[0]);
+                }
+            }else if(!isnan(stats[context])) { //print_context
+                fprintf(outfileF, "%s\t%d\t%d\t%f\t%s\t%c\n", chrom, start, end, stats[context], print_context, strand[0]);
+            }else if(alwaysprint == 1){
+                fprintf(outfileF, "%s\t%d\t%d\tNA\t%s\t%c\n", chrom, start, end, print_context, strand[0]);
+            }
+        }
+    }
+    free(print_context);
+}
+
 int calregionstats_file(char *inbmfile, char *method, char *bedfile, int format, uint8_t context, FILE* outfileF, FILE* outfileF_c, FILE* outfileF_cg, FILE* outfileF_chg, FILE* outfileF_chh){
     //open bm file
     uint32_t type = BMtype(inbmfile, NULL);
@@ -4302,4 +4443,79 @@ unsigned long get_chr_len(binaMethFile_t *bm, char* chrom){
         }
     }
     return chrlen;
+}
+
+void printchrmeth_bsrate(binaMethFile_t *bm, char* chrom, FILE* outfileF, float *bsrate, int *bscount){
+    int64_t i64;
+    unsigned long chrlen = 0;
+    //Chromosome idx/name/length
+    if(bm->cl) {
+        for(i64=0; i64<bm->cl->nKeys; i64++) {
+            //fprintf(stderr, "  %"PRIu64"\t%s\t%"PRIu32"\n", i64, bm->cl->chrom[i64], bm->cl->len[i64]);
+            if(chrom == NULL) {
+                calregion_print_bsrate(bm, bm->cl->chrom[i64], 0, bm->cl->len[i64], 1, "mean", 0, 0, "", 4, "+", outfileF, bsrate, bscount);
+                calregion_print_bsrate(bm, bm->cl->chrom[i64], 0, bm->cl->len[i64], 1, "mean", 1, 0, "", 4, "-", outfileF, bsrate, bscount);
+            }else if(strcmp(bm->cl->chrom[i64], chrom) == 0) {
+                chrlen = bm->cl->len[i64];
+                fprintf(stderr, "Chromosome List %s %ld\n", chrom, chrlen);
+                calregion_print_bsrate(bm, chrom, 0, chrlen, 1, "mean", 0, 0, "", 4, "+", outfileF, bsrate, bscount);
+                calregion_print_bsrate(bm, chrom, 0, chrlen, 1, "mean", 1, 0, "", 4, "-", outfileF, bsrate, bscount);
+            }
+        }
+    }
+    return;
+}
+
+void printchrmeth(binaMethFile_t *bm, char* chrom, FILE* outfileF){
+    int64_t i64;
+    unsigned long chrlen = 0;
+    //Chromosome idx/name/length
+    if(bm->cl) {
+        for(i64=0; i64<bm->cl->nKeys; i64++) {
+            //fprintf(stderr, "  %"PRIu64"\t%s\t%"PRIu32"\n", i64, bm->cl->chrom[i64], bm->cl->len[i64]);
+            if(chrom == NULL) {
+                calregion_print(bm, bm->cl->chrom[i64], 0, bm->cl->len[i64], 1, "mean", 0, 0, "", 4, "+", outfileF);
+                calregion_print(bm, bm->cl->chrom[i64], 0, bm->cl->len[i64], 1, "mean", 1, 0, "", 4, "-", outfileF);
+            }else if(strcmp(bm->cl->chrom[i64], chrom) == 0) {
+                chrlen = bm->cl->len[i64];
+                fprintf(stderr, "Chromosome List %s %ld\n", chrom, chrlen);
+                calregion_print(bm, chrom, 0, chrlen, 1, "mean", 0, 0, "", 4, "+", outfileF);
+                calregion_print(bm, chrom, 0, chrlen, 1, "mean", 1, 0, "", 4, "-", outfileF);
+            }
+        }
+    }
+    return;
+}
+
+void calchh(binaMethFile_t *bm, FILE* outfileF){
+    int64_t i64;
+    double meth_p = 0, meth_n = 0, meth = 0;
+    int Np = 0, Nn = 0;
+    //Chromosome idx/name/length
+    if(bm->cl) {
+        for(i64=0; i64<bm->cl->nKeys; i64++) {
+            //fprintf(stderr, "  %"PRIu64"\t%s\t%"PRIu32"\n", i64, bm->cl->chrom[i64], bm->cl->len[i64]);
+            double *stats_p = Sregionstats_array(bm, bm->cl->chrom[i64], 0, bm->cl->len[i64], 1, bm->cl->len[i64], bm->cl->len[i64], "mean", 0);
+            double *stats_n = Sregionstats_array(bm, bm->cl->chrom[i64], 0, bm->cl->len[i64], 1, bm->cl->len[i64], bm->cl->len[i64], "mean", 1);
+            //double *stats = Sregionstats_array(bm, bm->cl->chrom[i64], 0, bm->cl->len[i64], 1, bm->cl->len[i64], bm->cl->len[i64], "mean", 2);
+            if(!isnan(stats_p[3])) {
+                meth_p += stats_p[3];
+                Np++;
+            }
+            if(!isnan(stats_n[3])) {
+                meth_n += stats_n[3];
+                Nn++;
+            }
+            if(!isnan(stats_p[3]) && !isnan(stats_n[3])) {
+                fprintf(outfileF, "CHH\t%s\t%f\n", bm->cl->chrom[i64], (stats_p[3]+stats_n[3])/2);
+            }
+        }
+    }
+    fprintf(outfileF, "##CHH level in all chromosome\n");
+    fprintf(outfileF, "CHH\t+\t%f\n", meth_p/Np);
+    fprintf(outfileF, "CHH\t-\t%f\n", meth_n/Nn);
+    fprintf(outfileF, "CHH\t.\t%f\n", (meth_n+meth_p)/(Np+Nn));
+    fprintf(outfileF, "##estimated bs rate by CHH level in all chromosome\n");
+    fprintf(outfileF, "bsrate\t%f\n", (meth_n+meth_p)/(Np+Nn));
+    return;
 }
