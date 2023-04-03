@@ -1,9 +1,9 @@
 import argparse
 
 # 创建命令行参数解析器
-parser = argparse.ArgumentParser(description='统计FASTA格式的基因组文件中C和G的数量。')
+parser = argparse.ArgumentParser(description='Count the number of C and G in the FASTA format genome file')
 parser.add_argument('filename', metavar='FILENAME', type=str,
-                    help='要统计的基因组文件名')
+                    help='genome file path')
 
 # 解析命令行参数
 args = parser.parse_args()
@@ -26,5 +26,5 @@ with open(args.filename, 'r') as file:
     count_cg = count_c + count_g
 
 # 打印结果
-print(f'基因组中包含 {count_c} 个C和 {count_g} 个G, {count_cg}')
+print(f'{count_c} C, {count_g} G and {count_cg} CG in genome')
 
