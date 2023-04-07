@@ -102,6 +102,13 @@ def plot_correlation_args():
                           action='store_true',
                           required=False)
 
+    optional.add_argument('--skipOnes',
+                          help='By setting this option, genomic regions '
+                          'that have DNA methylation 100 percentage values in all samples '
+                          'are excluded.',
+                          action='store_true',
+                          required=False)
+
     optional.add_argument('--labels', '-l',
                           metavar='sample1 sample2',
                           help='User defined labels instead of default labels from '
@@ -229,6 +236,7 @@ if __name__ == "__main__":
                        labels=args.labels,
                        remove_outliers=args.removeOutliers,
                        skip_zeros=args.skipZeros,
+                       skip_ones=args.skipOnes,
                        context=args.context)
 
     if args.corMethod == 'pearson':

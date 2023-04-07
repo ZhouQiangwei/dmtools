@@ -357,7 +357,7 @@ int main(int argc, char *argv[]) {
     double profilestep = 0.02, profilemovestep = 0.01; int defineprofilemovestep = 0;
     double bodyprofilestep = 0.02, bodyprofilemovestep = 0.01;
     unsigned int mcover_cutoff = 4; unsigned long TotalC = 0;
-    int zoomlevel = 2;
+    int zoomlevel = 0;
     char *sortY = malloc(10); strcpy(sortY, "Y");
     char* outfile = NULL;
     int profilemode = 0; //0 gene and flanks, 1 center and flanks, 2 tss and flanks
@@ -409,7 +409,7 @@ int main(int argc, char *argv[]) {
     }
     char bam2bm_paras[1024];
     if(strcmp(mode, "bam2dm") == 0){
-        for(i=1; i< argc; i++){
+        for(i=2; i< argc; i++){
             strcat(bam2bm_paras, argv[i]);
             strcat(bam2bm_paras, " ");
         }
@@ -563,6 +563,7 @@ int main(int argc, char *argv[]) {
         char abspathtmp[1024];
         get_executable_path(abspathtmp, processname, sizeof(abspathtmp));
         char cmd[1024];
+        strcpy(cmd, abspathtmp);
         strcat(cmd, "bam2dm ");
         strcat(cmd, bam2bm_paras);
         onlyexecuteCMD(cmd, Help_String_bam2dm);
