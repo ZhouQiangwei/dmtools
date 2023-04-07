@@ -176,13 +176,13 @@ int main(int argc, char* argv[])
 {
 	time_t Start_Time,End_Time;
 	
-	const char* Help_String="Command Format :  bmtools bam2bm [options] -g genome.fa -i/-b <SamfileSorted/BamfileSorted> -m <methratio bm outfile prefix>\n"
-		"\nUsage: bmtools bam2bm -g genome.fa -b align.sort.bam -m meth.bm\n"
-        "\t [bam2bm] mode paramaters, required\n"
+	const char* Help_String="Command Format :  dmtools bam2dm [options] -g genome.fa -i/-b <SamfileSorted/BamfileSorted> -m <methratio dm outfile prefix>\n"
+		"\nUsage: dmtools bam2dm -g genome.fa -b align.sort.bam -m meth.dm\n"
+        "\t [bam2dm] mode paramaters, required\n"
 		"\t-g|--genome           genome fasta file\n"
 		"\t-b|--binput           Bam format file, sorted by chrom.\n"
-        "\t-m|--methratio        Prefix of methratio.bm output file\n"
-		"\t [bam2bm] mode paramaters, options\n"
+        "\t-m|--methratio        Prefix of methratio.dm output file\n"
+		"\t [bam2dm] mode paramaters, options\n"
         "\t-n|--Nmismatch        Number of mismatches, default 0.06 percentage of read length. [0-1]\n"
 		"\t-Q                    caculate the methratio while read QulityScore >= Q. default:20\n"
 		"\t-c|--coverage         >= <INT> coverage. default:4\n"
@@ -190,7 +190,7 @@ int main(int argc, char* argv[])
 		"\t-nC		             >= <INT> nCs per region. default:1\n"
 		"\t-r|--remove_dup       REMOVE_DUP, default:false\n"
         "\t--mrtxt               print prefix.methratio.txt file\n"
-        "\t [BM format] paramaters\n"
+        "\t [DM format] paramaters\n"
         "\t-C                    print coverage\n"
         "\t-S                    print strand\n"
         "\t--Cx                  print context\n"
@@ -338,7 +338,7 @@ int main(int argc, char* argv[])
 	if(argc<=3) printf("%s \n",Help_String);
 	if (argc >3  && InFileStart) 
 	{
-		printf("\n[BatMeth2::calmeth] v2.0\n");
+		printf("\n[DMtools::calmeth] v1.0\n");
 		string log;
                 log=Prefix;
                 log+=".methlog.txt";
@@ -355,7 +355,7 @@ int main(int argc, char* argv[])
                 mCcatero=Prefix;
                 mCcatero+=".mCcatero.txt";
 
-		printf("[BM::calmeth] Coverage and validC: %d %d, %d\n", Mcoverage, maxcoverage, nCs);	
+		printf("[DM::calmeth] Coverage and validC: %d %d, %d\n", Mcoverage, maxcoverage, nCs);	
 		try
 		{
 			time(&Start_Time);
@@ -370,7 +370,7 @@ int main(int argc, char* argv[])
 			//string chrLenf=Geno;chrLenf+=".len"; //ann.location
 
 			FILE* GenomeFILE=File_Open(Geno.c_str(),"r");
-			printf("[BM::calmeth] Loading genome sequence : %s\n", Geno.c_str());
+			printf("[DM::calmeth] Loading genome sequence : %s\n", Geno.c_str());
 			ARGS args;
 			fseek(GenomeFILE, 0L, SEEK_END);off64_t Genome_Size=ftello64(GenomeFILE);rewind(GenomeFILE);//load original genome..
 			args.Org_Genome=new char[Genome_Size];if(!args.Org_Genome) throw("Insufficient memory to load genome..\n"); 
@@ -392,7 +392,7 @@ int main(int argc, char* argv[])
 				}
 				if(readBuffer[0] == '>') {
 					if(lines > 0) {
-						fprintf(stderr, "[BM::calmeth] loaded and store %s %d %d\n", chrName, chrlen, Genome_Count);
+						fprintf(stderr, "[DM::calmeth] loaded and store %s %d %d\n", chrName, chrlen, Genome_Count);
 						lines = 0;
 						if(longestChr < chrlen) longestChr = chrlen;
 
@@ -440,7 +440,7 @@ int main(int argc, char* argv[])
 				//fprintf(stderr, "%s\t%d\n", chrName, chrlen);
 			}
 
-			fprintf(stderr, "[BM::calmeth] len count GCcount %lld %d %ld\n", Genome_Size, Genome_Count, totalC+totalG);
+			fprintf(stderr, "[DM::calmeth] len count GCcount %lld %d %ld\n", Genome_Size, Genome_Count, totalC+totalG);
 			//exit(0);
 			//if(!fread(args.Org_Genome,Genome_Size,1,BINFILE)) throw ("Error reading file..\n");
 			if(REMOVE_DUP){
@@ -450,7 +450,7 @@ int main(int argc, char* argv[])
 			
 			args.OUTFILE = NULL;
 			assert(longestChr>0);
-			printf("[BM::calmeth] Longest chr: %d\n",longestChr);
+			printf("[DM::calmeth] Longest chr: %d\n",longestChr);
 			if(Sam && strcmp(Output_Name,"None") ) args.OUTFILE=File_Open(Output_Name,"w");
 
 			char* Split_Point=args.Org_Genome;//split and write...
@@ -499,16 +499,16 @@ int main(int argc, char* argv[])
 				}
 
 				fp = NULL;
-				methOutfileName=Prefix;methOutfileName+=".methratio.bm";
+				methOutfileName=Prefix;methOutfileName+=".methratio.dm";
 
 				if(bmInit(1<<17) != 0) {
-        		    fprintf(stderr, "Received an error in bmInit\n");
+        		    fprintf(stderr, "Received an error in dmInit\n");
 		            return 1;
         		}
 				fp = (binaMethFile_t*)bmOpen((char*)methOutfileName.data(), NULL, "w");
 	        	fp->type = write_type;
 				if(!fp) {
-					fprintf(stderr, "An error occurred while opening example_output.bm for writingn\n");
+					fprintf(stderr, "An error occurred while opening example_output.dm for writingn\n");
 					return 1;
 				}
 
@@ -536,7 +536,7 @@ int main(int argc, char* argv[])
 
 			for(int f=InFileStart;f<=InFileEnd;f++)
 			{
-				printf("[BM::calmeth] Processing %d out of %d. File: %s, %d\n\n", f-InFileStart+1,InFileEnd-InFileStart+1, argv[f], bamformat);
+				printf("[DM::calmeth] Processing %d out of %d. File: %s, %d\n\n", f-InFileStart+1,InFileEnd-InFileStart+1, argv[f], bamformat);
 				//fseek(args.INFILE, 0L, SEEK_END);args.File_Size=ftello64(args.INFILE);rewind(args.INFILE);
 				char s2t[BATBUF];
 				//if(args.OUTFILE!=NULL)
@@ -756,12 +756,12 @@ int main(int argc, char* argv[])
 				fprintf(ALIGNLOG, "Mapped_reverse\t%u\n", reverse_mapped);
 				fclose(ALIGNLOG);
 			}
-			fprintf(stderr, "[BM::calmeth] bm closing\n");
+			fprintf(stderr, "[DM::calmeth] dm closing\n");
         	bmClose(fp);
-    	    fprintf(stderr, "[BM::calmeth] bm closed\n");
+    	    fprintf(stderr, "[DM::calmeth] dm closed\n");
 	        bmCleanup();
 //delete
-			fprintf(stderr, "[BM::calmeth] Done and release memory!\n");
+			fprintf(stderr, "[DM::calmeth] Done and release memory!\n");
 			for(int i =0; i < MAX_CHROM; i++){
         	    free(chroms[i]);
     	    }
@@ -793,7 +793,7 @@ int main(int argc, char* argv[])
 			exit(-1);
 		}
 
-		time(&End_Time);printf("[BM::calmeth] Time Taken  - %.0lf Seconds ..\n ",difftime(End_Time,Start_Time));
+		time(&End_Time);printf("[DM::calmeth] Time Taken  - %.0lf Seconds ..\n ",difftime(End_Time,Start_Time));
 	
 	fclose(OUTLOG);
 	}
@@ -931,7 +931,7 @@ uint8_t *contexts;
 void print_meth_tofile(int genome_id, ARGS* args){
 	if(Methratio)
 	{
-		fprintf(stderr, "[BM::calmeth] Start process chrom %d\n", genome_id);
+		fprintf(stderr, "[DM::calmeth] Start process chrom %d\n", genome_id);
 		chromsUse = (char **)malloc(sizeof(char*)*MAX_LINE_PRINT);
 		//entryid = (char **)malloc(sizeof(char*)*MAX_LINE_PRINT);
 		//starts = (uint32_t *)malloc(sizeof(uint32_t) * MAX_LINE_PRINT);
@@ -942,7 +942,7 @@ void print_meth_tofile(int genome_id, ARGS* args){
 		strands = (uint8_t *)malloc(sizeof(uint8_t) * MAX_LINE_PRINT);
 		contexts = (uint8_t *)malloc(sizeof(uint8_t) * MAX_LINE_PRINT);
 		int printL = 0, chrprinHdr = 0;
-		fprintf(stderr, "[BM::calmeth] Processing chrom %d %d %d\n", genome_id, totalC, totalG);
+		fprintf(stderr, "[DM::calmeth] Processing chrom %d %d %d\n", genome_id, totalC, totalG);
 		//--------DMC---------------//
 		//
 		int plus_mCG=0,plus_mCHG=0,plus_mCHH=0;
@@ -1331,12 +1331,12 @@ void print_meth_tofile(int genome_id, ARGS* args){
 		}
 		//end print
 		if(printL > 1) {
-            fprintf(stderr, "[BM::calmeth] print %d %d %d\n", starts[printL-1], pends[printL-1], printL-1);
+            fprintf(stderr, "[DM::calmeth] print %d %d %d\n", starts[printL-1], pends[printL-1], printL-1);
             if(bmAppendIntervals(fp, starts+1, pends+1, values+1, coverages+1, strands+1, contexts+1, entryid, printL-1)) goto error;
             printL = 0; 
         }
 		//
-		fprintf(stderr, "[BM::calmeth] Free mem in Methy_List\n");
+		fprintf(stderr, "[DM::calmeth] Free mem in Methy_List\n");
 		for(i=0; i< longestChr; i++){
 			args->Methy_List.plusG[i] = 0;
 			args->Methy_List.plusA[i] = 0;
@@ -1349,14 +1349,14 @@ void print_meth_tofile(int genome_id, ARGS* args){
 		}
 		//printf("\n");
 
-		fprintf(stderr, "[BM::calmeth] Free mem in chromsUse\n");
+		fprintf(stderr, "[DM::calmeth] Free mem in chromsUse\n");
 		for(i =0; i < MAX_LINE_PRINT; i++){
             if(starts[i]>0 && chromsUse[i]) free(chromsUse[i]);
 			//fprintf(stderr, "Free mem in chromsUse %d\n", i);
 			// //if(entryid[i]) free(entryid[i]);
 			//fprintf(stderr, "Free mem in chromsUse2 %d\n", i);
         }
-		fprintf(stderr, "[BM::calmeth] Free mem in all others\n\n");
+		fprintf(stderr, "[DM::calmeth] Free mem in all others\n\n");
         free(chromsUse); //free(entryid);
 
         free(starts);
@@ -1622,7 +1622,7 @@ void *Process_read(void *arg)
 		
 		if(strcmp(processingchr.c_str(), "NULL") == 0 ) processingchr = Chrom;
 		if(strcmp(processingchr.c_str(), Chrom) != 0) {
-            fprintf(stderr, "[BM::calmeth] Print output of %s\n", processingchr.c_str());
+            fprintf(stderr, "[DM::calmeth] Print output of %s\n", processingchr.c_str());
             iter = String_Hash.find(processingchr.c_str());
 			if(iter != String_Hash.end()){
 				H = iter->second;
@@ -2429,7 +2429,7 @@ int fprintf_time(FILE *stream, const char *format, ...)
         tm_info = localtime(&timer);
         strftime(buffer, 26, "%Y:%m:%d %H:%M:%S", tm_info);
 
-        fprintf(stream, "[BM::calmeth] [%s] ", buffer);
+        fprintf(stream, "[DM::calmeth] [%s] ", buffer);
 
         va_start(arg, format);
         done = vfprintf(stream, format, arg);

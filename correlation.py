@@ -65,9 +65,10 @@ class Correlation:
                  labels=None,
                  remove_outliers=False,
                  skip_zeros=False,
+                 skip_ones=False,
                  log1p=False,
                  context=None):
-        print(matrix_file, mfiles)
+        #print(matrix_file, mfiles)
         if matrix_file:
             print("read matrix")
             self.read_matrix(matrix_file)
@@ -78,6 +79,7 @@ class Correlation:
 
         #self.load_matrix(matrix_file)
         self.skip_zeros = skip_zeros
+        self.skip_ones = skip_ones
         self.corr_method = corr_method
         self.corr_matrix = None  # correlation matrix
         self.column_order = None
@@ -98,6 +100,9 @@ class Correlation:
             # remove rows containing only nans or zeros
             # that could be unmappable regions.
             self.remove_rows_of_zeros()
+
+        if skip_ones is True:
+            self.remove_rows_of_ones()
 
         if remove_outliers is True:
             # remove outliers, otherwise outliers will produce a very
@@ -139,7 +144,7 @@ class Correlation:
                 merged_df = pd.merge(merged_df, filtered_df, left_index=True, right_index=True, how='outer')
 
         #merged_df.to_csv('test.output.txt', sep='\t')
-        print(merged_df)
+        #print(merged_df)
         #merged_df = merged_df.iloc[:, 1:].reset_index(drop=True)
         merged_df = merged_df.reset_index(drop=True)
 
@@ -155,9 +160,9 @@ class Correlation:
         self.labels = list(map(toString, mylabels))
 
         print(mylabels)
-        print(self.matrix, self.matrix.shape)
+        #print(self.matrix, self.matrix.shape)
         # Print the resulting Series
-        print(merged_df)
+        #print(merged_df)
 
     def read_matrix_files(self, file_lists):
         import pandas as pd
@@ -321,6 +326,11 @@ class Correlation:
         _mat = np.nan_to_num(self.matrix)
         to_keep = _mat.sum(1) != 0
 
+        self.matrix = self.matrix[to_keep, :]
+
+    def remove_rows_of_ones(self):
+        _mat = np.nan_to_num(self.matrix)
+        to_keep = _mat.sum(1) != self.matrix.shape[1]
         self.matrix = self.matrix[to_keep, :]
 
     def save_corr_matrix(self, file_handle):
