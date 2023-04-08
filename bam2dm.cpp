@@ -70,6 +70,8 @@ typedef struct {
    bam_hdr_t *header;
    int ThreadID;
    off64_t File_Size;
+   char* processChr;
+   char* INbamfilename;
 } ARGS;
 bool RELESEM = false;
 bool printheader = true;
@@ -139,7 +141,7 @@ void Print_Mismatch_Quality(FILE* OUTFILE_MM, int L);
 void print_meth_tofile(int genome_id, ARGS* args);
 bool SamSeqBeforeBS=false;
 int RegionBins=1000;
-long longestChr = 100000;
+long longestChr = 0;
 string processingchr = "NULL";
 string newchr = "NULL";
 FILE* METHOUTFILE;
@@ -229,6 +231,8 @@ int main(int argc, char* argv[])
 	int chrlenf = -1;
 	string chrsizefile;
 	int zoomlevel = 2;
+    char processChr[1000];
+    strcpy(processChr, "NAN-mm");
 
 	for(int i=1;i<argc;i++)
 	{
@@ -240,7 +244,10 @@ int main(int argc, char* argv[])
 		else if(!strcmp(argv[i], "-g") || !strcmp(argv[i], "--genome"))
 		{
 			Geno=argv[++i];
-		}else if(!strcmp(argv[i], "-Q"))
+		}else if(!strcmp(argv[i], "--chrom"))
+        {
+            strcpy(processChr, argv[++i]);
+        }else if(!strcmp(argv[i], "-Q"))
 		{
 			QualCut=atoi(argv[++i]);
         }
@@ -394,7 +401,11 @@ int main(int argc, char* argv[])
 					if(lines > 0) {
 						fprintf(stderr, "[DM::calmeth] loaded and store %s %d %d\n", chrName, chrlen, Genome_Count);
 						lines = 0;
-						if(longestChr < chrlen) longestChr = chrlen;
+                        if(strcmp(processChr, "NAN-mm") == 0) {
+						    if(longestChr < chrlen) longestChr = chrlen;
+                        }else if(strcmp(chrName, processChr) == 0) {
+                            longestChr = chrlen;
+                        }
 
 						strcpy(args.Genome_Offsets[Genome_Count].Genome, chrName);
 						args.Genome_Offsets[Genome_Count].Offset = chrlen;
@@ -414,7 +425,7 @@ int main(int argc, char* argv[])
 						exit(0);
 					}
 				}
-				else {
+				else if(strcmp(processChr, "NAN-mm") == 0 || strcmp(chrName, processChr) == 0) {
 					// Substract \n
 					perlen = strlen(readBuffer) - 1;
 					chrlen += perlen;
@@ -430,7 +441,11 @@ int main(int argc, char* argv[])
 				lines++;
 			}
 			if(lines > 0) {
-				if(longestChr < chrlen) longestChr = chrlen;
+                if(strcmp(processChr, "NAN-mm") == 0) {
+                    if(longestChr < chrlen) longestChr = chrlen;
+                }else if(strcmp(chrName, processChr) == 0) {
+                    longestChr = chrlen;
+                }
 
 				strcpy(args.Genome_Offsets[Genome_Count].Genome, chrName);
 				args.Genome_Offsets[Genome_Count].Offset = chrlen;
@@ -439,6 +454,11 @@ int main(int argc, char* argv[])
 				chroms[Genome_Count] = strdup(chrName);
 				//fprintf(stderr, "%s\t%d\n", chrName, chrlen);
 			}
+
+            if(longestChr == 0){
+                fprintf(stderr, "Warining: undetected %s in genome file", processChr);
+                exit(0);
+            }
 
 			fprintf(stderr, "[DM::calmeth] len count GCcount %lld %d %ld\n", Genome_Size, Genome_Count, totalC+totalG);
 			//exit(0);
@@ -493,13 +513,15 @@ int main(int argc, char* argv[])
 			
 			if(Methratio){
 				if(printtxt == 1){
-					methOutfileName=Prefix;methOutfileName+=".methratio.txt";
+					methOutfileName=Prefix;
+                    methOutfileName+=".methratio.txt";
 					METHOUTFILE=File_Open(methOutfileName.c_str(),"w");
 					fprintf(METHOUTFILE,"#chromsome\tloci\tstrand\tcontext\tC_count\tCT_count\tmethRatio\teff_CT_count\trev_G_count\trev_GA_count\tMethContext\t5context\n");
 				}
 
 				fp = NULL;
-				methOutfileName=Prefix;methOutfileName+=".methratio.dm";
+				methOutfileName=Prefix;
+                methOutfileName+=".methratio.dm";
 
 				if(bmInit(1<<17) != 0) {
         		    fprintf(stderr, "Received an error in dmInit\n");
@@ -533,7 +555,7 @@ int main(int argc, char* argv[])
 				LOC_OUT_CHH=File_Open(LociOutFiles_CHH.c_str(),"w");
 				*/
 			}
-
+                        args.INbamfilename = new char[1000];
 			for(int f=InFileStart;f<=InFileEnd;f++)
 			{
 				printf("[DM::calmeth] Processing %d out of %d. File: %s, %d\n\n", f-InFileStart+1,InFileEnd-InFileStart+1, argv[f], bamformat);
@@ -544,8 +566,9 @@ int main(int argc, char* argv[])
 					//samfile_t *bamin = 0;
 					args.BamInFile = 0;
 					args.header;
-                    if(bamformat)
-                    {
+                                        if(bamformat)
+                                        {
+                                             strcpy(args.INbamfilename, argv[f]);
 						if ((args.BamInFile = sam_open(argv[f], "rb")) == 0) {
 								fprintf(stderr, "fail to open \"%s\" for reading.\n", argv[f]);
 						}
@@ -614,6 +637,8 @@ int main(int argc, char* argv[])
 					if(DEBUG>1) fprintf(stderr, "====HHH type %d\n", fp->type);
 				}
 				//nothreads
+                args.processChr=new char[1000];
+                strcpy(args.processChr, processChr);
 				Process_read(&args);
 				Done_Progress();
 				if(!bamformat) fclose(args.samINFILE);
@@ -1581,6 +1606,18 @@ void *Process_read(void *arg)
     struct timeval now;
     struct timespec outtime;
 	bam1_t *b = bam_init1();
+    hts_idx_t *idx = NULL;
+    hts_itr_t *iter;
+    if(strcmp(((ARGS *)arg)->processChr, "NAN-mm") != 0){
+        if ((idx = sam_index_load(((ARGS *)arg)->BamInFile, ((ARGS *)arg)->INbamfilename )) == 0) {
+            fprintf(stderr, "[E::%s] fail to load the BAM index\n", __func__);
+            exit(0);
+        }
+        if ((iter = sam_itr_querys(idx, ((ARGS *)arg)->header, ((ARGS *)arg)->processChr)) == 0) {
+            fprintf(stderr, "[E::%s] fail to parse region '%s'\n", __func__, ((ARGS *)arg)->processChr);
+            exit(0);
+        }
+    }
 	while( (!bamformat && (samaddress = fgets(s2t,BATBUF,((ARGS *)arg)->samINFILE))!=NULL) || (bamformat && r>0 ))
 	{
 		if(r < -1) {
@@ -1593,12 +1630,19 @@ void *Process_read(void *arg)
 
 		if(bamformat) 
 		{
-			//(r = samread(( (ARGS *)arg)->BamInFile, b));
-            r = sam_read1(( (ARGS *)arg)->BamInFile, ((ARGS *)arg)->header, b);
-			//bam_tostring(((ARGS *)arg)->header , b, s2t);
-			int ct = processbamread(((ARGS *)arg)->header, b, Dummy,Flag,Chrom,pos,mapQuality,CIG,Chrom_P,pos_P,Insert_Size,forReadString,forQuality, hitType);
-			if(ct == -1) continue;
-			if(r<=0) break;
+            if(strcmp(((ARGS *)arg)->processChr, "NAN-mm") == 0){
+			    //(r = samread(( (ARGS *)arg)->BamInFile, b));
+                r = sam_read1(( (ARGS *)arg)->BamInFile, ((ARGS *)arg)->header, b);
+			    //bam_tostring(((ARGS *)arg)->header , b, s2t);
+			    int ct = processbamread(((ARGS *)arg)->header, b, Dummy,Flag,Chrom,pos,mapQuality,CIG,Chrom_P,pos_P,Insert_Size,forReadString,forQuality, hitType);
+			    if(ct == -1) continue;
+			    if(r<=0) break;
+            }else{
+                r = sam_itr_next(((ARGS *)arg)->BamInFile, iter, b);
+                int ct = processbamread(((ARGS *)arg)->header, b, Dummy,Flag,Chrom,pos,mapQuality,CIG,Chrom_P,pos_P,Insert_Size,forReadString,forQuality, hitType);
+                if(ct == -1) continue;
+                if(r<=0) break;
+            }
 		}
         Total_Reads++;
 		
