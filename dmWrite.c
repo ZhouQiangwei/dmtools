@@ -348,6 +348,7 @@ error:
  *     The buffer size and compression sz need to be determined elsewhere (and p and compressP filled in!)
  */
 static int flushBuffer(binaMethFile_t *fp) {
+//    fprintf(stderr, "flushBuffer\n");
     bmWriteBuffer_t *wb = fp->writeBuffer;
     uLongf sz = wb->compressPsz;
     uint16_t nItems;
@@ -629,7 +630,10 @@ int bmAppendIntervals(binaMethFile_t *fp, uint32_t *start, uint32_t *end, float 
     if(!n) return 0;
     if(!fp->isWrite) return 1;
     if(!wb) return 2;
-    if(wb->ltype != 1) return 3;
+    if(wb->ltype != 1) {
+        fprintf(stderr, "wb->ltype %d\n", wb->ltype);
+        return 3;
+    }
     int slen =0, elen = 0;
 
     for(i=0; i<n; i++) {
