@@ -919,7 +919,7 @@ def plotheatmaper(mymatrix, outFileName,
                     ax.axes.set_xticks(xticks_heat_use)
                 else:
                     ax.axes.set_xticks(xticks_heat)
-                ax.axes.set_xticklabels(xtickslabel_heat, size=8)
+                ax.axes.set_xticklabels(xtickslabel_heat, size=14)
 
                 # align the first and last label
                 # such that they don't fall off

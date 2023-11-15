@@ -992,6 +992,9 @@ double *bmStatsFromFull_array(binaMethFile_t *fp, char *chrom, uint32_t start, u
                 break;
         }
         k += Tsize;
+        if(nBins == 1){ //only 1 bin
+            sprintf(chrom, "%d", ints->l);
+        }
         bmDestroyOverlappingIntervals(ints);
         //pos = end2;
         pos = pos + movestep;
@@ -1038,6 +1041,9 @@ void bmStatsFromFull_array_count(binaMethFile_t *fp, char *chrom, uint32_t start
                 break;
         }
         k += Tsize;
+        if(nBins == 1){ //only 1 bin
+            sprintf(chrom, "%d", ints->l);
+        }
         bmDestroyOverlappingIntervals(ints);
         //pos = end2;
         pos = pos + movestep;

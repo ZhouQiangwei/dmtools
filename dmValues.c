@@ -30,7 +30,7 @@ static bmRTree_t *readRTreeIdx(binaMethFile_t *fp, uint64_t offset) {
 
     if(bmRead(&magic, sizeof(uint32_t), 1, fp) != 1) return NULL;
     if(magic != IDX_MAGIC) {
-        fprintf(stderr, "[readRTreeIdx] Mismatch in the magic number!\n");
+//        fprintf(stderr, "[readRTreeIdx] Mismatch in the magic number!\n");
         return NULL;
     }
 

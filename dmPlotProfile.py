@@ -332,8 +332,11 @@ if __name__ == '__main__':
     scale_ls = args.scale
     index_ls = args.xlabel
     if(len(scale_ls)+1 != len(index_ls) ):
-        print("scale length should be short 1 than xlabel length!", scale_ls, index_ls)
-        exit()
+        if len(index_ls) == 1:
+            index_ls = args.xlabel[0].split(" ")
+        if(len(scale_ls)+1 != len(index_ls) ):
+            print("scale length should be short 1 than xlabel length!", scale_ls, index_ls)
+            exit()
 
     label=args.label
     ylabel=args.ylabel
