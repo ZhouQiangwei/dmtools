@@ -1,10 +1,31 @@
-# DMtools
+<p align="left">
+  <a href="https://dmtools-docs.rtfd.io" target="_blank"><img src="https://img.shields.io/badge/docs-8A2BE2?link=https%3A%2F%2Fdmtools-docs.rtfd.io"></a>
+  <a href="https://github.com/ZhouQiangwei/dmtools/releases"><img src="https://img.shields.io/github/v/release/ZhouQiangwei/dmtools"></a>
+  <img src="https://img.shields.io/github/license/ZhouQiangwei/dmtools">
+  <img src="https://img.shields.io/github/stars/ZhouQiangwei/dmtools">
+  <a href="https://github.com/ZhouQiangwei/dmtools/issues"><img src="https://img.shields.io/github/issues/ZhouQiangwei/dmtools?color=red"></a>
+  <img src="https://img.shields.io/github/forks/ZhouQiangwei/dmtools?color=teal">
 
-Package of C and C++ scripts for generation and procession of DNA Methylation (dm) files
+  <img src="https://img.shields.io/github/downloads/ZhouQiangwei/dmtools/total">
+  <img src="https://img.shields.io/github/watchers/ZhouQiangwei/dmtools">
+  <a href='https://github.com/ZhouQiangwei/dmtools'><img alt='clones' src='https://img.shields.io/badge/dynamic/json?color=success&label=Clone&query=count&url=https://gist.githubusercontent.com/ZhouQiangwei/015ef4425775a468b8a468ffad77b090/raw/clone.json&logo=github'></a>
+  <a href="https://dmtools-docs.rtfd.io"><img src="https://hits.seeyoufarm.com/api/count/incr/badge.svg?url=https%3A%2F%2Fgithub.com%2FZhouQiangwei%2Fdmtools&count_bg=%2379C83D&title_bg=%23555555&icon=coffeescript.svg&icon_color=%23E7E7E7&title=views&edge_flat=false"/></a>
+</p>
 
-Compared with bigwig, dm format contains the coverage of DNA methylation sites, methylation context, positive and negative strand and gene ID information. 
+
+# DM format and DMtools
+
+Package of C and C++ scripts for generation and procession of DNA Methylation (DM) files
+
+We present a new and efficient design for storing DNA methylation (DM) data after mapping in compressed binary indexed DM format. Our format significantly reduces storage space by 80%-95% compared to commonly used file formats for DNA methylation data after mapping. To enhance the processing of DNA methylation data in DM format, we have developed DMtools, a comprehensive toolkit that offers utilities such as rapid and random access, computation of DNA methylation profiles across genes, and analysis of differential DNA methylation.
+
+DM format contains the coverage of DNA methylation sites, methylation context, positive and negative strand and cell ID (for single-cell DNA methylation data) information. 
 
 DMtools provide file format conversion, quick view, methylation level calculation, differential DNA methylation level calculation and other functions for dm format.
+
+For more information, please see https://dmtools-docs.rtfd.io
+
+And calmeth in batmeth2-dm can convert align bs bam file to dm file, https://dmtools-docs.readthedocs.io/en/latest/function/bam2dm.html
 
 
 | [ dmtools ]         | process with dm file                                                    |
@@ -42,7 +63,7 @@ DMtools provide file format conversion, quick view, methylation level calculatio
 
 This is a BS-Seq results dm format file view and process tool based on htslib and libBigWig.
 
-For more information, please see https://batmeth2-dm.readthedocs.io/en/latest/function/DMtools.html
+For more information, please see https://dmtools-docs.rtfd.io/ 
 
-And calmeth in batmeth2-dm can convert align bs bam file to dm file, https://batmeth2-dm.readthedocs.io/en/latest/function/Calmeth.html
+And calmeth in batmeth2-dm can convert align bs bam file to dm file, https://dmtools-docs.readthedocs.io/en/latest/function/bam2dm.html
 

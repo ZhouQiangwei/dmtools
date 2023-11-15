@@ -31,7 +31,7 @@ char *context_str[] = {"C", "CG", "CHG", "CHH"};
 int main_view_all(binaMethFile_t *fp, FILE* outfileF, char *outformat, binaMethFile_t *ofp, char* filterchrom);
 void printchrmeth(binaMethFile_t *bm, char* chrom, FILE* outfileF);
 void printchrmeth_bsrate(binaMethFile_t *bm, char* chrom, FILE* outfileF, float *bsrate, int *bscount);
-int main_view(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outformat, binaMethFile_t *ofp);
+int main_view(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outformat, binaMethFile_t *ofp, int newchr);
 int main_view_bedfile(char *inbmF, char *bedfile, int type, FILE* outfileF, char *outformat, binaMethFile_t *ofp);
 int calchromstats(char *inbmfile, char *method, int chromstep, int stepoverlap, uint8_t strand, uint8_t context, FILE* outfileF, FILE* outfileF_c, FILE* outfileF_cg, FILE* outfileF_chg, FILE* outfileF_chh);
 int calregionstats(char *inbmfile, char *method, char *region, uint8_t pstrand, uint8_t context, FILE* outfileF, FILE* outfileF_c, FILE* outfileF_cg, FILE* outfileF_chg, FILE* outfileF_chh);
@@ -67,7 +67,27 @@ int main_view_bm(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outfor
 int bm_merge_all_mul(char *inbmFs, char *outfile, uint8_t pstrand, int m_method, int zoomlevel, char *outformat);
 int bm_merge_mul(binaMethFile_t **ifp1s, int sizeifp, int m_method, char *chrom, int start, int end, uint8_t strand,
     char **chromsUse, uint32_t *starts, uint32_t *ends, float *values, uint16_t *coverages, uint8_t *strands, uint8_t *contexts, char **entryid, uint16_t *coverC, FILE *output_txt, char *outformat);
+void *multithread_cmd(void *arg);
 
+struct ARGS{
+    char* runCMD;
+    char** prcessChr;
+    char* outfile;
+    int ThreadID;
+    int sizeifp;
+    int i;
+    int Nthreads;
+};
+
+struct Threading
+{
+    pthread_t Thread;
+    unsigned r;
+    void *ret;
+    struct ARGS Arg;
+};
+
+#define BUFSIZE 1000000
 #define MAX_LINE_PRINT 1000100
 #define MAX_BUFF_PRINT 20000000
 const char* Help_String_main="Command Format :  dmtools <mode> [opnions]\n"
@@ -89,12 +109,12 @@ const char* Help_String_main="Command Format :  dmtools <mode> [opnions]\n"
         "\t  stats          coverage and methylation level distribution of data\n"
         "\t  dmDMR          differential DNA methylation analysis\n";
 
-const char* Help_String_bam2dm="Command Format :  dmtools bam2dm [options] -g genome.fa -b <BamfileSorted> -m <methratio dm outfile prefix>\n"
-		"\nUsage: dmtools bam2dm -C -S --Cx -g genome.fa -b align.sort.bam -m meth.dm\n"
+const char* Help_String_bam2dm="Command Format :  dmtools bam2dm [options] -g genome.fa -b <BamfileSorted> -o <methratio dm outfile prefix>\n"
+		"\nUsage: dmtools bam2dm -C -S --Cx -g genome.fa -b align.sort.bam -o meth.dm\n"
         "\t [bam2dm] mode paramaters, required\n"
 		"\t-g|--genome           genome fasta file\n"
 		"\t-b|--binput           Bam format file, sorted by chrom.\n"
-        "\t-m|--methratio        Prefix of methratio.dm output file\n"
+        "\t-o|--out              Prefix of methratio.dm output file\n"
 		"\t [bam2dm] mode paramaters, options\n"
         "\t-n|--Nmismatch        Number of mismatches, default 0.06 percentage of read length. [0-1]\n"
 		"\t-Q                    caculate the methratio while read QulityScore >= Q. default:20\n"
@@ -103,6 +123,9 @@ const char* Help_String_bam2dm="Command Format :  dmtools bam2dm [options] -g ge
 		"\t-nC                   >= <INT> nCs per region. default:1\n"
 		"\t-r|--remove_dup       REMOVE_DUP, default:false\n"
         "\t--mrtxt               print prefix.methratio.txt file\n"
+        "\t--cf                  context filter for print results, C, CG, CHG, CHH, default: C\n"
+        "\t-p                    [int] threads\n"
+        "\t[DM format] paramaters\n"
         "\t--zl                  The maximum number of zoom levels. [0-10], default: 2\n"
         //"\t-i|--input            Sam format file, sorted by chrom.\n"
         "\t-C                    print coverage in DM file\n"
@@ -214,8 +237,8 @@ const char* Help_String_bscr="Command Format :  dmtools ebsrate -i meth.dm\n"
         "\t [view] mode paramaters, required\n"
         "\t-i                    input DM file\n"
         "\t-o                    output file\n"
-        "\t--bsmode              chh or chr mode, suggest chh for human, mouse etc.\n"
-        "\t--chr                 chromosome used for calculate bisulfite convertion rate, default, chrM and chrC\n"
+        "\t--bsmode              chg, chh or chr mode, suggest chg/chh for human, mouse etc.\n"
+        "\t--chr                 chromosome level used for calculate bisulfite convertion rate, default, chrM and chrC\n"
         "\t-h|--help";
 
 const char* Help_String_chrmeth="Command Format :  dmtools chrmeth -i meth.dm\n"
@@ -250,6 +273,7 @@ const char* Help_String_regionstats="Command Format :  dmtools regionstats [opni
         "\t-o                    output prefix [stdout]\n"
         "\t-r                    region for view, can be seperated by space. chr1:1-2900 chr2:1-200,+\n"
         "\t--method              weighted/ mean\n"
+        "\t--minC                min cytosines in region will used for calculate, default: 2\n"
         "\t--strand              [0/1/2/3] strand for show, 0 represent '+' positive strand, 1 '-' negative strand, 2 '.' all information, 3 calculate and print strand meth level seperately\n"
         "\t--context             [0/1/2/3/4] context for show, 0 represent 'C/ALL' context, 1 'CG' context, 2 'CHG' context, 3 'CHH' context, 4 calculate and print strand meth level seperately\n"
         "\t--printcoverage       [0/1] print countC and coverage instead of methratio. [0]\n"
@@ -269,6 +293,7 @@ const char* Help_String_bodystats="Command Format :  dmtools bodystats [opnions]
         "\t-o                    output file [stdout]\n"
         "\t-r                    region for view, can be seperated by space. chr1:1-2900 chr2:1-200,+\n"
         "\t--method              weighted/ mean\n"
+        "\t--minC                min cytosines in region will used for calculate, default: 2\n"
         "\t--regionextend        also calculate DNA methylation level of upstream and downstream N-bp window. default 2000.\n"
         "\t--strand              [0/1/2/3] strand for show, 0 represent '+' positive strand, 1 '-' negative strand, 2 '.' all information, 3 calculate and print strand meth level seperately, only valid while -r para\n"
         "\t--context             [0/1/2/3/4] context for show, 0 represent 'C/ALL' context, 1 'CG' context, 2 'CHG' context, 3 'CHH' context, 4 calculate and print strand meth level seperately, default: 4.\n"
@@ -344,6 +369,7 @@ unsigned long *mPs;
 //mP1 = 0, mP2 = 0, mP3 = 0, mP4 = 0, mP5 = 0;
 int statsSize = 10;
 int alwaysprint = 0;
+int minC = 2;
 
 int main(int argc, char *argv[]) {
     binaMethFile_t *fp = NULL;
@@ -360,7 +386,7 @@ int main(int argc, char *argv[]) {
     uint8_t *strands = malloc(sizeof(uint8_t) * MAX_LINE_PRINT);
     uint8_t *contexts = malloc(sizeof(uint8_t) * MAX_LINE_PRINT);
 
-    char* chromlenf = malloc(100*sizeof(char));
+    char* chromlenf = malloc(1000*sizeof(char));
     int chromlenf_yes = 0;
     char* outformat = malloc(100); strcpy(outformat, "txt");
     Fcover = malloc(sizeof(int)*16);
@@ -368,10 +394,10 @@ int main(int argc, char *argv[]) {
     int i = 0;
     uint32_t write_type = 0x8000;
     char methfile[100]; char *outbmfile = NULL;
-    char *inbmfile = malloc(100);
-    char *bmfile2 = malloc(100);
+    char *inbmfile = malloc(10000);
+    char *bmfile2 = malloc(1000);
     char mode[10]; char *region = NULL;
-    char *inbmfiles = malloc(300);
+    char *inbmfiles = malloc(10000);
     int inbm_mul = 0;
     char *method = malloc(100);
     strcpy(method, "weighted");
@@ -448,12 +474,23 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "%s\n", Help_String_main);
         exit(0);
     }
-    char bam2bm_paras[1024];
+    char bam2bm_paras[1024]; bam2bm_paras[0] = '\0';
+    int precison = 1;
     if(strcmp(mode, "bam2dm") == 0){
         for(i=2; i< argc; i++){
+            if(strcmp(argv[i], "-g") == 0){
+                strcpy(chromlenf, argv[i+1]);
+                chromlenf_yes++;
+            }else if(strcmp(argv[i], "-p") == 0){
+                NTHREAD = atoi(argv[i+1]);
+            }else if(strcmp(argv[i], "-o") == 0 || strcmp(argv[i], "--out") == 0){
+                outfile = malloc(sizeof(char)*200);
+                strcpy(outfile, argv[i+1]);
+            }
             strcat(bam2bm_paras, argv[i]);
             strcat(bam2bm_paras, " ");
         }
+        fprintf(stderr, "%s\n", bam2bm_paras);
     }else if(strcmp(mode, "dmDMR") == 0){
         for(i=2; i< argc; i++){
             strcat(bam2bm_paras, argv[i]);
@@ -477,12 +514,14 @@ int main(int argc, char *argv[]) {
             }else if(strcmp(argv[i], "-m") == 0){
                 strcpy(methfile, argv[++i]);
             }else if(strcmp(argv[i], "--outdm") == 0){
-                outbmfile = malloc(100);
+                outbmfile = malloc(1000);
                 strcpy(outbmfile, argv[++i]);
             }else if(strcmp(argv[i], "--outformat") == 0){
                 strcpy(outformat, argv[++i]);
             }else if(strcmp(argv[i], "-i") == 0){
                 strcpy(inbmfile, argv[++i]);
+            }else if(strcmp(argv[i], "--minC") == 0){
+                minC= atoi(argv[++i]);
             }else if(strcmp(argv[i], "--CF") == 0){
                 mcover_cutoff = atoi(argv[++i]);
             }else if(strcmp(argv[i], "--dmfiles") == 0){
@@ -555,18 +594,20 @@ int main(int argc, char *argv[]) {
             }else if(strcmp(argv[i], "--fstrand") == 0 || strcmp(argv[i], "--strand") == 0){
                 filter_strand = atoi(argv[++i]);
             }else if(strcmp(argv[i], "--bed") == 0){
-                bedfile = malloc(100);
+                bedfile = malloc(1000);
                 strcpy(bedfile, argv[++i]);
             }else if(strcmp(argv[i], "--gtf") == 0){
-                gtffile = malloc(100);
+                gtffile = malloc(1000);
                 strcpy(gtffile, argv[++i]);
             }else if(strcmp(argv[i], "--gff") == 0){
-                gfffile = malloc(100);
+                gfffile = malloc(1000);
                 strcpy(gfffile, argv[++i]);
             }else if(strcmp(argv[i], "-f") == 0){
                 strcpy(mrformat, argv[++i]);
             }else if(strcmp(argv[i], "--pcontext") == 0){
                 strcpy(pcontext, argv[++i]);
+            }else if(strcmp(argv[i], "--pc") == 0){
+                precison = atoi(argv[++i]);
             }else if(strcmp(argv[i], "--context") == 0){
                 filter_context = atoi(argv[++i]);
             }else if(strcmp(argv[i], "--sort") == 0){
@@ -588,11 +629,11 @@ int main(int argc, char *argv[]) {
             }else if(strcmp(argv[i], "-o") == 0 || strcmp(argv[i], "--out") == 0){
                 if(strcmp(mode, "mr2dm") == 0){
                     if(!outbmfile){
-                        outbmfile = malloc(100);
+                        outbmfile = malloc(1000);
                         strcpy(outbmfile, argv[++i]);
                     }
                 }else{
-                    outfile = malloc(sizeof(char)*100);
+                    outfile = malloc(sizeof(char)*1000);
                     strcpy(outfile, argv[++i]);
                 }
             }
@@ -612,8 +653,138 @@ int main(int argc, char *argv[]) {
         strcpy(cmd, abspathtmp);
         strcat(cmd, "bam2dm ");
         strcat(cmd, bam2bm_paras);
+        //char mergecmd[10000];
+        char* mergecmd = (char*) malloc(10000 * sizeof(char));
+        sprintf(mergecmd, "%s/dmtools merge --outformat dm -o %s -i ", abspathtmp, outfile);
+
         //这里可以加多线程，根据染色体，修改bam2dm输入--chr chrN，每个线程处理一条染色体，最后合并输出结果。
-        onlyexecuteCMD(cmd, Help_String_bam2dm);
+        //onlyexecuteCMD(cmd, Help_String_bam2dm);
+        if(NTHREAD>1 && NTHREAD<0)
+        {
+            struct Threading* Thread_Info=(struct Threading*) malloc(sizeof(struct Threading)*NTHREAD);
+            pthread_attr_t Attrib;
+            pthread_attr_init(&Attrib);
+            pthread_attr_setdetachstate(&Attrib, PTHREAD_CREATE_JOINABLE);
+            if(chromlenf_yes==0){
+                fprintf(stderr, "please provide chrome file with -g paramater\n");
+                exit(0);
+            }
+            FILE *iFPtr = NULL;
+            if(!(iFPtr = fopen(chromlenf, "r"))) {
+                printf("File %s open error.\n", chromlenf);
+                exit(1);
+            }
+            char* readBuffer = (char*)malloc(sizeof(char) * BUFSIZE);
+            char* token;
+            char seps[] = " \t\n\r";
+            int Nchrom = 0;
+            fprintf(stderr, "process genome fa\n");
+            while(fgets(readBuffer, BUFSIZE, iFPtr)) {
+                if(strlen(readBuffer) >= BUFSIZE - 1) {
+                    fprintf(stderr, "Too many characters in one row! Try to split the long row into several short rows (fewer than %d characters per row).\n", BUFSIZE);
+                    exit(1);
+                }
+
+                if(readBuffer[0] == '>') {
+                    Nchrom++;
+                }
+            }
+            rewind(iFPtr);
+            fprintf(stderr, "[ dmtools ] %d chrom\n", Nchrom);
+            char **chroms = malloc(sizeof(char*)*Nchrom);
+            for(i=0; i<Nchrom; i++){
+                chroms[i] = malloc(sizeof(char)*200);
+            }
+            Nchrom = 0;
+            while(fgets(readBuffer, BUFSIZE, iFPtr)) {
+                if(readBuffer[0] == '>') {
+                    token = strtok(readBuffer + 1, seps);
+                    strcpy(chroms[Nchrom++], token);
+                    // input dm files
+                    if(Nchrom==1) {
+                        strcat(mergecmd, outfile);
+                        strcat(mergecmd, ".");
+                        strcat(mergecmd, token);
+                    }
+                    else{
+                        strcat(mergecmd, ",");
+                        strcat(mergecmd, outfile);
+                        strcat(mergecmd, ".");
+                        strcat(mergecmd, token);
+                    }
+                }
+            }
+            char* runcmd = malloc(sizeof(char)*1000);
+            int j = 0, k = 0; int perThread = floor(((double)Nchrom)/NTHREAD); int Nchrs = 0;
+            if(perThread<=0) perThread = 1;
+            int lastp = Nchrom%NTHREAD;
+            for (i=0;i<NTHREAD;i++)
+            {
+                struct ARGS args;
+                args.runCMD = malloc(sizeof(char)*1000);
+                args.outfile = outfile;
+                args.prcessChr = malloc(sizeof(char*)*Nchrom);
+                for (k = 0; k < perThread+lastp; k++) {
+                    args.prcessChr[k] = malloc(200 * sizeof(char));
+                }
+                args.ThreadID=i;
+                args.Nthreads = NTHREAD;
+                runcmd[0] = '\0';
+                strcpy(runcmd, cmd);
+                strcat(runcmd, "--chrom");
+                //strcat(runcmd, chroms[i]);
+                strcpy(args.runCMD, runcmd);
+                //fprintf(stderr, "ccc %d %d %s %d, %d\n", i ,Nchrom, runcmd, perThread, lastp);
+                int sizeifp = 0;
+                for(j=0; j<perThread; j++){
+                    if(Nchrs<Nchrom){
+                        strcpy(args.prcessChr[sizeifp++], chroms[Nchrs++]);
+                    }
+                }
+                if(i == NTHREAD-1 && lastp > 0) {
+                    for(j=0; j <lastp; j++){
+                        strcpy(args.prcessChr[sizeifp++], chroms[Nchrs++]);
+                    }
+                }
+
+                //fprintf(stderr, "sss--=-= %s %d\n", args.prcessChr[0], sizeifp);
+                args.sizeifp = sizeifp;
+                args.i = 0;
+                Thread_Info[i].Arg=args;
+                Thread_Info[i].r=pthread_create(&Thread_Info[i].Thread,&Attrib, multithread_cmd, (void*) &Thread_Info[i].Arg);
+                if(Thread_Info[i].r) {printf("Launch_Threads():Cannot create thread..\n");exit(-1);}
+            }
+            pthread_attr_destroy(&Attrib);
+            for (i=0;i<NTHREAD;i++)
+            {
+                pthread_join(Thread_Info[i].Thread,NULL);
+                // 释放内存
+                free(Thread_Info[i].Arg.runCMD);
+                for(j=0;j<perThread;j++){
+                    free(Thread_Info[i].Arg.prcessChr[j]);
+                }
+                free(Thread_Info[i].Arg.prcessChr);
+            }
+            free(Thread_Info);
+            fprintf(stderr, "CMMd %s", mergecmd);
+            onlyexecuteCMD(mergecmd, Help_String_bam2dm);
+            for(j=0;j<Nchrom;j++){
+                mergecmd[0]='\0';
+                sprintf(mergecmd, "rm %s.%s", outfile, chroms[j]);
+                onlyexecuteCMD(mergecmd, Help_String_bam2dm);
+            }
+            free(mergecmd);
+        }else{
+            struct ARGS args;
+            args.runCMD = malloc(sizeof(char)*1000);
+            strcpy(args.runCMD, cmd);
+            args.ThreadID=0;
+            args.sizeifp = 0;
+            args.i = 0;
+            args.Nthreads = 0;
+            multithread_cmd(&args);
+        }
+
         return;
     }else if(strcmp(mode, "dmDMR") == 0){
         fprintf(stderr, "differential DNA methylation analysis with dm format\n");
@@ -625,8 +796,8 @@ int main(int argc, char *argv[]) {
         strcpy(cmd, abspathtmp);
         strcat(cmd, "dmDMR ");
         strcat(cmd, bam2bm_paras);
-        //这里可以加多线程，根据染色体，修改bam2dm输入--chr chrN，每个线程处理一条染色体，最后合并输出结果。
-        onlyexecuteCMD(cmd, Help_String_bam2dm);
+        //这里可以加多线程，根据染色体，修改bam2dm输入--chrom chrN，每个线程处理一条染色体，最后合并输出结果。
+        onlyexecuteCMD(cmd, Help_String_dmDMR);
         return;
     }
     else if(strcmp(mode, "mr2dm") == 0){
@@ -749,7 +920,9 @@ int main(int argc, char *argv[]) {
             }else if(strcmp(mrformat, "bedsimple") == 0){
                 //chrom start end id strand context meth_reads coverage
                 sscanf(PerLine, "%s%u%u%s%s%s%u%u", chrom, &start, &end, nameid, strand, context, &coverC, &coverage);
-                sprintf(decide, "%0.001f", ((double) coverC/ coverage) );
+                if(precison == 1)
+                    sprintf(decide, "%.2f", ((double) coverC/ coverage) );
+                else sprintf(decide, "%.4f", ((double) coverC/ coverage) );
                 value = atof(decide);
             }else if(strcmp(mrformat, "bismark") == 0){
                 //<chromosome> <position> <strand> <count methylated> <count unmethylated> <C-context> <trinucleotide context>
@@ -758,7 +931,8 @@ int main(int argc, char *argv[]) {
                 value = ((double) coverC/ coverage);
             }else if(strcmp(mrformat, "simpleme") == 0){
                 //chrom start value coverage strand context
-                sscanf(PerLine, "%s%u%f%u%s%s", chrom, &start, &value, &coverage, strand, context);
+                //chr1  10471   0.833333    6   +   CG
+                int result = sscanf(PerLine, "%s\t%u\t%f\t%u\t%s\t%s", chrom, &start, &value, &coverage, strand, context);
             }else{
                 fprintf(stderr, "Unexpected mr file format!!!\n");
                 exit(0);
@@ -822,8 +996,8 @@ int main(int argc, char *argv[]) {
                     contexts[printL] = 3;
                 }
                 if(DEBUG>-1) fprintf(stderr,"## %d start %s %d %d %f %d %d %d\n", printL, chromsUse[printL], starts[printL], ends[printL], values[printL], coverages[printL], strands[printL], context[printL]);
-                int response = bmAddIntervals(fp, chromsUse, starts, ends, values, coverages, strands, contexts, 
-                entryid, 1);
+                int response = bmAddIntervals(fp, chromsUse, starts, ends, values, coverages, strands, contexts,
+                                    entryid, 1);
                 fprintf(stderr, "Processing %s chromosome.\n", chrom);
                 if(response) {
                     fprintf(stderr, "bmAddIntervals 0\n");
@@ -849,6 +1023,11 @@ int main(int argc, char *argv[]) {
                 //    int tmpv = (int)(value*1000);
                 //    value = ((double)tmpv/1000);
                 //}
+                if(strcmp(mrformat, "simpleme") != 0) {
+                    if(precison == 1) sprintf(decide, "%.2f", ((double) coverC/ coverage) );
+                    else sprintf(decide, "%.4f", ((double) coverC/ coverage) );
+                    value = atof(decide);
+                }
                 values[printL] = value;
 
                 switch(strand[0]){
@@ -1020,7 +1199,7 @@ int main(int argc, char *argv[]) {
             main_view_all(ifp, outfp_bm, outformat, ofp, filterchrom);
         }else if(region){
             fprintf(stderr, "[Mode] ------------- View region %s\n", region);
-            main_view(ifp, region, outfp_bm, outformat, ofp);
+            main_view(ifp, region, outfp_bm, outformat, ofp, 0);
             free(region);
         }else if(bedfile){
             fprintf(stderr, "[Mode] ------------- View bedfile %s\n", bedfile);
@@ -1161,7 +1340,10 @@ int main(int argc, char *argv[]) {
             fprintf(outfp_mean, "##bs rate calculated by %s\n", bsrmode);
             if(strcmp(bsrmode, "chh") == 0) {
                 fprintf(stderr, "ebsrate chh mode\n");
-                calchh(ifp, outfp_mean);
+                calchh(ifp, outfp_mean, 1);
+            }else if(strcmp(bsrmode, "chg") == 0) { 
+                fprintf(stderr, "ebsrate chg mode\n");
+                calchh(ifp, outfp_mean, 0);
             }else if(filterchrom == NULL) {
                 fprintf(stderr, "ebsrate chr mode\n");
                 printchrmeth_bsrate(ifp, "chrM", outfp_mean, &bsrate, &bscount);
@@ -1270,8 +1452,8 @@ int main(int argc, char *argv[]) {
                         strcpy(outfile_temp, outfile); strcat(outfile_temp, ".chh");
                         outfp_chh = File_Open(outfile_temp,"w");
                     }
-                    free(outfile_temp);
                 }
+                free(outfile_temp);
             }else{
                 print2one = 2;
                 outfp = stdout;
@@ -1586,11 +1768,21 @@ double *Sregionstats_array(binaMethFile_t *fp, char *chrom, int start, int end, 
     double *stats = NULL;
     assert(splitN>0);
     //int i=0;
+    char* chrom_back = malloc(1000);
+    strcpy(chrom_back, chrom);
     if(strcmp(method, "mean")==0){
         stats = bmStats_array(fp, chrom, start, end, splitN, binsize, movestep, mean, strand);
     }else if(strcmp(method, "weighted")==0){
         stats = bmStats_array(fp, chrom, start, end, splitN, binsize, movestep, weighted, strand);
     }
+    if(splitN<=1) {
+        int Nc = atoi(chrom);
+        if(Nc<minC){
+            stats = NULL;
+        }
+    }
+    strcpy(chrom, chrom_back);
+    free(chrom_back);
     return stats;
 }
 
@@ -1602,12 +1794,27 @@ void Sregionstats_array_count(binaMethFile_t *fp, char *chrom, int start, int en
         countC[i]=0;
         countCT[i]=0;
     }
+    char* chrom_back = malloc(1000);
+    strcpy(chrom_back, chrom);
     if(strcmp(method, "weighted")==0){
         bmStats_array_count(fp, chrom, start, end, splitN, binsize, movestep, weighted, strand, countC, countCT);
     }else {
         fprintf(stderr, "Unexpected method for weighted methylation count!");
         exit(0);
     }
+
+    if(splitN<=1) {
+        int Nc = atoi(chrom);
+        if(Nc<minC){
+            for(i=0;i<splitN*Tsize;i++){
+                countC[i]=0;
+                countCT[i]=0;
+            }
+        }
+    }
+    strcpy(chrom, chrom_back);
+    free(chrom_back);
+
     return;
 }
 
@@ -3348,7 +3555,7 @@ int calbodystats(char *inbmfile, char *method, char *region, uint8_t pstrand, ui
     return 0;
 }
 
-void write_dm(binaMethFile_t *ifp, char* region, FILE* outfileF, char *outformat, binaMethFile_t *ofp, char **chromsUse, uint32_t *starts, uint32_t *ends, float *values, uint16_t *coverages, uint8_t *strands, uint8_t *contexts, char **entryid, int *newchr){
+int write_dm(binaMethFile_t *ifp, char* region, FILE* outfileF, char *outformat, binaMethFile_t *ofp, char **chromsUse, uint32_t *starts, uint32_t *ends, float *values, uint16_t *coverages, uint8_t *strands, uint8_t *contexts, char **entryid, int newchr){
     int printL = 0;
     printL = main_view_bm(ifp, region, outfileF, outformat, ofp, chromsUse, starts, ends, values, coverages, strands, contexts,
          entryid);
@@ -3356,24 +3563,25 @@ void write_dm(binaMethFile_t *ifp, char* region, FILE* outfileF, char *outformat
     if(strcmp(outformat, "dm") == 0) {
         //if(start == 0 && printL>0){
         //这里需要加个判断，要写入的区域是否已经存在相同染色体，如果存在用bmAppendIntervals
-        if( (*newchr) == 0 && printL>0){
+        if( newchr == 0 && printL>0){
             int response = bmAddIntervals(ofp, chromsUse, starts, ends, values, coverages, strands, contexts,
             entryid, printL);
             if(response) {
                 fprintf(stderr, "bmAddIntervals 0\n");
                 return -1;
             }
-            printL = 0;
-            (*newchr) = 1;
+            //printL = 0;
+            //(*newchr) = 1;
         }else if(printL>0){
             //fprintf(stderr, "%d %d\n", starts[0], printL);
             if((err=bmAppendIntervals(ofp, starts, ends, values, coverages, strands, contexts, entryid, printL))!=0) {
                 fprintf(stderr, "bmAppendIntervals 2 %d\n", err);
                 return -1;
             }
-            printL = 0;
+            //printL = 0;
         }
     }
+    return printL;
 }
 
 int main_view_all(binaMethFile_t *ifp, FILE* outfileF, char *outformat, binaMethFile_t *ofp, char* filterchrom){
@@ -3392,6 +3600,7 @@ int main_view_all(binaMethFile_t *ifp, FILE* outfileF, char *outformat, binaMeth
     uint16_t *coverages = malloc(sizeof(uint16_t) * MAX_LINE_PRINT);
     uint8_t *strands = malloc(sizeof(uint8_t) * MAX_LINE_PRINT);
     uint8_t *contexts = malloc(sizeof(uint8_t) * MAX_LINE_PRINT);
+    int usingLine = 0;
 
     for(i=0;i<ifp->cl->nKeys;i++){
         char* chrom = (char*)ifp->cl->chrom[i];
@@ -3403,14 +3612,14 @@ int main_view_all(binaMethFile_t *ifp, FILE* outfileF, char *outformat, binaMeth
                 continue;
             }
         }
-        fprintf(stderr, "process %s\t%ld\n", chrom, len);
+        if(DEBUG>1) fprintf(stderr, "process %s\t%ld\n", chrom, len);
         while(start<len){
             if(end>len){
                 end = len;
             }
             sprintf(region, "%s:%d-%d\n", chrom, start, end);
             //fprintf(stderr, "ccx %s\n", region);
-            write_dm(ifp, region, outfileF, outformat, ofp, chromsUse, starts, ends, values, coverages, strands, contexts, entryid, &newchr);
+            usingLine = write_dm(ifp, region, outfileF, outformat, ofp, chromsUse, starts, ends, values, coverages, strands, contexts, entryid, newchr);
 
             //printL = main_view_bm(ifp, region, outfileF, outformat, ofp, chromsUse, starts, ends, values, coverages, strands, contexts, 
             //    entryid);
@@ -3438,7 +3647,7 @@ int main_view_all(binaMethFile_t *ifp, FILE* outfileF, char *outformat, binaMeth
 //    fprintf(stderr, "\nWWW0W\n");
 
     free(region);
-    for(i =0; i < MAX_LINE_PRINT; i++){
+    for(i =0; i < 1; i++){ //usingLine
         free(chromsUse[i]); free(entryid[i]);
     }
     free(chromsUse); free(entryid); free(starts);
@@ -3462,7 +3671,7 @@ int main_view_bm(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outfor
         substr = strtok(NULL,";");
     }
 
-    char *chrom = malloc(100*sizeof(char)); int start=0, end=0;
+    char *chrom = malloc(200*sizeof(char)); int start=0, end=0;
     char *pszBuf = malloc(sizeof(char)*40000000);
     char *tempstore = pszBuf;
     char *tempchar = malloc(30);
@@ -3593,7 +3802,7 @@ int main_view_bm(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outfor
     return Nprint;
 
 error:
-    fprintf(stderr, "No results found!\n");
+    //fprintf(stderr, "No results found!\n");
     return 0;
 }
 
@@ -3608,7 +3817,9 @@ int main_view_file(binaMethFile_t *ifp, char *bedfile, FILE* outfileF, char *out
     FILE* Fbedfile=File_Open(bedfile,"r");
     char *PerLine = malloc(2000);
     int printL = 0;
-    char *chrom = malloc(100*sizeof(char)); int start=0, end=0;
+    char *chrom = malloc(200*sizeof(char)); int start=0, end=0;
+    char *oldchrom = malloc(200*sizeof(char)); int newchr = 0;
+    strcpy(oldchrom, "NNdmtools");
     char *strand = malloc(2); int pstrand = 2; //.
     unsigned int j = 0;
     char *tempstore = malloc(sizeof(char)*10000000);
@@ -3636,12 +3847,15 @@ int main_view_file(binaMethFile_t *ifp, char *bedfile, FILE* outfileF, char *out
         //sscanf((const char *)regions[i], "%s:%d-%d", chrom, &start, &end);
         if(DEBUG>1) fprintf(stderr, "slen chrom %s %d %d",  chrom, start, end);
         sprintf(region, "%s:%d-%d", chrom, start, end);
-        //fprintf(stderr, "--- version --- %d\n", ifp->hdr->version);
-        main_view(ifp, region, outfileF, outformat, ofp);
+        if(strcmp(oldchrom,chrom) == 0) newchr = 1;
+        else newchr = 0;
+        //fprintf(stderr, "--- version --- %d %s %d\n", ifp->hdr->version, region, newchr);
+        main_view(ifp, region, outfileF, outformat, ofp, newchr);
+        strcpy(oldchrom, chrom);
     }
 
     fclose(Fbedfile);
-    free(chrom);
+    free(chrom); free(oldchrom);
     free(strand);
     free(PerLine); free(region);
 
@@ -3649,11 +3863,11 @@ int main_view_file(binaMethFile_t *ifp, char *bedfile, FILE* outfileF, char *out
     return 0;
 
 error:
-    fprintf(stderr, "No results found!\n");
+    //fprintf(stderr, "No results found!\n");
     return 1;
 }
 
-int main_view(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outformat, binaMethFile_t *ofp){
+int main_view(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outformat, binaMethFile_t *ofp, int newchr){
     // read. test/example_output.bm
     if(DEBUG>1) fprintf(stderr, "\nifp===-=== %d %d\n", ifp->type, ifp->hdr->version);
     //ifp->type = type;
@@ -3673,6 +3887,7 @@ int main_view(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outformat
     char *tempstore = pszBuf;
     char *tempchar = malloc(20);
     int Nprint = 0; int cover = 0; float methlevel = 0;
+    int usingLine = 0;
     if(strcmp(outformat, "dm") == 0) {
         char **chromsUse = malloc(sizeof(char*)*MAX_LINE_PRINT);
         char **entryid = malloc(sizeof(char*)*MAX_LINE_PRINT);
@@ -3687,16 +3902,17 @@ int main_view(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outformat
             //chrom = strtok(regions[i], ",:-");
             //start = atoi(strtok(NULL,",:-"));
             //end = atoi(strtok(NULL,",:-"));
-            if(end-start>1000000) {
-                fprintf(stderr, "view region bigger than 1Mb, exit;");
+            if(end-start>10000000) {
+                fprintf(stderr, "view region bigger than 10Mb, exit;");
                 exit(0);
             }
-            int newchr = 0;
-            write_dm(ifp, regions[i], outfileF, outformat, ofp, chromsUse, starts, ends, values, coverages, strands, contexts, entryid, &newchr);
+            //int newchr = 0;
+            usingLine = write_dm(ifp, regions[i], outfileF, outformat, ofp, chromsUse, starts, ends, values, coverages, strands, contexts, entryid, newchr);
         }
         //free mem
-        for(i =0; i < MAX_LINE_PRINT; i++){
-            free(chromsUse[i]); free(entryid[i]);
+        for(i =0; i < 1; i++){ //usingLine
+//            if(chromsUse[i]) free(chromsUse[i]); 
+//            if(entryid[i]) free(entryid[i]);
         }
         free(chromsUse); free(entryid); free(starts);
         free(ends); free(values); free(coverages); free(strands); free(contexts);
@@ -3706,8 +3922,8 @@ int main_view(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outformat
             chrom = strtok(regions[i], ",:-");
             start = atoi(strtok(NULL,",:-"));
             end = atoi(strtok(NULL,",:-")); // + 1;
-            if(end-start>1000000) {
-                fprintf(stderr, "view region bigger than 1Mb, exit;");
+            if(end-start>10000000) {
+                fprintf(stderr, "view region bigger than 10Mb, exit;");
                 exit(0);
             }
             //strand = strtok(NULL,",:-");
@@ -3811,7 +4027,7 @@ int main_view(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outformat
     return 0;
 
 error:
-    fprintf(stderr, "No results found!\n");
+    //fprintf(stderr, "No results found!\n");
     return 1;
 }
 
@@ -3879,7 +4095,7 @@ int main_view_bedfile(char *inbmF, char *bedfile, int type, FILE* outfileF, char
     return 0;
 
 error:
-    fprintf(stderr, "No results found!\n");
+    //fprintf(stderr, "No results found!\n");
     bmClose(ifp);
     bmCleanup();
     return 1;
@@ -4391,7 +4607,7 @@ int bm_overlap(binaMethFile_t *ifp1, binaMethFile_t *ifp2, char *chrom, int star
     return 0;
 
 error:
-    fprintf(stderr, "Received an error somewhere!\n");
+    fprintf(stderr, "Received an error somewhere or empty file!\n");
     return 1;
 }
 
@@ -4499,7 +4715,7 @@ int bm_overlap_mul(binaMethFile_t **ifp1s, int sizeifp, char *chrom, int start, 
     return 0;
 
 error:
-    fprintf(stderr, "Received an error somewhere!\n");
+    fprintf(stderr, "Received an error somewhere or empty file!\n");
     return 1;
 }
 
@@ -4517,7 +4733,7 @@ int bm_merge_mul(binaMethFile_t **ifp1s, int sizeifp, int m_method, char *chrom,
     for(i=0;i<sizeifp;i++){
         bmOverlappingIntervals_t *o1;
         o1 = bmGetOverlappingIntervals(ifp1s[i], chrom, start, end+1);
-        if(!o1) goto error;
+        if(!o1) continue; //goto error;
         if(o1->l){
             for(j=0; j<o1->l; j++) {
                 loci = o1->start[j]-start;
@@ -4611,7 +4827,7 @@ int bm_merge_mul(binaMethFile_t **ifp1s, int sizeifp, int m_method, char *chrom,
     return printed;
 
 error:
-    fprintf(stderr, "Received an error somewhere!\n");
+    fprintf(stderr, "Received an error somewhere or empty file!\n");
     return 1;
 }
 
@@ -4741,7 +4957,8 @@ char *fastStrcat(char *s, char *t)
 
 void onlyexecuteCMD(const char *cmd, const char *errorinfor)
 {
-    char ps[1024]={0};
+    //char ps[1024]={0};
+    char* ps = malloc(sizeof(char)*10000);
     FILE *ptr;
     strcpy(ps, cmd);
     //fprintf(stderr, "[MM] %s\n", cmd);
@@ -4828,35 +5045,75 @@ void printchrmeth(binaMethFile_t *bm, char* chrom, FILE* outfileF){
     return;
 }
 
-void calchh(binaMethFile_t *bm, FILE* outfileF){
+void calchh(binaMethFile_t *bm, FILE* outfileF, int bsmode){ //bsmode 0 chg 1 chh
     int64_t i64;
     double meth_p = 0, meth_n = 0, meth = 0;
     int Np = 0, Nn = 0;
     //Chromosome idx/name/length
     if(bm->cl) {
         for(i64=0; i64<bm->cl->nKeys; i64++) {
-            //fprintf(stderr, "  %"PRIu64"\t%s\t%"PRIu32"\n", i64, bm->cl->chrom[i64], bm->cl->len[i64]);
+            fprintf(stderr, "  %"PRIu64"\t%s\t%"PRIu32"\n", i64, bm->cl->chrom[i64], bm->cl->len[i64]);
             double *stats_p = Sregionstats_array(bm, bm->cl->chrom[i64], 0, bm->cl->len[i64], 1, bm->cl->len[i64], bm->cl->len[i64], "mean", 0);
             double *stats_n = Sregionstats_array(bm, bm->cl->chrom[i64], 0, bm->cl->len[i64], 1, bm->cl->len[i64], bm->cl->len[i64], "mean", 1);
             //double *stats = Sregionstats_array(bm, bm->cl->chrom[i64], 0, bm->cl->len[i64], 1, bm->cl->len[i64], bm->cl->len[i64], "mean", 2);
-            if(!isnan(stats_p[3])) {
-                meth_p += stats_p[3];
-                Np++;
-            }
-            if(!isnan(stats_n[3])) {
-                meth_n += stats_n[3];
-                Nn++;
-            }
-            if(!isnan(stats_p[3]) && !isnan(stats_n[3])) {
-                fprintf(outfileF, "CHH\t%s\t%f\n", bm->cl->chrom[i64], (stats_p[3]+stats_n[3])/2);
+            if(bsmode == 0){
+                if(stats_p && !isnan(stats_p[2])) {
+                    meth_p += stats_p[2];
+                    Np++;
+                }
+                if(stats_n && !isnan(stats_n[2])) {
+                    meth_n += stats_n[2];
+                    Nn++;
+                }
+                if(stats_p && stats_n && !isnan(stats_p[2]) && !isnan(stats_n[2])) {
+                    fprintf(outfileF, "CHG\t%s\t%f\n", bm->cl->chrom[i64], (stats_p[2]+stats_n[2])/2);
+                }
+            }else{
+                if(stats_p && !isnan(stats_p[3])) {
+                    meth_p += stats_p[3];
+                    Np++;
+                }
+                if(stats_n && !isnan(stats_n[3])) {
+                    meth_n += stats_n[3];
+                    Nn++;
+                }
+                if(stats_p && stats_n && !isnan(stats_p[3]) && !isnan(stats_n[3])) {
+                    fprintf(outfileF, "CHH\t%s\t%f\n", bm->cl->chrom[i64], (stats_p[3]+stats_n[3])/2);
+                }
             }
         }
     }
-    fprintf(outfileF, "##CHH level in all chromosome\n");
-    fprintf(outfileF, "CHH\t+\t%f\n", meth_p/Np);
-    fprintf(outfileF, "CHH\t-\t%f\n", meth_n/Nn);
-    fprintf(outfileF, "CHH\t.\t%f\n", (meth_n+meth_p)/(Np+Nn));
-    fprintf(outfileF, "##estimated bs rate by CHH level in all chromosome\n");
-    fprintf(outfileF, "bsrate\t%f\n", (meth_n+meth_p)/(Np+Nn));
+    if(bsmode == 0){
+        fprintf(outfileF, "##CHG level in all chromosome\n");
+        fprintf(outfileF, "CHG\t+\t%f\n", meth_p/Np);
+        fprintf(outfileF, "CHG\t-\t%f\n", meth_n/Nn);
+        fprintf(outfileF, "CHG\t.\t%f\n", (meth_n+meth_p)/(Np+Nn));
+        fprintf(outfileF, "##estimated bs rate by CHG level in all chromosome\n");
+        fprintf(outfileF, "bsrate\t%f\n", (meth_n+meth_p)/(Np+Nn));
+    }else{
+        fprintf(outfileF, "##CHH level in all chromosome\n");
+        fprintf(outfileF, "CHH\t+\t%f\n", meth_p/Np);
+        fprintf(outfileF, "CHH\t-\t%f\n", meth_n/Nn);
+        fprintf(outfileF, "CHH\t.\t%f\n", (meth_n+meth_p)/(Np+Nn));
+        fprintf(outfileF, "##estimated bs rate by CHH level in all chromosome\n");
+        fprintf(outfileF, "bsrate\t%f\n", (meth_n+meth_p)/(Np+Nn));
+    }
     return;
 }
+
+void *multithread_cmd(void *arg){
+    //fprintf(stderr, "xxxxx %d %d\n", ((struct ARGS*)arg)->sizeifp, ((struct ARGS*)arg)->ThreadID);
+    if(((struct ARGS*)arg)->Nthreads > 1) {
+        for(((struct ARGS*)arg)->i = 0; ((struct ARGS*)arg)->i < ((struct ARGS*)arg)->sizeifp; ((struct ARGS*)arg)->i++){
+            char cmd[1000] = {0};
+            sprintf(cmd, "%s %s -m %s.%s", ((struct ARGS*)arg)->runCMD, ((struct ARGS*)arg)->prcessChr[((struct ARGS*)arg)->i], ((struct ARGS*)arg)->outfile, ((struct ARGS*)arg)->prcessChr[((struct ARGS*)arg)->i]);
+            fprintf(stderr, "[ dmtools ] %s %d, %d\n", cmd, ((struct ARGS*)arg)->ThreadID, ((struct ARGS*)arg)->sizeifp);
+            onlyexecuteCMD(cmd, Help_String_bam2dm);
+        }
+    }else{
+        onlyexecuteCMD(((struct ARGS*)arg)->runCMD, Help_String_bam2dm);
+    }
+
+    return NULL;
+}
+

@@ -359,8 +359,8 @@ def plotline(x, NCcovergae, outfilename, mydpi, image_format, legend, label):
           linewidth=1, markersize=3)
     x_major_locator=ticker.MultipleLocator(1)
     ax[0].xaxis.set_major_locator(x_major_locator)
-    ax[0].set_title("The number of C meet coverage > x[idx]", fontsize=16)
-    ax[0].set_xlabel("Coverage", fontsize=14)
+    ax[0].set_title("Coverage distribution of cytosines", fontsize=16)
+    ax[0].set_xlabel("Coverage threshold (>=)", fontsize=14)
     ax[0].set_ylabel("Number of cytocines", fontsize=14)
 
     # Using plot(..., dashes=...) to set the dashing when creating a line
@@ -374,9 +374,9 @@ def plotline(x, NCcovergae, outfilename, mydpi, image_format, legend, label):
         ymin = 0
     x_major_locator=ticker.MultipleLocator(1)
     ax[1].xaxis.set_major_locator(x_major_locator)
-    ax[1].set_title("Coverage percent", fontsize=16)
-    ax[1].set_xlabel("#Cs meet >= coverage", fontsize=14)
-    ax[1].set_ylabel("Percent", fontsize=14)
+    ax[1].set_title("Coverage distribution of cytosines", fontsize=16)
+    ax[1].set_xlabel("Coverage threshold (>=)", fontsize=14)
+    ax[1].set_ylabel("Percent of cytosines", fontsize=14)
     ax[1].set(ylim=(ymin, 1.005))
     if legend < 11:
         plt.legend(loc=legend, prop={'size': legendsize}, frameon=False, labels=label)

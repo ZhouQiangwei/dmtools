@@ -99,7 +99,7 @@ int bmCreateHdr(binaMethFile_t *fp, int32_t maxZooms) {
     }
 
     hdr->bufSize = fp->type;// 32768; //fp->type;??// 0x8000 is 32768, per entry, momo; //When the file is finalized this is reset if fp->writeBuffer->compressPsz is 0!
-    hdr->minVal = DBL_MAX;
+    hdr->minVal = 2; //DBL_MAX;
     hdr->maxVal = DBL_MIN;
     fp->hdr = hdr;
     fp->writeBuffer->blockSize = 64;
@@ -1556,6 +1556,7 @@ int bmFinalize(binaMethFile_t *fp) {
         bmSetPos(fp, offset);
         if(writeZoomLevels(fp)) return 7; //This write nLevels as well
     }
+
     if(DEBUG>1) printf("666666\n");
     //write magic at the end of the file
     four = BIGWIG_MAGIC; //BM_MAGIC;//BIGWIG_MAGIC;
