@@ -136,9 +136,11 @@ def readmr(filename, nsample, label, processed, plotidx):
             #Clear the leading and trailing spaces (if any) for each line, and then separate them with "\t"
             #for kv in [line.strip().split('\t')]:
             kv=line.strip().split('\t')
-            #print(kv)
             #按照键，把值写进去
-            if(len(kv)>=6):
+            #print(kv, len(kv))
+            if(len(kv)>=7):
+                dict_data.setdefault(kv[6],[]).append(float(float(kv[3])/int(kv[4])))
+            elif(len(kv)>=6):
                 dict_data.setdefault(kv[5],[]).append(float(float(kv[3])/int(kv[4])))
             else:
                 dict_data.setdefault(kv[0]+"_"+kv[1]+"_"+kv[2],[]).append(float(float(kv[3])/int(kv[4])))
@@ -152,8 +154,9 @@ def readmr(filename, nsample, label, processed, plotidx):
     if(processed+1<nsample):
         return
     #print（dict_data）
+    dict_copy = dict(dict_data)
     if(nsample>1):
-        for key, val in dict_data.items():
+        for key, val in dict_copy.items():
             if(len(val)<nsample):
                 del dict_data[key] 
     #这是把键读出来成为一个列表
@@ -696,6 +699,7 @@ def plotheatmaper(mymatrix, outFileName,
         new_mins = [float(x) for x in zMin]
         zMin = new_mins
 
+    print(zMin)
     if zMax is None:
         if matrix_flatten is None:
             matrix_flatten = mymatrix.flatten()
@@ -1137,6 +1141,7 @@ if __name__ == '__main__':
     filename=args.outFileName
     zmin=args.zMin
     zmax=args.zMax
+    print(zmin, zmax)
     
     #if args.zMid == None:
     #    zmid = (zmin+zmax)/2
@@ -1261,7 +1266,7 @@ if __name__ == '__main__':
                colorMapDict=colormap_dict,
                plotTitle='',
                xAxisLabel='', yAxisLabel='', regionsLabel='',
-               zMin=None, zMax=zmax,
+               zMin=zmin, zMax=zmax,
                yMin=None, yMax=None,
                averageType='median',
                reference_point_label=args.centerlabel,

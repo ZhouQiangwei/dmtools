@@ -396,7 +396,12 @@ def readmethfile(methlevel, methleveldf, filename, label, chr_choice, nsample, p
     with open(filename, 'r') as mdata:
         for line in mdata:
             data = line.split()
-            chrom, pos, strand, mC, cover, lineID = data
+            if len(data) == 6:
+                chrom, pos, strand, mC, cover, lineID = data
+            elif len(data) == 7:
+                chrom, pos, strand, mC, cover, strand, lineID = data
+            else:
+                print("Invalid number of columns")
             if chr_choice != 'all' and chrom != chr_choice:
                 continue
             mr = int(mC)/int(cover)
