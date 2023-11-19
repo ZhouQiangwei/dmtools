@@ -8,7 +8,7 @@
 
   <img src="https://img.shields.io/github/downloads/ZhouQiangwei/dmtools/total">
   <img src="https://img.shields.io/github/watchers/ZhouQiangwei/dmtools">
-  <a href='https://github.com/ZhouQiangwei/dmtools'><img alt='clones' src='https://img.shields.io/badge/dynamic/json?color=success&label=Clone&query=count&url=https://gist.githubusercontent.com/ZhouQiangwei/015ef4425775a468b8a468ffad77b090/raw/clone.json&logo=github'></a>
+  <a href='https://github.com/ZhouQiangwei/dmtools'><img alt='Clones' src='https://img.shields.io/badge/dynamic/json?color=success&label=Clone&query=count&url=https://gist.githubusercontent.com/ZhouQiangwei/6f7019fe4f7d99f0eb0af4dd610a51db/raw/clone.json&logo=github'></a>
   <a href="https://dmtools-docs.rtfd.io"><img src="https://hits.seeyoufarm.com/api/count/incr/badge.svg?url=https%3A%2F%2Fgithub.com%2FZhouQiangwei%2Fdmtools&count_bg=%2379C83D&title_bg=%23555555&icon=coffeescript.svg&icon_color=%23E7E7E7&title=views&edge_flat=false"/></a>
 </p>
 
