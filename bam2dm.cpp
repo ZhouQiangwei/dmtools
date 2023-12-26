@@ -165,7 +165,9 @@ string Prefix="None";
 #define BUFSIZE 1000000
 #define MAX_CHROM 1000000
 binaMethFile_t *fp;
+binaMethFile_t *fp_gch; //GCH sites (GCA/GCT/GCC) were used to analyze chromatin accessibility
 string contextfilter="C";
+string tech="BS-Seq";
 int main(int argc, char* argv[])
 {
 	time_t Start_Time,End_Time;
@@ -185,6 +187,8 @@ int main(int argc, char* argv[])
 		"\t-r|--remove_dup       REMOVE_DUP, default:false\n"
         "\t--mrtxt               print prefix.methratio.txt file\n"
         "\t--cf                  context filter for print results, C, CG, CHG, CHH, default: C\n"
+        "\t-p                    [int] threads\n"
+        "\t--NoMe                data type for NoMe-seq\n"
         "\t [DM format] paramaters\n"
         "\t-C                    print coverage\n"
         "\t-S                    print strand\n"
@@ -205,6 +209,7 @@ int main(int argc, char* argv[])
 	strcpy(Output_Name, "None");
 	string Prefix2="None";
 	string methOutfileName;
+    string GCHOutfileName;
 	string Geno;
 //	int Current_Option=0;
 	int InFileStart=0,InFileEnd=0;
@@ -244,6 +249,8 @@ int main(int argc, char* argv[])
         }
         else if(!strcmp(argv[i],"--cf")){
             contextfilter = argv[++i];
+        }else if(!strcmp(argv[i],"--NoMe")){
+            tech = "NoMe";
         }
 		else if(!strcmp(argv[i], "--sam-seq-beforeBS"))
 		{
@@ -528,6 +535,22 @@ int main(int argc, char* argv[])
 					return 1;
 				}
 
+                if(tech=="NoMe"){
+                    fp_gch = NULL;
+                    GCHOutfileName=Prefix+".gch.dm";
+
+                    if(bmInit(1<<17) != 0) {
+                        fprintf(stderr, "Received an error in dmInit\n");
+                        return 1;
+                    }
+                    fp_gch = (binaMethFile_t*)bmOpen((char*)GCHOutfileName.data(), NULL, "w");
+                    fp_gch->type = write_type;
+                    if(!fp_gch) {
+                        fprintf(stderr, "An error occurred while opening example_output.dm for writingn\n");
+                        return 1;
+                    }
+                }
+
 			}
                         args.INbamfilename = new char[1000];
 			for(int f=InFileStart;f<=InFileEnd;f++)
@@ -609,6 +632,16 @@ int main(int argc, char* argv[])
 					if(bmWriteHdr(fp)) exit(0);
 					//Some example methlevel
 					if(DEBUG>1) fprintf(stderr, "====HHH type %d\n", fp->type);
+
+                    if(tech=="NoMe"){
+                        //Allow up to 10 zoom levels, though fewer will be used in practice
+                        if(bmCreateHdr(fp_gch, zoomlevel)) exit(0);
+                        //Create the chromosome lists
+                        fp_gch->cl = bmCreateChromList(chroms, chrLens, Genome_Count); //2
+                        if(!fp_gch->cl) exit(0);
+                        //Write the header
+                        if(bmWriteHdr(fp_gch)) exit(0);
+                    }
 				}
 				//nothreads
                 args.processChr=new char[1000];
@@ -660,6 +693,9 @@ int main(int argc, char* argv[])
 			}
 			fprintf(stderr, "[DM::calmeth] dm closing\n");
         	bmClose(fp);
+            if(tech=="NoMe"){
+                bmClose(fp_gch);
+            }
     	    fprintf(stderr, "[DM::calmeth] dm closed\n");
 	        bmCleanup();
 //delete
@@ -830,6 +866,16 @@ float *values;
 uint16_t *coverages;
 uint8_t *strands;
 uint8_t *contexts;
+
+//
+char **chromsUse_gch;
+char **entryid_gch;
+uint32_t *starts_gch;
+uint32_t *pends_gch;
+float *values_gch;
+uint16_t *coverages_gch;
+uint8_t *strands_gch;
+uint8_t *contexts_gch;
 void print_meth_tofile(int genome_id, ARGS* args){
 	if(Methratio)
 	{
@@ -843,7 +889,16 @@ void print_meth_tofile(int genome_id, ARGS* args){
 		coverages = (uint16_t *)malloc(sizeof(uint16_t) * MAX_LINE_PRINT);
 		strands = (uint8_t *)malloc(sizeof(uint8_t) * MAX_LINE_PRINT);
 		contexts = (uint8_t *)malloc(sizeof(uint8_t) * MAX_LINE_PRINT);
-		int printL = 0, chrprinHdr = 0;
+        //for GCH chromatin accessibility
+        chromsUse_gch = (char **)malloc(sizeof(char*)*MAX_LINE_PRINT);
+        starts_gch = (uint32_t *)calloc(MAX_LINE_PRINT, sizeof(uint32_t));
+        pends_gch = (uint32_t *)malloc(sizeof(uint32_t) * MAX_LINE_PRINT);
+        values_gch = (float *)malloc(sizeof(float) * MAX_LINE_PRINT);
+        coverages_gch = (uint16_t *)malloc(sizeof(uint16_t) * MAX_LINE_PRINT);
+        strands_gch = (uint8_t *)malloc(sizeof(uint8_t) * MAX_LINE_PRINT);
+        contexts_gch = (uint8_t *)malloc(sizeof(uint8_t) * MAX_LINE_PRINT);
+
+		int printL = 0, chrprinHdr = 0, printL_gch = 0, chrprinHdr_gch = 0;
 		fprintf(stderr, "[DM::calmeth] Processing chrom %d %d %d\n", genome_id, totalC, totalG);
 		//--------DMC---------------//
 		//
@@ -871,7 +926,7 @@ void print_meth_tofile(int genome_id, ARGS* args){
 			for(int l=0;l<args->Genome_Offsets[i].Offset;l++)//loci
 			{
 				//-----F
-				std::string context;
+				std::string context;std::string middleThree;
 				
 				if(args->Methy_List.plusMethylated[l]+args->Methy_List.plusUnMethylated[l]>=1) //coverage
 				{//chromsome loci strand context methratio eff_CT_count C_count T_count CT_count rev_G_count rev_GA_count
@@ -912,126 +967,174 @@ void print_meth_tofile(int genome_id, ARGS* args){
 					for(int nc=0; nc<15; nc++){
 						if(Cover>nc){ CoverC[nc]++; }
 					}
+                    if(Cover<Mcoverage || Cover > maxcoverage)
+                        continue;
+                    //methratio
+                    float PlusMethratio;
+                    if(revGA>0)
+                        PlusMethratio=std::min(float(C_count)/(float(C_count+T_count)*revGA),(float)1.0);
+                    else
+                        PlusMethratio=float(C_count)/float(C_count+T_count);
 
-					if(charFor1=='G') //(args.Methy_List[i].MethContext[l]==1)
-					{
-						context="CG";
-						plus_mCGcount+=C_count;
-						plusCGcount+=(C_count+T_count);
-						//--DMR
-						plus_mCG+=C_count;
-						plusCG+=(C_count+T_count);
-						count_plus_CG++;
-						//chromsome bins
-						pluscountperCG+=C_count;
-						pluscountCG+=(C_count+T_count);
-					}
-					else if(charFor1!='G' && charFor2=='G') //(args.Methy_List[i].MethContext[l]==2)
-					{
-						context="CHG";
-						plus_mCHGcount+=C_count;
-						plusCHGcount+=(C_count+T_count);
-						//--DMR
-						plus_mCHG+=C_count;
-						plusCHG+=(C_count+T_count);
-						count_plus_CHG++;
-						//bins
-						pluscountperCHG+=C_count;
-						pluscountCHG+=(C_count+T_count);								
-					}
-					else if(charFor1!='G' && charFor1!='G') //(args.Methy_List[i].MethContext[l]==3)
-					{
-						context="CHH";
-						plus_mCHHcount+=C_count;
-						plusCHHcount+=(C_count+T_count);
-						//DMR
-						plus_mCHH+=C_count;
-						plusCHH+=(C_count+T_count);
-						count_plus_CHH++;
-						//bins
-						pluscountperCHH+=C_count;
-						pluscountCHH+=(C_count+T_count);							
-					}
-					else context="NA";
-					
-					if(Cover<Mcoverage || Cover > maxcoverage)
-						continue;
-                    if(contextfilter != "C") {
-                        if(contextfilter != context) continue;
+                    if(tech=="BS-Seq") {
+					    if(charFor1=='G') //(args.Methy_List[i].MethContext[l]==1)
+					    {
+					    	context="CG";
+					    	plus_mCGcount+=C_count;
+					    	plusCGcount+=(C_count+T_count);
+					    	//--DMR
+					    	plus_mCG+=C_count;
+					    	plusCG+=(C_count+T_count);
+					    	count_plus_CG++;
+					    	//chromsome bins
+					    	pluscountperCG+=C_count;
+					    	pluscountCG+=(C_count+T_count);
+					    }
+					    else if(charFor1!='G' && charFor2=='G') //(args.Methy_List[i].MethContext[l]==2)
+					    {
+					    	context="CHG";
+					    	plus_mCHGcount+=C_count;
+					    	plusCHGcount+=(C_count+T_count);
+					    	//--DMR
+					    	plus_mCHG+=C_count;
+					    	plusCHG+=(C_count+T_count);
+					    	count_plus_CHG++;
+					    	//bins
+					    	pluscountperCHG+=C_count;
+					    	pluscountCHG+=(C_count+T_count);								
+					    }
+					    else if(charFor1!='G' && charFor1!='G') //(args.Methy_List[i].MethContext[l]==3)
+					    {
+					    	context="CHH";
+					    	plus_mCHHcount+=C_count;
+					    	plusCHHcount+=(C_count+T_count);
+					    	//DMR
+					    	plus_mCHH+=C_count;
+					    	plusCHH+=(C_count+T_count);
+					    	count_plus_CHH++;
+					    	//bins
+					    	pluscountperCHH+=C_count;
+					    	pluscountCHH+=(C_count+T_count);							
+					    }
+					    else context="NA";
+					    
+                        if(contextfilter != "C") {
+                            if(contextfilter != context) continue;
+                        }
+					    
+					    unsigned int mCdensityloci=std::min( (int)floor((double)(PlusMethratio*100) )  ,99);
+					    if( !strcmp(context.c_str(),"CG")) mCGdensity[mCdensityloci]++;
+					    else if(!strcmp(context.c_str(),"CHG")) mCHGdensity[mCdensityloci]++;
+					    else if(!strcmp(context.c_str(),"CHH")) mCHHdensity[mCdensityloci]++;							
+					    
+					    string category = "NA";
+					    if(PlusMethratio>=0.8){
+					    	M++;
+					    	category="M";
+					    	if(!strcmp(context.c_str(),"CG")) M_CG++;
+					    }else if(PlusMethratio >=0.6){
+					    	Mh++;
+					    	category="Mh";
+					    	if(!strcmp(context.c_str(),"CG")) Mh_CG++;
+					    }else if(PlusMethratio >=0.4){
+					    	H_AllC++;
+					    	category="H";
+					    	if(!strcmp(context.c_str(),"CG")) H_CG++;
+					    }else if(PlusMethratio >=0.2){
+					    	hU++;
+					    	category="hU";
+					    	if(!strcmp(context.c_str(),"CG")) hU_CG++;
+					    }else{
+					    	U++;
+					    	category="U";
+					    	if(!strcmp(context.c_str(),"CG")) U_CG++;
+					    }
+                        //print store
+                        chromsUse[printL] = strdup(args->Genome_Offsets[i].Genome);
+                        starts[printL] = l+1;
+                        pends[printL] = l+2;
+                        coverages[printL] = (C_count+T_count);
+                        values[printL] = PlusMethratio;
+                        strands[printL] = 0; //0 represent '+'
+                        if(strcmp(context.c_str(), "C") == 0){
+                            contexts[printL] = 0;
+                        }else if(strcmp(context.c_str(), "CG") == 0){
+                            contexts[printL] = 1;
+                        }else if(strcmp(context.c_str(), "CHG") == 0){
+                            contexts[printL] = 2;
+                        }else{ // if(strcmp(context.c_str(), "CHH") == 0){
+                            contexts[printL] = 3;
+                        }
+                        printL++;
+                        if(chrprinHdr==0){
+                            int response = bmAddIntervals(fp, chromsUse, starts, pends, values, coverages, strands, contexts,
+                            entryid, 1);
+                            if(response) goto error;
+                        }
+                        else if(printL>MAX_LINE_PRINT){
+                            //We can continue appending similarly formatted entries
+                            //N.B. you can't append a different chromosome (those always go into different
+                            if(bmAppendIntervals(fp, starts+1, pends+1, values+1, coverages+1, strands+1, contexts+1, entryid, printL-1)) goto error;
+                            printL = 0;
+                        }
+                        chrprinHdr = 1;
+                        if(printtxt == 1){
+                            if(revGA>0) fprintf(METHOUTFILE,"%s\t%d\t+\t%s\t%d\t%d\t%f\t%0.001f\t%d\t%d\t%s\t%s\n",args->Genome_Offsets[i].Genome,l+1,context.c_str(),C_count,(C_count+T_count),PlusMethratio,float(C_count+T_count)*revGA,rev_G,(rev_A+rev_G),category.c_str(),Fivecontext.c_str());
+                            else fprintf(METHOUTFILE,"%s\t%d\t+\t%s\t%d\t%d\t%f\tnull\t%d\t%d\t%s\t%s\n",args->Genome_Offsets[i].Genome,l+1,context.c_str(),C_count,(C_count+T_count),PlusMethratio,rev_G,(rev_A+rev_G),category.c_str(),Fivecontext.c_str());
+                        }
+                    } else if(tech=="NoMe") {
+                        // 获取中间三个字符的子串
+                        middleThree = Fivecontext.substr(1, 3);
+                        if(middleThree=="ACG" || middleThree=="TCG") { //WCG for methylation
+                            //print store
+                            chromsUse[printL] = strdup(args->Genome_Offsets[i].Genome);
+                            starts[printL] = l+1;
+                            pends[printL] = l+2;
+                            coverages[printL] = (C_count+T_count);
+                            values[printL] = PlusMethratio;
+                            strands[printL] = 0; //0 represent '+'
+                            contexts[printL] = 0;
+                            printL++;
+                            if(chrprinHdr==0){
+                                int response = bmAddIntervals(fp, chromsUse, starts, pends, values, coverages, strands, contexts,
+                                entryid, 1);
+                                if(response) goto error;
+                            }
+                            else if(printL>MAX_LINE_PRINT){
+                                //We can continue appending similarly formatted entries
+                                //N.B. you can't append a different chromosome (those always go into different
+                                if(bmAppendIntervals(fp, starts+1, pends+1, values+1, coverages+1, strands+1, contexts+1, entryid, printL-1)) goto error;
+                                printL = 0;
+                            }
+                            chrprinHdr = 1;
+                        }else if(middleThree=="GCA" || middleThree=="GCT" || middleThree=="GCC") { //GCH for chromatin accessibility
+                            chromsUse_gch[printL_gch] = strdup(args->Genome_Offsets[i].Genome);
+                            starts_gch[printL_gch] = l+1;
+                            pends_gch[printL_gch] = l+2;
+                            coverages_gch[printL_gch] = (C_count+T_count);
+                            values_gch[printL_gch] = PlusMethratio;
+                            strands_gch[printL_gch] = 0; //0 represent '+'
+                            contexts_gch[printL_gch] = 0;
+                            //fprintf(stderr, "\n%s %d %d %f\n", strdup(args->Genome_Offsets[i].Genome), l+1, C_count+T_count, PlusMethratio);
+                            printL_gch++;
+                            if(chrprinHdr_gch==0){
+                                int response = bmAddIntervals(fp_gch, chromsUse_gch, starts_gch, pends_gch, values_gch, coverages_gch, strands_gch, contexts_gch,
+                                entryid_gch, 1);
+                                if(response) goto error;
+                            }
+                            else if(printL_gch>MAX_LINE_PRINT){
+                                //We can continue appending similarly formatted entries
+                                //N.B. you can't append a different chromosome (those always go into different
+                                if(bmAppendIntervals(fp_gch, starts_gch+1, pends_gch+1, values_gch+1, coverages_gch+1, strands_gch+1, contexts_gch+1, entryid_gch, printL_gch-1)) goto error;
+                                printL_gch = 0;
+                            }
+                            chrprinHdr_gch = 1;
+                        }
                     }
-					//methratio	
-					float PlusMethratio;
-					if(revGA>0) 
-						PlusMethratio=std::min(float(C_count)/(float(C_count+T_count)*revGA),(float)1.0);
-					else 
-						PlusMethratio=float(C_count)/float(C_count+T_count);
-					
-					unsigned int mCdensityloci=std::min( (int)floor((double)(PlusMethratio*100) )  ,99);
-					if( !strcmp(context.c_str(),"CG")) mCGdensity[mCdensityloci]++;
-					else if(!strcmp(context.c_str(),"CHG")) mCHGdensity[mCdensityloci]++;
-					else if(!strcmp(context.c_str(),"CHH")) mCHHdensity[mCdensityloci]++;							
-					
-					string category = "NA";
-						if(PlusMethratio>=0.8){
-							M++;
-							category="M";
-							if(!strcmp(context.c_str(),"CG")) M_CG++;
-						}else if(PlusMethratio >=0.6){
-							Mh++;
-							category="Mh";
-							if(!strcmp(context.c_str(),"CG")) Mh_CG++;
-						}else if(PlusMethratio >=0.4){
-							H_AllC++;
-							category="H";
-							if(!strcmp(context.c_str(),"CG")) H_CG++;
-						}else if(PlusMethratio >=0.2){
-							hU++;
-							category="hU";
-							if(!strcmp(context.c_str(),"CG")) hU_CG++;
-						}else{
-							U++;
-							category="U";
-							if(!strcmp(context.c_str(),"CG")) U_CG++;
-						}
-
-					//print store
-					chromsUse[printL] = strdup(args->Genome_Offsets[i].Genome);
-					starts[printL] = l+1;
-					pends[printL] = l+2;
-					coverages[printL] = (C_count+T_count);
-                	values[printL] = PlusMethratio;
-					strands[printL] = 0; //0 represent '+'
-					if(strcmp(context.c_str(), "C") == 0){
-						contexts[printL] = 0;
-					}else if(strcmp(context.c_str(), "CG") == 0){
-						contexts[printL] = 1;
-					}else if(strcmp(context.c_str(), "CHG") == 0){
-						contexts[printL] = 2;
-					}else{ // if(strcmp(context.c_str(), "CHH") == 0){
-						contexts[printL] = 3;
-					}
-					printL++;
-					if(chrprinHdr==0){
-						int response = bmAddIntervals(fp, chromsUse, starts, pends, values, coverages, strands, contexts, 
-		                entryid, 1);
-        		        if(response) goto error;
-					}
-					else if(printL>MAX_LINE_PRINT){
-						//We can continue appending similarly formatted entries
-						//N.B. you can't append a different chromosome (those always go into different
-						if(bmAppendIntervals(fp, starts+1, pends+1, values+1, coverages+1, strands+1, contexts+1, entryid, printL-1)) goto error;
-						printL = 0;
-					}
-					chrprinHdr = 1;
-
-					if(printtxt == 1){  
-						if(revGA>0) fprintf(METHOUTFILE,"%s\t%d\t+\t%s\t%d\t%d\t%f\t%0.001f\t%d\t%d\t%s\t%s\n",args->Genome_Offsets[i].Genome,l+1,context.c_str(),C_count,(C_count+T_count),PlusMethratio,float(C_count+T_count)*revGA,rev_G,(rev_A+rev_G),category.c_str(),Fivecontext.c_str());
-						else fprintf(METHOUTFILE,"%s\t%d\t+\t%s\t%d\t%d\t%f\tnull\t%d\t%d\t%s\t%s\n",args->Genome_Offsets[i].Genome,l+1,context.c_str(),C_count,(C_count+T_count),PlusMethratio,rev_G,(rev_A+rev_G),category.c_str(),Fivecontext.c_str());
-					}
 
 				}
 
-				if(args->Methy_List.NegMethylated[l]+args->Methy_List.NegUnMethylated[l]>=1) //coverage
+				if(args->Methy_List.NegMethylated[l]+args->Methy_List.NegUnMethylated[l]>=1) //coverage neg
 				{
 					int C_count=args->Methy_List.NegMethylated[l];
 					int T_count=args->Methy_List.NegUnMethylated[l];
@@ -1063,128 +1166,179 @@ void print_meth_tofile(int genome_id, ARGS* args){
 					memcpy(Fcontext,Fivecontext.c_str(),stringlength+1);
 					if(stringlength<5) printf("\n%d %d %d %s \n",strlen(Fivecontext.c_str()), l, args->Genome_Offsets[i].Offset, args->Genome_Offsets[i].Genome);
 					ReverseC_Context(Fcontext,Fivecontext.c_str(),stringlength);
-					
+
 					int Cover = C_count+T_count;
 					for(int nc=0; nc<15; nc++){
 						if(Cover>nc){ CoverC[nc]++; }
 					}
 
-					char charBac1='N',charBac2='N';
-					if(l>=1) charBac1=toupper(args->Genome_List[i].Genome[l-1]);
-					if(l>=2) charBac2=toupper(args->Genome_List[i].Genome[l-2]);
-					if(charBac1=='C') //(args.Methy_List[i].MethContext[l]==1)
-					{
-						context="CG";
-						Neg_mCGcount+=C_count;
-						NegCGcount+=(C_count+T_count);
-						//--DMR
-						Neg_mCG+=C_count;
-						NegCG+=(C_count+T_count);
-						count_neg_CG++;
-						//bins
-		                          NegcountperCG+=C_count;
-		                          NegcountCG+=(C_count+T_count);
-					}
-					else if(charBac1!='C' && charBac2=='C') //(args.Methy_List[i].MethContext[l]==2)
-					{
-						context="CHG";
-						Neg_mCHGcount+=C_count;
-						NegCHGcount+=(C_count+T_count);
-						//---DMR
-						Neg_mCHG+=C_count;
-						NegCHG+=(C_count+T_count);
-						count_neg_CHG++;
-						//bins
-		                        NegcountperCHG+=C_count;
-		                        NegcountCHG+=(C_count+T_count);
-					}
-					else if(charBac1!='C' && charBac2!='C') //(args.Methy_List[i].MethContext[l]==3)
-					{
-						context="CHH";
-						Neg_mCHHcount+=C_count;
-						NegCHHcount+=(C_count+T_count);
-						//---DMR
-						Neg_mCHH+=C_count;
-						NegCHH+=(C_count+T_count);
-						count_neg_CHH++;
-						//bins
-		                        NegcountperCHH+=C_count;
-		                        NegcountCHH+=(C_count+T_count);
-					}
-					else context="NA";
-
                     if(Cover<Mcoverage || Cover > maxcoverage) continue;
-                    if(contextfilter != "C") {
-                        if(contextfilter != context) continue;
-                    }
-					//methratio	
-					float NegMethratio;
-					if(revGA>0)
-						NegMethratio=std::min(float(C_count)/(float(C_count+T_count)*revGA),(float)1.0);
-					else 
-						NegMethratio=float(C_count)/(float(C_count+T_count));
-					
-					unsigned int mCdensityloci= std::min( (int)floor((double)(NegMethratio*100) ) ,99);
-					if(!strcmp(context.c_str(),"CG")) mCGdensity[mCdensityloci]++;
-					else if(!strcmp(context.c_str(),"CHG")) mCHGdensity[mCdensityloci]++;
-					else if(!strcmp(context.c_str(),"CHH")) mCHHdensity[mCdensityloci]++;
-					
-					string category = "NA";
-			              if(NegMethratio>=0.8){
-			                  M++;
-			                  category="M";
-			                  if(!strcmp(context.c_str(),"CG")) M_CG++;
-			              }else if(NegMethratio >=0.6){
-			                  Mh++;
-			                  category="Mh";
-			                  if(!strcmp(context.c_str(),"CG")) Mh_CG++;
-			              }else if(NegMethratio >=0.4){
-			                  H_AllC++;
-			                  category="H";
-			                  if(!strcmp(context.c_str(),"CG")) H_CG++;
-			              }else if(NegMethratio >=0.2){
-			                  hU++;
-			                  category="hU";
-			                  if(!strcmp(context.c_str(),"CG")) hU_CG++;
-			              }else{
-			                  U++;
-			                  category="U";
-			                  if(!strcmp(context.c_str(),"CG")) U_CG++;
-			              }
-					//print store
-					chromsUse[printL] = strdup(args->Genome_Offsets[i].Genome);
-					starts[printL] = l+1;
-					pends[printL] = l+2;
-					coverages[printL] = (C_count+T_count);
-                	values[printL] = NegMethratio;
-					strands[printL] = 1; //1 represent '-'
-					if(strcmp(context.c_str(), "C") == 0){
-						contexts[printL] = 0;
-					}else if(strcmp(context.c_str(), "CG") == 0){
-						contexts[printL] = 1;
-					}else if(strcmp(context.c_str(), "CHG") == 0){
-						contexts[printL] = 2;
-					}else{ // if(strcmp(context.c_str(), "CHH") == 0){
-						contexts[printL] = 3;
-					}
-					printL++;
-					if(chrprinHdr==0){
-						int response = bmAddIntervals(fp, chromsUse, starts, pends, values, coverages, strands, contexts, 
-		                entryid, 1);
-        		        if(response) goto error;
-					}
-					else if(printL>MAX_LINE_PRINT){
-						//We can continue appending similarly formatted entries
-						//N.B. you can't append a different chromosome (those always go into different
-						if(bmAppendIntervals(fp, starts+1, pends+1, values+1, coverages+1, strands+1, contexts+1, entryid, printL-1)) goto error;
-						printL = 0;
-					}
-					chrprinHdr = 1;
+                    //methratio
+                    float NegMethratio;
+                    if(revGA>0)
+                        NegMethratio=std::min(float(C_count)/(float(C_count+T_count)*revGA),(float)1.0);
+                    else
+                        NegMethratio=float(C_count)/(float(C_count+T_count));
 
-					if(printtxt == 1){
-						if(revGA>0) fprintf(METHOUTFILE,"%s\t%d\t-\t%s\t%d\t%d\t%f\t%0.001f\t%d\t%d\t%s\t%s\n",args->Genome_Offsets[i].Genome,l+1,context.c_str(),C_count,(C_count+T_count),NegMethratio,float(C_count+T_count)*revGA,rev_G,(rev_G+rev_A),category.c_str(),Fcontext);
-						else fprintf(METHOUTFILE,"%s\t%d\t-\t%s\t%d\t%d\t%f\tnull\t%d\t%d\t%s\t%s\n",args->Genome_Offsets[i].Genome,l+1,context.c_str(),C_count,(C_count+T_count),NegMethratio,rev_G,(rev_G+rev_A),category.c_str(),Fcontext);
-					}
+                    if(tech=="BS-Seq") {
+					    char charBac1='N',charBac2='N';
+					    if(l>=1) charBac1=toupper(args->Genome_List[i].Genome[l-1]);
+					    if(l>=2) charBac2=toupper(args->Genome_List[i].Genome[l-2]);
+					    if(charBac1=='C') //(args.Methy_List[i].MethContext[l]==1)
+					    {
+					    	context="CG";
+					    	Neg_mCGcount+=C_count;
+					    	NegCGcount+=(C_count+T_count);
+					    	//--DMR
+					    	Neg_mCG+=C_count;
+					    	NegCG+=(C_count+T_count);
+					    	count_neg_CG++;
+					    	//bins
+		                              NegcountperCG+=C_count;
+		                              NegcountCG+=(C_count+T_count);
+					    }
+					    else if(charBac1!='C' && charBac2=='C') //(args.Methy_List[i].MethContext[l]==2)
+					    {
+					    	context="CHG";
+					    	Neg_mCHGcount+=C_count;
+					    	NegCHGcount+=(C_count+T_count);
+					    	//---DMR
+					    	Neg_mCHG+=C_count;
+					    	NegCHG+=(C_count+T_count);
+					    	count_neg_CHG++;
+					    	//bins
+		                            NegcountperCHG+=C_count;
+		                            NegcountCHG+=(C_count+T_count);
+					    }
+					    else if(charBac1!='C' && charBac2!='C') //(args.Methy_List[i].MethContext[l]==3)
+					    {
+					    	context="CHH";
+					    	Neg_mCHHcount+=C_count;
+					    	NegCHHcount+=(C_count+T_count);
+					    	//---DMR
+					    	Neg_mCHH+=C_count;
+					    	NegCHH+=(C_count+T_count);
+					    	count_neg_CHH++;
+					    	//bins
+		                            NegcountperCHH+=C_count;
+		                            NegcountCHH+=(C_count+T_count);
+					    }
+					    else context="NA";
+
+                        if(contextfilter != "C") {
+                            if(contextfilter != context) continue;
+                        }
+					    
+					    unsigned int mCdensityloci= std::min( (int)floor((double)(NegMethratio*100) ) ,99);
+					    if(!strcmp(context.c_str(),"CG")) mCGdensity[mCdensityloci]++;
+					    else if(!strcmp(context.c_str(),"CHG")) mCHGdensity[mCdensityloci]++;
+					    else if(!strcmp(context.c_str(),"CHH")) mCHHdensity[mCdensityloci]++;
+					    
+					    string category = "NA";
+			            if(NegMethratio>=0.8){
+			                M++;
+			                category="M";
+			                if(!strcmp(context.c_str(),"CG")) M_CG++;
+			            }else if(NegMethratio >=0.6){
+			                Mh++;
+			                category="Mh";
+			                if(!strcmp(context.c_str(),"CG")) Mh_CG++;
+			            }else if(NegMethratio >=0.4){
+			                H_AllC++;
+			                category="H";
+			                if(!strcmp(context.c_str(),"CG")) H_CG++;
+			            }else if(NegMethratio >=0.2){
+			                hU++;
+			                category="hU";
+			                if(!strcmp(context.c_str(),"CG")) hU_CG++;
+			            }else{
+			                U++;
+			                category="U";
+			                if(!strcmp(context.c_str(),"CG")) U_CG++;
+			            }
+					    //print store
+					    chromsUse[printL] = strdup(args->Genome_Offsets[i].Genome);
+					    starts[printL] = l+1;
+					    pends[printL] = l+2;
+					    coverages[printL] = (C_count+T_count);
+                	    values[printL] = NegMethratio;
+					    strands[printL] = 1; //1 represent '-'
+					    if(strcmp(context.c_str(), "C") == 0){
+					    	contexts[printL] = 0;
+					    }else if(strcmp(context.c_str(), "CG") == 0){
+					    	contexts[printL] = 1;
+					    }else if(strcmp(context.c_str(), "CHG") == 0){
+					    	contexts[printL] = 2;
+					    }else{ // if(strcmp(context.c_str(), "CHH") == 0){
+					    	contexts[printL] = 3;
+					    }
+					    printL++;
+					    if(chrprinHdr==0){
+					    	int response = bmAddIntervals(fp, chromsUse, starts, pends, values, coverages, strands, contexts, 
+		                    entryid, 1);
+        		            if(response) goto error;
+					    }
+					    else if(printL>MAX_LINE_PRINT){
+					    	//We can continue appending similarly formatted entries
+					    	//N.B. you can't append a different chromosome (those always go into different
+					    	if(bmAppendIntervals(fp, starts+1, pends+1, values+1, coverages+1, strands+1, contexts+1, entryid, printL-1)) goto error;
+					    	printL = 0;
+					    }
+					    chrprinHdr = 1;
+                        if(printtxt == 1){
+                            if(revGA>0) fprintf(METHOUTFILE,"%s\t%d\t-\t%s\t%d\t%d\t%f\t%0.001f\t%d\t%d\t%s\t%s\n",args->Genome_Offsets[i].Genome,l+1,context.c_str(),C_count,(C_count+T_count),NegMethratio,float(C_count+T_count)*revGA,rev_G,(rev_G+rev_A),category.c_str(),Fcontext);
+                            else fprintf(METHOUTFILE,"%s\t%d\t-\t%s\t%d\t%d\t%f\tnull\t%d\t%d\t%s\t%s\n",args->Genome_Offsets[i].Genome,l+1,context.c_str(),C_count,(C_count+T_count),NegMethratio,rev_G,(rev_G+rev_A),category.c_str(),Fcontext);
+                        }
+                    }else if(tech=="NoMe") {
+                        // 获取中间三个字符的子串
+                        string fivestring = Fcontext;
+                        middleThree = fivestring.substr(1, 3);
+                        if(middleThree=="ACG" || middleThree=="TCG") { //WCG for methylation
+                            //print store
+                            chromsUse[printL] = strdup(args->Genome_Offsets[i].Genome);
+                            starts[printL] = l+1;
+                            pends[printL] = l+2;
+                            coverages[printL] = (C_count+T_count);
+                            values[printL] = NegMethratio;
+                            strands[printL] = 1;
+                            contexts[printL] = 0;
+                            printL++;
+                            if(chrprinHdr==0){
+                                int response = bmAddIntervals(fp, chromsUse, starts, pends, values, coverages, strands, contexts,
+                                entryid, 1);
+                                if(response) goto error;
+                            }
+                            else if(printL>MAX_LINE_PRINT){
+                                //We can continue appending similarly formatted entries
+                                //N.B. you can't append a different chromosome (those always go into different
+                                if(bmAppendIntervals(fp, starts+1, pends+1, values+1, coverages+1, strands+1, contexts+1, entryid, printL-1)) goto error;
+                                printL = 0;
+                            }
+                            chrprinHdr = 1;
+                        }else if(middleThree=="GCA" || middleThree=="GCT" || middleThree=="GCC") { //GCH for chromatin accessibility
+                            chromsUse_gch[printL_gch] = strdup(args->Genome_Offsets[i].Genome);
+                            starts_gch[printL_gch] = l+1;
+                            pends_gch[printL_gch] = l+2;
+                            coverages_gch[printL_gch] = (C_count+T_count);
+                            values_gch[printL_gch] = NegMethratio;
+                            strands_gch[printL_gch] = 1;
+                            contexts_gch[printL_gch] = 0;
+                            printL_gch++;
+                            if(chrprinHdr_gch==0){
+                                int response = bmAddIntervals(fp_gch, chromsUse_gch, starts_gch, pends_gch, values_gch, coverages_gch, strands_gch, contexts_gch,
+                                entryid_gch, 1);
+                                if(response) goto error;
+                            }
+                            else if(printL_gch>MAX_LINE_PRINT){
+                                //We can continue appending similarly formatted entries
+                                //N.B. you can't append a different chromosome (those always go into different
+                                if(bmAppendIntervals(fp_gch, starts_gch+1, pends_gch+1, values_gch+1, coverages_gch+1, strands_gch+1, contexts_gch+1, entryid_gch, printL_gch-1)) goto error;
+                                printL_gch = 0;
+                            }
+                            chrprinHdr_gch = 1;
+                        }
+                    }
+
 					/*
 					if(!strcmp(context.c_str(),"CG")) fprintf(LOC_OUT_CG,"%s\t%d\t-\tCG\t%d\t%d\n",Genome,l+1,C_count,(C_count+T_count));
 					else if(!strcmp(context.c_str(),"CHG")) fprintf(LOC_OUT_CHG,"%s\t%d\t-\tCHG\t%d\t%d\n",Genome,l+1,C_count,(C_count+T_count));
@@ -1194,10 +1348,23 @@ void print_meth_tofile(int genome_id, ARGS* args){
 			}
 		}
 		//end print
-		if(printL > 1) {
-            fprintf(stderr, "[DM::calmeth] print %d %d %d\n", starts[printL-1], pends[printL-1], printL-1);
-            if(bmAppendIntervals(fp, starts+1, pends+1, values+1, coverages+1, strands+1, contexts+1, entryid, printL-1)) goto error;
-            printL = 0; 
+        if(tech=="BS-Seq") {
+		    if(printL > 1) {
+                fprintf(stderr, "[DM::calmeth] print %d %d %d\n", starts[printL-1], pends[printL-1], printL-1);
+                if(bmAppendIntervals(fp, starts+1, pends+1, values+1, coverages+1, strands+1, contexts+1, entryid, printL-1)) goto error;
+                printL = 0; 
+            }
+        }else if(tech=="NoMe") {
+            if(printL > 1) {
+                fprintf(stderr, "[DM::calmeth] print %d %d %d\n", starts[printL-1], pends[printL-1], printL-1);
+                if(bmAppendIntervals(fp, starts+1, pends+1, values+1, coverages+1, strands+1, contexts+1, entryid, printL-1)) goto error;
+                printL = 0;
+            }
+            if(printL_gch > 1) {
+                fprintf(stderr, "[DM::calmeth] print %d %d %d\n", starts_gch[printL_gch-1], pends_gch[printL_gch-1], printL_gch-1);
+                if(bmAppendIntervals(fp_gch, starts_gch+1, pends_gch+1, values_gch+1, coverages_gch+1, strands_gch+1, contexts_gch+1, entryid_gch, printL_gch-1)) goto error;
+                printL_gch = 0;
+            }
         }
 		//
 		fprintf(stderr, "[DM::calmeth] Free mem in Methy_List\n");
@@ -1225,6 +1392,16 @@ void print_meth_tofile(int genome_id, ARGS* args){
 
         free(starts);
         free(pends); free(values); free(coverages); free(strands); free(contexts);
+
+        if(tech=="NoMe") {
+            for(i =0; i < MAX_LINE_PRINT; i++){
+                if(starts_gch[i]>0 && chromsUse_gch[i]) free(chromsUse_gch[i]);
+            }
+            fprintf(stderr, "[DM::calmeth] Free mem in all others2\n\n");
+            free(chromsUse_gch); //free(entryid);
+            free(starts_gch);
+            free(pends_gch); free(values_gch); free(coverages_gch); free(strands_gch); free(contexts_gch);
+        }
 
 	}//end methratio
 	return;

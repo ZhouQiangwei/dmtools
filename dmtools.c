@@ -16,6 +16,10 @@
 * make clean && make && gcc libBigWig.a libBigWig.so test/exampleWrite.c -o exampleWrite
 * ./exampleWrite mr2bm -g ~/practice/Genome/hg38/hg38.chr.fa.len -E -C -m test.f -S --Cx -o test.bm -r chr1:0-100,chr1:16766-16890
 * gcc test/exampleWrite.c -o exampleWrite -I. -L. -lBigWig -Wl,-rpath /public/home/qwzhou/software_devp/batmeth2-bma/src/bmtools/
+*
+* add support for NOme
+* GCH sites (GCA/GCT/GCC) were used to analyze chromatin accessibility,
+* while the WCG sites (ACG/TCG) were used to analyze the DNA methylation
 */
 #include "binaMeth.h"
 #include <string.h>
@@ -24,6 +28,9 @@
 #include <math.h>
 #include <stdio.h>
 #include <pthread.h>
+
+#include <glob.h>
+char* matchFiles(const char* pattern);
 
 FILE* File_Open(const char* File_Name,const char* Mode);
 char *strand_str[] = {"+", "-", "."};
@@ -92,8 +99,10 @@ struct Threading
 #define MAX_BUFF_PRINT 20000000
 const char* Help_String_main="Command Format :  dmtools <mode> [opnions]\n"
 		"\nUsage:\n"
-        "\t  [mode]         bam2dm mr2dm view ebsrate viewheader overlap regionstats bodystats profile chromstats\n\n"
-        "\t  bam2dm         calculate DNA methylation (BM format) with BAM file\n"
+        "\t  [mode]         index align bam2dm mr2dm view ebsrate viewheader overlap regionstats bodystats profile chromstats\n\n"
+        "\t  index          build index for genome\n"
+        "\t  align          alignment fastq\n"
+        "\t  bam2dm         calculate DNA methylation (DM format) with BAM file\n"
         "\t  mr2dm          convert txt meth file to dm format\n"
         "\t  view           dm format to txt/dm meth\n"
         "\t  merge          merge more than 1 dm files to one dm file\n"
@@ -111,6 +120,7 @@ const char* Help_String_main="Command Format :  dmtools <mode> [opnions]\n"
 
 const char* Help_String_bam2dm="Command Format :  dmtools bam2dm [options] -g genome.fa -b <BamfileSorted> -o <methratio dm outfile prefix>\n"
 		"\nUsage: dmtools bam2dm -C -S --Cx -g genome.fa -b align.sort.bam -o meth.dm\n"
+        "   or: dmtools bam2dm -C -S -g genome.fa -b test.sort.bam -o meth.dm --NoMe (meth.dm file for methylation level, methdm.gch.dm for chromatin accessibility)\n"
         "\t [bam2dm] mode paramaters, required\n"
 		"\t-g|--genome           genome fasta file\n"
 		"\t-b|--binput           Bam format file, sorted by chrom.\n"
@@ -124,7 +134,8 @@ const char* Help_String_bam2dm="Command Format :  dmtools bam2dm [options] -g ge
 		"\t-r|--remove_dup       REMOVE_DUP, default:false\n"
         "\t--mrtxt               print prefix.methratio.txt file\n"
         "\t--cf                  context filter for print results, C, CG, CHG, CHH, default: C\n"
-        "\t-p                    [int] threads\n"
+//        "\t-p                    [int] threads\n"
+        "\t--NoMe                data type for NoMe-seq\n"
         "\t[DM format] paramaters\n"
         "\t--zl                  The maximum number of zoom levels. [0-10], default: 2\n"
         //"\t-i|--input            Sam format file, sorted by chrom.\n"
@@ -133,6 +144,25 @@ const char* Help_String_bam2dm="Command Format :  dmtools bam2dm [options] -g ge
         "\t--Cx                  print context in DM file\n"
         "\t-E                    print end in DM file\n"
         "\t--Id                  print ID in DM file\n"
+        "\t-h|--help";
+
+const char* Help_String_index="Command Format :  dmtools index [options] -g genome.fa\n"
+        "\nUsage: dmtools index -g genome.fa\n"
+        "\t-g|--genome           genome fasta file\n"
+        "\t-h|--help";
+
+const char* Help_String_align="Command Format :  dmtools align [options] -g genome.fa -1 te1.fq -2 te2.fq -g genome.fa -o meth.bam\n"
+        "\nUsage: dmtools align -1 te1.fq -2 te2.fq -g genome.fa -o meth.bam\n"
+        "\t [align] mode paramaters, required\n"
+        "\t-g|--genome           genome fasta file\n"
+        "\t-i                    input file, support .fq/.fastq and .gz/.gzip format. if paired-end. please use -1, -2\n"
+        "\t-1                    input file left end, if single-end. please use -i\n"
+        "\t-2                    input file right end\n"
+        "\t--fastp               fastp program location for fastq preprocess.\n"
+        "                        if --fastp is not defined, the input file should be clean data.\n"
+        "\t-o|--out              Prefix of methratio.dm output file\n"
+        "\t [align] mode paramaters, options\n"
+        "\t-p                    [int] threads\n"
         "\t-h|--help";
 
 const char* Help_String_mr2dm="Command Format :  dmtools mr2dm [opnions] -g genome.fa.fai -m methratio.txt -o outmeth.dm\n"
@@ -460,6 +490,10 @@ int main(int argc, char *argv[]) {
            fprintf(stderr, "%s\n", Help_String_chromstats); 
         }else if(strcmp(mode, "bam2dm") == 0){
            fprintf(stderr, "%s\n", Help_String_bam2dm); 
+        }else if(strcmp(mode, "align") == 0){
+           fprintf(stderr, "%s\n", Help_String_align);
+        }else if(strcmp(mode, "index") == 0){
+           fprintf(stderr, "%s\n", Help_String_index);
         }else if(strcmp(mode, "dmDMR") == 0){
            fprintf(stderr, "%s\n", Help_String_dmDMR);
         }else if(strcmp(mode, "addzm") == 0){
@@ -643,7 +677,106 @@ int main(int argc, char *argv[]) {
     }
 
     mPs = calloc(statsSize, sizeof(unsigned long));
-    if(strcmp(mode, "bam2dm") == 0){
+    if(strcmp(mode, "index") == 0){
+        fprintf(stderr, "build genome index\n");
+        //exe location
+        char processname[1024];
+        char abspathtmp[1024];
+        get_executable_path(abspathtmp, processname, sizeof(abspathtmp));
+        char cmd[3000];
+        for(i=2; i< argc; i++){
+            if(strcmp(argv[i], "-g") == 0){
+                strcpy(chromlenf, argv[i+1]);
+                chromlenf_yes++;
+            }
+        }
+        strcpy(cmd, abspathtmp);
+        strcat(cmd, "dmalign index -g ");
+        strcat(cmd, chromlenf);
+        if(!chromlenf_yes) {
+            fprintf(stderr, "unvalid genome file");
+            exit(0);
+        }
+        onlyexecuteCMD(cmd, Help_String_index);
+        return 0;
+     }else if(strcmp(mode, "align") == 0){
+        fprintf(stderr, "DNA methylation data alignment\n");
+        //exe location
+        char processname[1024];
+        char abspathtmp[1024];
+        get_executable_path(abspathtmp, processname, sizeof(abspathtmp));
+        char cmd[3000]; char seqfq[500]; char seqfq1[500]; char seqfq2[500]; char pthread[10];  strcpy(pthread, "6"); char fastp[100];
+        for(i=2; i< argc; i++){
+            if(strcmp(argv[i], "-g") == 0){
+                strcpy(chromlenf, argv[i+1]);
+                chromlenf_yes++;
+            }else if(strcmp(argv[i], "-i") == 0){
+                char* matchedFiles = matchFiles(argv[i + 1]);
+                strcpy(seqfq, matchedFiles);
+                free(matchedFiles);
+
+                //strcpy(seqfq, argv[i+1]);
+            }else if(strcmp(argv[i], "-1") == 0){
+                char* matchedFiles = matchFiles(argv[i + 1]);
+                strcpy(seqfq1, matchedFiles);
+                free(matchedFiles);
+
+//                strcpy(seqfq1, argv[i+1]);
+            }else if(strcmp(argv[i], "-2") == 0){
+                char* matchedFiles = matchFiles(argv[i + 1]);
+                strcpy(seqfq2, matchedFiles);
+                free(matchedFiles);
+
+                //strcpy(seqfq2, argv[i+1]);
+            }else if(strcmp(argv[i], "-p") == 0){
+                strcpy(pthread, argv[i+1]);
+            }else if(strcmp(argv[i], "--fastp") == 0){
+                strcpy(fastp, argv[i+1]);
+            }else if(strcmp(argv[i], "-o") == 0 || strcmp(argv[i], "--out") == 0){
+                outfile = malloc(sizeof(char)*200);
+                strcpy(outfile, argv[i+1]);
+            }
+        }
+
+        strcpy(cmd, abspathtmp);
+        strcat(cmd, "dmalign c2t");
+        if(fastp[0]) {
+           strcat(cmd, " --fastp ");
+           strcat(cmd, fastp);
+        }
+        if(seqfq[0]) {
+            strcat(cmd, " -i ");
+            strcat(cmd, seqfq);
+        }else if(seqfq1[0] && seqfq2[0]){
+            strcat(cmd, " -1 ");
+            strcat(cmd, seqfq1);
+            strcat(cmd, " -2 ");
+            strcat(cmd, seqfq2);
+        }else{
+            fprintf(stderr, "unvalid input fastq ..");
+            exit(0);
+        }
+        if(!chromlenf_yes) {
+            fprintf(stderr, "unvalid genome file");
+            exit(0);
+        }
+        strcat(cmd, " | bwa mem -t ");
+        strcat(cmd, pthread);
+        strcat(cmd, " -C -p -Y ");
+        strcat(cmd, chromlenf);
+        strcat(cmd, ".batmeth2.fa - | ");
+        strcat(cmd, abspathtmp);
+        strcat(cmd, "dmalign fixsam - | samtools sort -@ ");
+        strcat(cmd, pthread);
+        strcat(cmd, " -o ");
+        strcat(cmd, outfile);
+        strcat(cmd, " - && samtools index "); strcat(cmd, outfile);
+        //dmalign c2t -1 ./te1.clean.fq -2 ./te2.clean.fq | bwa mem -t 8 -C -p -Y genome.fa - | dmalign fixsam - | samtools sort -@ 6 -o align.bam -  && samtools index align.bam
+        fprintf(stderr, "%s\n", cmd);
+
+        onlyexecuteCMD(cmd, Help_String_align);
+        return 0;
+    } else if(strcmp(mode, "bam2dm") == 0){
         fprintf(stderr, "calculate DNA methylation level with dm format\n");
         //exe location
         char processname[1024];
@@ -1367,6 +1500,7 @@ int main(int argc, char *argv[]) {
             }
             free(bsrmode);
         }else {
+            //添加context strand参数
             printchrmeth(ifp, filterchrom, outfp_mean);
         }
         free(inbmfile);
@@ -5117,3 +5251,73 @@ void *multithread_cmd(void *arg){
     return NULL;
 }
 
+// 匹配文件并返回逗号分隔的字符串
+char* matchFiles(const char* pattern) {
+    glob_t globResult;
+    char* fileList = NULL;
+
+    // 进行文件名匹配
+    if (glob(pattern, 0, NULL, &globResult) == 0) {
+        size_t totalLength = 0;
+
+        printf("Number of Matches: %s %zu\n", pattern, globResult.gl_pathc);
+        // 计算匹配文件名的总长度
+        size_t i;
+        for (i = 0; i < globResult.gl_pathc; i++) {
+            totalLength += strlen(globResult.gl_pathv[i]) + 1; // +1 为逗号的长度
+        }
+
+        // 为字符串分配空间
+        fileList = (char*)malloc(totalLength);
+        fileList[0] = '\0'; // 确保字符串以空字符开始
+
+        // 构建逗号分隔的字符串
+        for (i = 0; i < globResult.gl_pathc; i++) {
+            strcat(fileList, globResult.gl_pathv[i]);
+            if (i < globResult.gl_pathc - 1) {
+                strcat(fileList, ",");
+            }
+        }
+    }
+
+    // 释放 glob 结果
+    globfree(&globResult);
+
+    return fileList;
+}
+
+
+// 匹配文件并返回逗号分隔的字符串
+//char* matchFiles(const char* pattern) {
+//    glob_t globResult;
+//    char* fileList = NULL;
+//
+//    // 进行文件名匹配
+//    if (glob(pattern, GLOB_NOCHECK, NULL, &globResult) == 0) {
+//        size_t totalLength = 0;
+//
+//        printf("Number of Matches: %s %zu\n", pattern, globResult.gl_pathc);
+//        // 计算匹配文件名的总长度
+//        size_t i;
+//        for (i = 0; i < globResult.gl_pathc; i++) {
+//            totalLength += strlen(globResult.gl_pathv[i]) + 1; // +1 为逗号的长度
+//        }
+//
+//        // 为字符串分配空间
+//        fileList = (char*)malloc(totalLength);
+//        fileList[0] = '\0'; // 确保字符串以空字符开始
+//
+//        // 构建逗号分隔的字符串
+//        for (i = 0; i < globResult.gl_pathc; i++) {
+//            strcat(fileList, globResult.gl_pathv[i]);
+//            if (i < globResult.gl_pathc - 1) {
+//                strcat(fileList, ",");
+//            }
+//        }
+//    }
+//
+//    // 释放 glob 结果
+//    globfree(&globResult);
+//
+//    return fileList;
+//}
