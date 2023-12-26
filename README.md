@@ -67,3 +67,7 @@ For more information, please see https://dmtools-docs.rtfd.io/
 
 And calmeth in batmeth2-dm can convert align bs bam file to dm file, https://dmtools-docs.readthedocs.io/en/latest/function/bam2dm.html
 
+### next steps
+- [x] add support for NOMe-seq
+- [x] add quality contorl and alignment (with fastp/bwa)
+- [ ] test suport for scBS
