@@ -31,7 +31,9 @@ And calmeth in batmeth2-dm can convert align bs bam file to dm file, https://dmt
 | [ dmtools ]         | process with dm file                                                    |
 |---------------------|--------------------------------------------------------------------------|
 |                     | dmtools <mode> [opnions]                                                 |
-| [mode]              | mr2dm view overlap regionstats bodystats profile chromstats             |
+| [mode]              | index align mr2dm view overlap regionstats bodystats profile chromstats |
+| index               | build index for genome                                                  |
+| align               | alignment fastq                                                         |
 | mr2dm               | convert txt meth file to dm format                                      |
 | view                | dm format to txt meth                                                   |
 | ebsrate             | estimate bisulfite conversion rate                                      |
