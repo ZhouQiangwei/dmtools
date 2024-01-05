@@ -116,7 +116,23 @@ const char* Help_String_main="Command Format :  dmtools <mode> [opnions]\n"
         "\t  chrmeth        calculate DNA methylation level of chromosomes\n"
         "\t  addzm          add or change zoom levels for dm format, need for browser visulization\n"
         "\t  stats          coverage and methylation level distribution of data\n"
-        "\t  dmDMR          differential DNA methylation analysis\n";
+        "\t  dmDMR          differential DNA methylation analysis\n"
+        "\t  bw             convert dm file to bigwig file\n";
+
+const char* Help_String_bw="Command Format :  dmtools bw [options] -i <dm> -o <out bigwig file>\n"
+        "\nUsage: dmtools bw -i input.dm -o meth.bw\n"
+        "\t [bw] mode paramaters, required\n"
+        "\t-i                    input DM file\n"
+        "\t-o|--out              Prefix of methratio.dm output file\n"
+        "\t [bw] mode paramaters, options\n"
+        "\t-r                    region for print, can be seperated by space. chr1:1-2900 chr2:1-200\n"
+        "\t--chr                 chromosome for print\n"
+        "\t--strand              [0/1/2] strand for show, 0 represent '+' positive strand, 1 '-' negative strand, 2 '.' all information\n"
+        "\t--context             [0/1/2/3] context for show, 0 represent 'C/ALL' context, 1 'CG' context, 2 'CHG' context, 3 'CHH' context.\n"
+        "\t--mincover            >= minumum coverage show, default: 0\n"
+        "\t--maxcover            <= maximum coverage show, default: 10000\n"
+        "\t--zl                  The maximum number of zoom levels. [0-10], default: 2\n"
+        "\t-h|--help";
 
 const char* Help_String_bam2dm="Command Format :  dmtools bam2dm [options] -g genome.fa -b <BamfileSorted> -o <methratio dm outfile prefix>\n"
 		"\nUsage: dmtools bam2dm -C -S --Cx -g genome.fa -b align.sort.bam -o meth.dm\n"
@@ -468,6 +484,8 @@ int main(int argc, char *argv[]) {
            fprintf(stderr, "%s\n", Help_String_mr2dm); 
         }else if(strcmp(mode, "view") == 0){
            fprintf(stderr, "%s\n", Help_String_view); 
+        }else if(strcmp(mode, "bw") == 0){
+           fprintf(stderr, "%s\n", Help_String_bw);
         }else if(strcmp(mode, "merge") == 0){
            fprintf(stderr, "%s\n", Help_String_merge);
         }else if(strcmp(mode, "stats") == 0){
@@ -1262,12 +1280,16 @@ int main(int argc, char *argv[]) {
     */
 
     // read bm file, view
-    if(strcmp(mode, "view")==0 || strcmp(mode, "addzm")==0 || strcmp(mode, "stats")==0){
+    if(strcmp(mode, "view")==0 || strcmp(mode, "addzm")==0 || strcmp(mode, "stats")==0 || strcmp(mode, "bw")==0){
         if(strcmp(mode, "addzm")==0){
             strcpy(outformat, "dm");
         }else if( strcmp(mode, "stats")==0 ){
             strcpy(outformat, "stats");
             memset(Fcover, 0, sizeof(int)*16);
+        }else if(strcmp(mode, "bw")==0) {
+            strcpy(outformat, "dm");
+            if(zoomlevel<2) zoomlevel = 2;
+            write_type |= BM_END;
         }
         if(DEBUG>0) fprintf(stderr, "dm view\n");
         //char region[] = "chr1:0-100,chr1:16766-16830";
@@ -1304,7 +1326,11 @@ int main(int argc, char *argv[]) {
                 return 0;
             }
             ofp = bmOpen(outfile, NULL, "w");
-            ofp->type = ifp->type;
+            if(strcmp(mode, "bw")==0) {
+                ofp->type = write_type;
+            }else{
+                ofp->type = ifp->type;
+            }
             if(!ofp) {
                 fprintf(stderr, "An error occurred while opening bm for writingn\n");
                 return 0;
