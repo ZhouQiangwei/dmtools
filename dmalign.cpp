@@ -66,10 +66,12 @@ void usage(){
     fprintf(stderr, "[mode]: index c2t align fixsam\n");
     fprintf(stderr, "dmalign c2t -1 ./te1.clean.fq -2 ./te2.clean.fq | bwa mem -t 8 -C -p -Y genome.fa - | dmalign fixsam - | samtools sort -@ 6 -o align.bam -  && samtools index align.bam\n\n");
 
-    fprintf(stderr, "    -i    Name of input file, support .fq/.fastq and .gz/.gzip format. if paired-end. please use -1, -2\n");
-    fprintf(stderr, "    -1    Name of input file left end, if single-end. please use -i\n");
-    fprintf(stderr, "    -2    Name of input file right end\n");
-    fprintf(stderr, "          -i/-1/-2 can be comma-separated lists (no whitespace).\n");
+    fprintf(stderr, "    -i      Name of input file, support .fq/.fastq and .gz/.gzip format. if paired-end. please use -1, -2\n");
+    fprintf(stderr, "    -1      Name of input file left end, if single-end. please use -i\n");
+    fprintf(stderr, "    -2      Name of input file right end\n");
+    fprintf(stderr, "            -i/-1/-2 can be comma-separated lists (no whitespace).\n");
+    fprintf(stderr, "    --taps  alignment with bwa mem for TAPS reads\n");
+    fprintf(stderr, "    -h      help\n");
 //    fprintf(stderr, "    -g    Name of the genome mapped against, make sure build index first.\n");
 //    fprintf(stderr, "    -p    Launch <integer> threads\n");
 //    fprintf(stderr, "    -o [outprefix]            Name of output file prefix\n");
@@ -162,6 +164,7 @@ pthread_mutex_t meth_counter_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t output_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 pthread_mutex_t flists;
+int taps=0;
 
 static inline void trim_readno(char *s, int l)
 {
@@ -196,24 +199,28 @@ void convertfq(int Thread_ID, vector <string> filelist1,
         }
 	    while ((gzinfile && Read_Tag_gz(gzfp_head,2,R) ) || (!gzinfile && Read_Tag(Input_head,2,R)))
 	    {
-            R.Real_Len=0;
-	    	for(;R.Tag_Copy[R.Real_Len]!=0 && R.Tag_Copy[R.Real_Len]!='\n';R.Real_Len++);
-            R.Tag_Copy[R.Real_Len]='\0';
-            R.Quality[R.Real_Len]='\0';
-            lentemp= 0;
-            for(;R.Plus[lentemp]!=0 && R.Plus[lentemp]!='\n';lentemp++);
-            R.Plus[lentemp]='\0';
+            if(taps==1) {
+                fprintf(stdout, "%s\n%s\n%s\n%s\n", R.Description, R.Tag_Copy, R.Plus, R.Quality);
+            }else{
+                R.Real_Len=0;
+	    	    for(;R.Tag_Copy[R.Real_Len]!=0 && R.Tag_Copy[R.Real_Len]!='\n';R.Real_Len++);
+                R.Tag_Copy[R.Real_Len]='\0';
+                R.Quality[R.Real_Len]='\0';
+                lentemp= 0;
+                for(;R.Plus[lentemp]!=0 && R.Plus[lentemp]!='\n';lentemp++);
+                R.Plus[lentemp]='\0';
 
-            R_CT=R;
-            ReplaceCtoT(R_CT);
-            
-            fprintf(stdout, "%s YS:Z:%s YC:Z:CT\n%s\n%s\n%s\n", R_CT.Description, R.Tag_Copy, R_CT.Tag_Copy, R_CT.Plus, R_CT.Quality);
-            if(ALLMAP){
-                R_GA=R;
-                ReplaceGtoA(R_GA);
-                fprintf(stdout, "%s YS:Z:%s YC:Z:GA\n%s\n%s\n%s\n", R_GA.Description, R.Tag_Copy, R_GA.Tag_Copy, R_GA.Plus, R_GA.Quality);
+                R_CT=R;
+                ReplaceCtoT(R_CT);
+                
+                fprintf(stdout, "%s YS:Z:%s YC:Z:CT\n%s\n%s\n%s\n", R_CT.Description, R.Tag_Copy, R_CT.Tag_Copy, R_CT.Plus, R_CT.Quality);
+                if(ALLMAP){
+                    R_GA=R;
+                    ReplaceGtoA(R_GA);
+                    fprintf(stdout, "%s YS:Z:%s YC:Z:GA\n%s\n%s\n%s\n", R_GA.Description, R.Tag_Copy, R_GA.Tag_Copy, R_GA.Plus, R_GA.Quality);
+                }
+                //gzprintf(gzfp_head_output, "%s_YS:Z:%s_YS:Z:CT\n%s\n%s\n%s\n", R_CT.Description, R.Tag_Copy, R_CT.Tag_Copy, R_CT.Plus, R_CT.Quality);
             }
-            //gzprintf(gzfp_head_output, "%s_YS:Z:%s_YS:Z:CT\n%s\n%s\n%s\n", R_CT.Description, R.Tag_Copy, R_CT.Tag_Copy, R_CT.Plus, R_CT.Quality);
         }
         //gzclose(gzfp_head_output);
 
@@ -259,43 +266,48 @@ void convertfq(int Thread_ID, vector <string> filelist1, vector <string> filelis
         }
 	    while ((gzinfile && Read_Tag_gz(gzfp_head,gzfp_tail,2,R,M) ) || (!gzinfile && Read_Tag(Input_head,Input_tail,2,R,M)))
 	    {
-            R.Real_Len=0;
-	    	for(;R.Tag_Copy[R.Real_Len]!=0 && R.Tag_Copy[R.Real_Len]!='\n';R.Real_Len++);
-            R.Tag_Copy[R.Real_Len]='\0';
-            R.Quality[R.Real_Len]='\0';
-            lentemp= 0;
-            for(;R.Plus[lentemp]!=0 && R.Plus[lentemp]!='\n';lentemp++);
-            R.Plus[lentemp]='\0';
-
-            if(PAIRED){
-                M.Real_Len=0;
-                for(;M.Tag_Copy[M.Real_Len]!=0 && M.Tag_Copy[M.Real_Len]!='\n';M.Real_Len++);
-                M.Tag_Copy[M.Real_Len]='\0';
-                M.Quality[M.Real_Len]='\0';
+            if(taps==1){
+                fprintf(stdout, "%s\n%s\n%s\n%s\n", R.Description, R.Tag_Copy, R.Plus, R.Quality);
+                if(PAIRED) fprintf(stdout, "%s\n%s\n%s\n%s\n", M.Description, M.Tag_Copy, M.Plus, M.Quality);
+            }else{
+                R.Real_Len=0;
+	    	    for(;R.Tag_Copy[R.Real_Len]!=0 && R.Tag_Copy[R.Real_Len]!='\n';R.Real_Len++);
+                R.Tag_Copy[R.Real_Len]='\0';
+                R.Quality[R.Real_Len]='\0';
                 lentemp= 0;
-                for(;M.Plus[lentemp]!=0 && M.Plus[lentemp]!='\n';lentemp++);
-                M.Plus[lentemp]='\0';
-            }
+                for(;R.Plus[lentemp]!=0 && R.Plus[lentemp]!='\n';lentemp++);
+                R.Plus[lentemp]='\0';
 
-            R_CT=R;
-            if(PAIRED) M_GA=M;
-            ReplaceCtoT(R_CT);
-            if(PAIRED) ReplaceGtoA(M_GA);
-            fprintf(stdout, "%s YS:Z:%s YC:Z:CT\n%s\n%s\n%s\n", R_CT.Description, R.Tag_Copy, R_CT.Tag_Copy, R_CT.Plus, R_CT.Quality);
-            if(PAIRED) fprintf(stdout, "%s YS:Z:%s YC:Z:GA\n%s\n%s\n%s\n", M_GA.Description, M.Tag_Copy, M_GA.Tag_Copy, M_GA.Plus, M_GA.Quality);
+                if(PAIRED){
+                    M.Real_Len=0;
+                    for(;M.Tag_Copy[M.Real_Len]!=0 && M.Tag_Copy[M.Real_Len]!='\n';M.Real_Len++);
+                    M.Tag_Copy[M.Real_Len]='\0';
+                    M.Quality[M.Real_Len]='\0';
+                    lentemp= 0;
+                    for(;M.Plus[lentemp]!=0 && M.Plus[lentemp]!='\n';lentemp++);
+                    M.Plus[lentemp]='\0';
+                }
+
+                R_CT=R;
+                if(PAIRED) M_GA=M;
+                ReplaceCtoT(R_CT);
+                if(PAIRED) ReplaceGtoA(M_GA);
+                fprintf(stdout, "%s YS:Z:%s YC:Z:CT\n%s\n%s\n%s\n", R_CT.Description, R.Tag_Copy, R_CT.Tag_Copy, R_CT.Plus, R_CT.Quality);
+                if(PAIRED) fprintf(stdout, "%s YS:Z:%s YC:Z:GA\n%s\n%s\n%s\n", M_GA.Description, M.Tag_Copy, M_GA.Tag_Copy, M_GA.Plus, M_GA.Quality);
         
 
-            if(ALLMAP){
-                R_GA=R;
-                if(PAIRED) M_CT=M;
-                ReplaceGtoA(R_GA);
-                if(PAIRED) ReplaceCtoT(M_CT);
-                fprintf(stdout, "%s YS:Z:%s YC:Z:GA\n%s\n%s\n%s\n", R_GA.Description, R.Tag_Copy, R_GA.Tag_Copy, R_GA.Plus, R_GA.Quality);
-                if(PAIRED) fprintf(stdout, "%s YS:Z:%s YC:Z:CT\n%s\n%s\n%s\n", M_CT.Description, M.Tag_Copy, M_CT.Tag_Copy, M_CT.Plus, M_CT.Quality);
-            }
+                if(ALLMAP){
+                    R_GA=R;
+                    if(PAIRED) M_CT=M;
+                    ReplaceGtoA(R_GA);
+                    if(PAIRED) ReplaceCtoT(M_CT);
+                    fprintf(stdout, "%s YS:Z:%s YC:Z:GA\n%s\n%s\n%s\n", R_GA.Description, R.Tag_Copy, R_GA.Tag_Copy, R_GA.Plus, R_GA.Quality);
+                    if(PAIRED) fprintf(stdout, "%s YS:Z:%s YC:Z:CT\n%s\n%s\n%s\n", M_CT.Description, M.Tag_Copy, M_CT.Tag_Copy, M_CT.Plus, M_CT.Quality);
+                }
 
-            //gzprintf(gzfp_head_output, "%s_YS:Z:%s_YS:Z:CT\n%s\n%s\n%s\n", R_CT.Description, R.Tag_Copy, R_CT.Tag_Copy, R_CT.Plus, R_CT.Quality);
-            //if(PAIRED) gzprintf(gzfp_tail_output, "%s_YS:Z:%s_YS:Z:GA\n%s\n%s\n%s\n", M_GA.Description, M.Tag_Copy, M_GA.Tag_Copy, M_GA.Plus, M_GA.Quality);
+                //gzprintf(gzfp_head_output, "%s_YS:Z:%s_YS:Z:CT\n%s\n%s\n%s\n", R_CT.Description, R.Tag_Copy, R_CT.Tag_Copy, R_CT.Plus, R_CT.Quality);
+                //if(PAIRED) gzprintf(gzfp_tail_output, "%s_YS:Z:%s_YS:Z:GA\n%s\n%s\n%s\n", M_GA.Description, M.Tag_Copy, M_GA.Tag_Copy, M_GA.Plus, M_GA.Quality);
+            }
         }
         //gzclose(gzfp_head_output);
         //if(PAIRED) gzclose(gzfp_tail_output);
@@ -819,9 +831,11 @@ int main(int argc, char* argv[])
         }else if(!strcmp(argv[i], "-2")){
         	input_prefix2= argv[++i];
             pairedend=true;
-        }else if(!strcmp(argv[i], "-o"))
+        }else if(!strcmp(argv[i], "-o")){
             output_prefix= argv[++i];
-        else if(!strcmp(argv[i], "-O")){
+        }else if(!strcmp(argv[i], "--taps")){
+            taps=1;
+        }else if(!strcmp(argv[i], "-O")){
             outputdir= argv[++i];
             if(outputdir[outputdir.length()-1] != '/')
             	outputdir+="/";
