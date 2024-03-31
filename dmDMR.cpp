@@ -96,7 +96,7 @@ const char* Help_String="dmDMR [options] -p <prefix of result> -1 [Sample1-methd
                 "\t--methdiff    the cutoff of methylation differention. default: 0.25 [CpG]\n"
                 "\t--element     caculate gene or TE etc function elements.\n"
                 "\t--context     Context for DM. C/CG/CHG/CHH, [C]\n"
-                "\t--dmall       Process all sites, not only full samples sites, only valid while with replicates. [0/1], default: 1"
+                "\t--dmall       Process all sites, not only full samples sites, only valid while with replicates. [0/1], default: 1\n"
                 //"\t-L           predefinded regions or loci.\n"
                 "\t-h|--help";
 int main(int argc, char *argv[]) {

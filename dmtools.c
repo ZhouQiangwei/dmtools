@@ -32,6 +32,8 @@
 #include <glob.h>
 char* matchFiles(const char* pattern);
 
+int fileExists(const char *filePath);
+int containsAnyWildcard(const char *str, const char *wildcards);
 FILE* File_Open(const char* File_Name,const char* Mode);
 char *strand_str[] = {"+", "-", "."};
 char *context_str[] = {"C", "CG", "CHG", "CHH"};
@@ -165,6 +167,7 @@ const char* Help_String_bam2dm="Command Format :  dmtools bam2dm [options] -g ge
 const char* Help_String_index="Command Format :  dmtools index [options] -g genome.fa\n"
         "\nUsage: dmtools index -g genome.fa\n"
         "\t-g|--genome           genome fasta file\n"
+        "\t--taps                alignment TAPS reads with bwa mem\n"
         "\t-h|--help";
 
 const char* Help_String_align="Command Format :  dmtools align [options] -g genome.fa -1 te1.fq -2 te2.fq -g genome.fa -o meth.bam\n"
@@ -175,10 +178,11 @@ const char* Help_String_align="Command Format :  dmtools align [options] -g geno
         "\t-1                    input file left end, if single-end. please use -i\n"
         "\t-2                    input file right end\n"
         "\t--fastp               fastp program location for fastq preprocess.\n"
-        "                        if --fastp is not defined, the input file should be clean data.\n"
-        "\t-o|--out              Prefix of methratio.dm output file\n"
+        "\t                      if --fastp is not defined, the input file should be clean data.\n"
+        "\t-o|--out              Prefix of bam output file\n"
         "\t [align] mode paramaters, options\n"
         "\t-p                    [int] threads\n"
+        "\t--taps                alignment TAPS reads with bwa mem\n"
         "\t-h|--help";
 
 const char* Help_String_mr2dm="Command Format :  dmtools mr2dm [opnions] -g genome.fa.fai -m methratio.txt -o outmeth.dm\n"
@@ -416,6 +420,7 @@ unsigned long *mPs;
 int statsSize = 10;
 int alwaysprint = 0;
 int minC = 2;
+int taps=0;
 
 int main(int argc, char *argv[]) {
     binaMethFile_t *fp = NULL;
@@ -709,7 +714,11 @@ int main(int argc, char *argv[]) {
             }
         }
         strcpy(cmd, abspathtmp);
-        strcat(cmd, "dmalign index -g ");
+        if(taps==0){
+            strcat(cmd, "dmalign index -g ");
+        }else{
+            strcat(cmd, "bwa index ");
+        }
         strcat(cmd, chromlenf);
         if(!chromlenf_yes) {
             fprintf(stderr, "unvalid genome file");
@@ -729,33 +738,56 @@ int main(int argc, char *argv[]) {
                 strcpy(chromlenf, argv[i+1]);
                 chromlenf_yes++;
             }else if(strcmp(argv[i], "-i") == 0){
-                char* matchedFiles = matchFiles(argv[i + 1]);
-                strcpy(seqfq, matchedFiles);
-                free(matchedFiles);
-
-                //strcpy(seqfq, argv[i+1]);
+                int caw = containsAnyWildcard(argv[i + 1], "*?[]+");
+                if(caw == 1){
+                    char* matchedFiles = matchFiles(argv[i + 1]);
+                    strcpy(seqfq, matchedFiles);
+                    free(matchedFiles);
+                }else
+                    strcpy(seqfq, argv[i+1]);
             }else if(strcmp(argv[i], "-1") == 0){
-                char* matchedFiles = matchFiles(argv[i + 1]);
-                strcpy(seqfq1, matchedFiles);
-                free(matchedFiles);
-
-//                strcpy(seqfq1, argv[i+1]);
+                int caw = containsAnyWildcard(argv[i + 1], "*?[]+");
+                if(caw == 1){
+                    char* matchedFiles = matchFiles(argv[i + 1]);
+                    strcpy(seqfq1, matchedFiles);
+                    free(matchedFiles);
+                }else{
+                    strcpy(seqfq1, argv[i+1]);
+                }
             }else if(strcmp(argv[i], "-2") == 0){
-                char* matchedFiles = matchFiles(argv[i + 1]);
-                strcpy(seqfq2, matchedFiles);
-                free(matchedFiles);
-
-                //strcpy(seqfq2, argv[i+1]);
+                int caw = containsAnyWildcard(argv[i + 1], "*?[]+");
+                if(caw == 1){
+                    char* matchedFiles = matchFiles(argv[i + 1]);
+                    strcpy(seqfq2, matchedFiles);
+                    free(matchedFiles);
+                }else
+                    strcpy(seqfq2, argv[i+1]);
             }else if(strcmp(argv[i], "-p") == 0){
                 strcpy(pthread, argv[i+1]);
             }else if(strcmp(argv[i], "--fastp") == 0){
                 strcpy(fastp, argv[i+1]);
+            }else if(strcmp(argv[i], "--taps") == 0){
+                taps=1;
             }else if(strcmp(argv[i], "-o") == 0 || strcmp(argv[i], "--out") == 0){
                 outfile = malloc(sizeof(char)*200);
                 strcpy(outfile, argv[i+1]);
             }
         }
 
+        if(taps==1) {
+            if(!fileExists(chromlenf)){
+                fprintf(stderr, "\nUnvalid chromosome file %s, please run 'dmtools index -g %s --taps' first\n", chromlenf);
+                exit(0);
+            }
+        }else{
+            char bt2genome[300];
+            strcpy(bt2genome, chromlenf);
+            strcat(bt2genome, ".batmeth2.fa");
+            if(!fileExists(bt2genome)){
+                fprintf(stderr, "\nUnvalid chromosome file %s, please run 'dmtools index -g %s' first\n", bt2genome, chromlenf);
+                exit(0);
+            }
+        }
         strcpy(cmd, abspathtmp);
         strcat(cmd, "dmalign c2t");
         if(fastp[0]) {
@@ -782,9 +814,13 @@ int main(int argc, char *argv[]) {
         strcat(cmd, pthread);
         strcat(cmd, " -C -p -Y ");
         strcat(cmd, chromlenf);
-        strcat(cmd, ".batmeth2.fa - | ");
-        strcat(cmd, abspathtmp);
-        strcat(cmd, "dmalign fixsam - | samtools sort -@ ");
+        if(taps==1){
+            strcat(cmd, " - | samtools sort -@ ");
+        }else{
+            strcat(cmd, ".batmeth2.fa - | ");
+            strcat(cmd, abspathtmp);
+            strcat(cmd, "dmalign fixsam - | samtools sort -@ ");
+        }
         strcat(cmd, pthread);
         strcat(cmd, " -o ");
         strcat(cmd, outfile);
@@ -5277,15 +5313,33 @@ void *multithread_cmd(void *arg){
     return NULL;
 }
 
+int containsAnyWildcard(const char *str, const char *wildcards) {
+    size_t strLength = strlen(str);
+    size_t wildcardsLength = strlen(wildcards);
+
+    // 遍历字符串
+    size_t i = 0, j =0;
+    for (i = 0; i < strLength; i++) {
+        // 遍历特殊字符集合
+        for (j = 0; j < wildcardsLength; j++) {
+            // 检查是否包含特殊字符
+            if (str[i] == wildcards[j]) {
+                return 1; // 找到了特殊字符
+            }
+        }
+    }
+
+    return 0; // 未找到特殊字符
+}
+
 // 匹配文件并返回逗号分隔的字符串
 char* matchFiles(const char* pattern) {
+    printf("Process %s\n", pattern);
     glob_t globResult;
     char* fileList = NULL;
-
     // 进行文件名匹配
     if (glob(pattern, 0, NULL, &globResult) == 0) {
         size_t totalLength = 0;
-
         printf("Number of Matches: %s %zu\n", pattern, globResult.gl_pathc);
         // 计算匹配文件名的总长度
         size_t i;
@@ -5305,13 +5359,23 @@ char* matchFiles(const char* pattern) {
             }
         }
     }
-
     // 释放 glob 结果
     globfree(&globResult);
 
     return fileList;
 }
 
+int fileExists(const char *filePath) {
+    FILE *file = fopen(filePath, "r");
+    if (file) {
+        // 文件存在，关闭文件句柄并返回真
+        fclose(file);
+        return 1;
+    } else {
+        // 文件不存在，返回假
+        return 0;
+    }
+}
 
 // 匹配文件并返回逗号分隔的字符串
 //char* matchFiles(const char* pattern) {
