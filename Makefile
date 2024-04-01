@@ -5,7 +5,7 @@
 CPP = $(shell pwd)
 SOURCES = $(wildcard *.cpp)
 OBJECTS = $(patsubst %.cpp,%.o,$(SOURCES))
-PROGS = bam2dm dmtools dmDMR dmalign
+PROGS = dmtools bam2dm dmDMR dmalign
 
 CXX = g++
 CC = gcc
@@ -109,7 +109,7 @@ test/exampleWrite: libBinaMeth.so
 test/testIterator: libBinaMeth.a
 	$(CC) -o $@ -I. $(CFLAGS) test/testIterator.c libBinaMeth.a $(LIBS)
 
-install: bam2dm dmtools dmDMR dmalign
+install: dmtools bam2dm dmDMR dmalign
 
 test: test/testLocal test/testRemote test/testWrite test/testLocal dmtools test/exampleWrite test/testRemoteManyContigs test/testIterator
 	./test/test.py
