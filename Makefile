@@ -92,7 +92,7 @@ dmtools: libBinaMeth.so
 	$(CC) -o $@ -I. -L. $(CFLAGS) dmtools.c -lBinaMeth $(LIBS) -Wl,-rpath $(CPP) -lpthread
 
 bam2dm: libBinaMeth.so
-	$(CXX) -o $@ -I. -L. $(CFLAGS) bam2dm.cpp -lBinaMeth $(LIBS) -Wl,-rpath $(CPP) -lpthread htslib/libhts.a htslib/libhts.a -llzma -lbz2
+	$(CXX) -o $@ -I. -L. $(CFLAGS) bam2dm.cpp -lBinaMeth -Wl,-rpath $(CPP) htslib/libhts.a -llzma -lbz2
 
 dmDMR:
 	$(CXX) $(CFLAGS) -c -o regression.o regression.cpp
