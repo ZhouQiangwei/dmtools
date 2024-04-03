@@ -26,16 +26,32 @@ INCLUDES =
 tmpfile:=$(shell mktemp --suffix=.c)
 $(file >$(tmpfile),#include <curl/curl.h>)
 $(file >>$(tmpfile),int main() { return 0; })
-HAVE_CURL:=$(shell $(CC) $(CFLAGS) $(EXTRA_CFLAGS_PIC) $(LIBS) -lcurl $(tmpfile) -o /dev/null >/dev/null 2>&1 && echo "YES")
+#HAVE_CURL:=$(shell $(CC) $(CFLAGS) $(EXTRA_CFLAGS_PIC) $(LIBS) -lcurl $(tmpfile) -o /dev/null >/dev/null 2>&1 && echo "YES")
+#$(shell rm $(tmpfile))
+
+# Check if CC (C compiler) supports libcurl
+HAVE_CURL_CC := $(shell $(CC) $(CFLAGS) $(EXTRA_CFLAGS_PIC) $(LIBS) -lcurl $(tmpfile) -o /dev/null >/dev/null 2>&1 && echo "YES")
+
+# Check if CXX (C++ compiler) supports libcurl
+HAVE_CURL_CXX := $(shell $(CXX) $(CXXFLAGS) $(EXTRA_CXXFLAGS_PIC) $(LIBS) -lcurl $(tmpfile) -o /dev/null >/dev/null 2>&1 && echo "YES")
 $(shell rm $(tmpfile))
 
-ifeq ($(HAVE_CURL),YES)
-	# If yes, add the library
-	LIBS += -lcurl
+ifeq ($(and $(HAVE_CURL_CC), $(HAVE_CURL_CXX)),YES)
+    # If both CC and CXX support libcurl, add the library to LIBS
+    LIBS += -lcurl
 else
-	# and if not, disable CURL specific code compilation
-	CFLAGS += -DNOCURL
+   # and if not, disable CURL specific code compilation
+   CFLAGS += -DNOCURL
+   #$(info LIBS: $(CFLAGS))
 endif
+
+#ifeq ($(HAVE_CURL),YES)
+#	# If yes, add the library
+#	LIBS += -lcurl
+#else
+#	# and if not, disable CURL specific code compilation
+#	CFLAGS += -DNOCURL
+#endif
 
 
 prefix = /usr/local
