@@ -107,8 +107,8 @@ test/testWrite: libBinaMeth.a
 dmtools: libBinaMeth.so
 	$(CC) -o $@ -I. -L. $(CFLAGS) dmtools.c -lBinaMeth $(LIBS) -Wl,-rpath $(CPP) -lpthread
 
-bam2dm: libBinaMeth.so
-	$(CXX) -o $@ -I. -L. $(CFLAGS) bam2dm.cpp -lBinaMeth -Wl,-rpath $(CPP) htslib/libhts.a -llzma -lbz2
+#bam2dm: libBinaMeth.so
+#	$(CXX) -o $@ -I. -L. $(CFLAGS) bam2dm.cpp -lBinaMeth -Wl,-rpath $(CPP) htslib/libhts.a -llzma -lbz2 -lz
 
 dmDMR:
 	$(CXX) $(CFLAGS) -c -o regression.o regression.cpp
@@ -119,8 +119,8 @@ dmalign:
 	$(CXX) -o genomebinLen genomebinLen.cpp
 	$(CXX) dmalign.cpp -o dmalign -lz
 
-#bam2dm:
-#	$(CXX) $(CFLAGS) bam2dm.cpp -o bam2dm -m64 -I. -L. -lz -lBinaMeth -Wl,-rpath $(CPP) $(LDFLAGS_SUB)
+bam2dm:
+	$(CXX) $(CFLAGS) bam2dm.cpp -o bam2dm -m64 -I. -L. -lz -lBinaMeth -Wl,-rpath $(CPP) $(LDFLAGS_SUB)
 
 test/exampleWrite: libBinaMeth.so
 	$(CC) -o $@ -I. -L. $(CFLAGS) test/exampleWrite.c -lBinaMeth $(LIBS) -Wl,-rpath .
