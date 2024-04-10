@@ -111,7 +111,7 @@ dmtools: libBinaMeth.so
 #	$(CXX) -o $@ -I. -L. $(CFLAGS) bam2dm.cpp -lBinaMeth -Wl,-rpath $(CPP) htslib/libhts.a -llzma -lbz2 -lz
 
 dmDMR:
-	$(CXX) $(CFLAGS) -c -o regression.o regression.cpp
+	$(CXX) $(CFLAGS) -c -o regression.o regression.cpp -lgsl -lgslcblas -lm -lz
 	$(CXX) $(CFLAGS) -o dmDMR dmDMR.cpp regression.o -I. -L. -lBinaMeth -Wl,-rpath $(CPP) -lgsl -lgslcblas -lm -lz
 
 dmalign:
