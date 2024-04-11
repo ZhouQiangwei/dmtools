@@ -2,7 +2,7 @@
 #$(error CPP variable undefined)
 #endif
 
-CPP = $(shell pwd)
+RPATH = $(shell pwd)
 SOURCES = $(wildcard *.cpp)
 OBJECTS = $(patsubst %.cpp,%.o,$(SOURCES))
 PROGS = dmtools bam2dm dmDMR dmalign
@@ -105,22 +105,22 @@ test/testWrite: libBinaMeth.a
 	$(CC) -o $@ -I. $(CFLAGS) test/testWrite.c libBinaMeth.a $(LIBS)
 
 dmtools: libBinaMeth.so
-	$(CC) -o $@ -I. -L. $(CFLAGS) dmtools.c -lBinaMeth $(LIBS) -Wl,-rpath $(CPP) -lpthread
+	$(CC) -o $@ -I. -L. $(CFLAGS) dmtools.c -lBinaMeth $(LIBS) -Wl,-rpath $(RPATH) -lpthread
 
 #bam2dm: libBinaMeth.so
-#	$(CXX) -o $@ -I. -L. $(CFLAGS) bam2dm.cpp -lBinaMeth -Wl,-rpath $(CPP) htslib/libhts.a -llzma -lbz2 -lz
+#	$(CXX) -o $@ -I. -L. $(CFLAGS) bam2dm.cpp -lBinaMeth -Wl,-rpath $(RPATH) htslib/libhts.a -llzma -lbz2 -lz
 
 dmDMR:
 	$(CXX) $(CFLAGS) -c -o regression.o regression.cpp -lgsl -lgslcblas -lm -lz
-	$(CXX) $(CFLAGS) -o dmDMR dmDMR.cpp regression.o -I. -L. -lBinaMeth -Wl,-rpath $(CPP) -lgsl -lgslcblas -lm -lz
+	$(CXX) $(CFLAGS) -o dmDMR dmDMR.cpp regression.o -I. -L. -lBinaMeth -Wl,-rpath $(RPATH) -lgsl -lgslcblas -lm -lz
 
 dmalign:
-	$(CXX) -o genome2cg genome2cg.cpp
-	$(CXX) -o genomebinLen genomebinLen.cpp
-	$(CXX) dmalign.cpp -o dmalign -lz
+	$(CXX) $(CFLAGS) -o genome2cg genome2cg.cpp
+	$(CXX) $(CFLAGS) -o genomebinLen genomebinLen.cpp
+	$(CXX) $(CFLAGS) dmalign.cpp -o dmalign -lz
 
 bam2dm:
-	$(CXX) $(CFLAGS) bam2dm.cpp -o bam2dm -m64 -I. -L. -lz -lBinaMeth -Wl,-rpath $(CPP) $(LDFLAGS_SUB)
+	$(CXX) $(CFLAGS) bam2dm.cpp -o bam2dm -m64 -I. -L. -lz -lBinaMeth -Wl,-rpath $(RPATH) $(LDFLAGS_SUB)
 
 test/exampleWrite: libBinaMeth.so
 	$(CC) -o $@ -I. -L. $(CFLAGS) test/exampleWrite.c -lBinaMeth $(LIBS) -Wl,-rpath .
@@ -140,7 +140,7 @@ clean:
 cleandm:
 	rm dmtools
 
-install-old: libBinaMeth.a libBinaMeth.so
+install-env: libBinaMeth.a libBinaMeth.so
 	install -d $(prefix)/lib $(prefix)/include
 	install libBinaMeth.a $(prefix)/lib
 	install libBinaMeth.so $(prefix)/lib
