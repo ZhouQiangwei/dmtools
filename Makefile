@@ -23,7 +23,8 @@ LDLIBS =
 INCLUDES = 
 
 # Create a simple test-program to check if gcc can compile with curl
-tmpfile:=$(shell mktemp --suffix=.c)
+#tmpfile:=$(shell mktemp --suffix=.c)
+tmpfile:=$(shell mktemp -t temphaoqiaoXXXXX.c)
 $(file >$(tmpfile),#include <curl/curl.h>)
 $(file >>$(tmpfile),int main() { return 0; })
 #HAVE_CURL:=$(shell $(CC) $(CFLAGS) $(EXTRA_CFLAGS_PIC) $(LIBS) -lcurl $(tmpfile) -o /dev/null >/dev/null 2>&1 && echo "YES")
@@ -120,7 +121,7 @@ dmalign:
 	$(CXX) $(CFLAGS) dmalign.cpp -o dmalign -lz
 
 bam2dm:
-	$(CXX) $(CFLAGS) bam2dm.cpp -o bam2dm -m64 -I. -L. -lz -lBinaMeth -Wl,-rpath $(RPATH) $(LDFLAGS_SUB)
+	$(CXX) -std=c++11 $(CFLAGS) bam2dm.cpp -o bam2dm -m64 -I. -L. -lz -lBinaMeth -Wl,-rpath $(RPATH) $(LDFLAGS_SUB)
 
 test/exampleWrite: libBinaMeth.so
 	$(CC) -o $@ -I. -L. $(CFLAGS) test/exampleWrite.c -lBinaMeth $(LIBS) -Wl,-rpath .
