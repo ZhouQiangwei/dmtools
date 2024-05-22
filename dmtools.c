@@ -131,6 +131,7 @@ const char* Help_String_bw="Command Format :  dmtools bw [options] -i <dm> -o <o
         "\t--chr                 chromosome for print\n"
         "\t--strand              [0/1/2] strand for show, 0 represent '+' positive strand, 1 '-' negative strand, 2 '.' all information\n"
         "\t--context             [0/1/2/3] context for show, 0 represent 'C/ALL' context, 1 'CG' context, 2 'CHG' context, 3 'CHH' context.\n"
+        "\t--mergeStrand         0 or 1, 1 for note strand in the file\n"
         "\t--mincover            >= minumum coverage show, default: 0\n"
         "\t--maxcover            <= maximum coverage show, default: 10000\n"
         "\t--zl                  The maximum number of zoom levels. [0-10], default: 2\n"
@@ -326,7 +327,7 @@ const char* Help_String_regionstats="Command Format :  dmtools regionstats [opni
         "\t--minC                min cytosines in region will used for calculate, default: 2\n"
         "\t--strand              [0/1/2/3] strand for show, 0 represent '+' positive strand, 1 '-' negative strand, 2 '.' all information, 3 calculate and print strand meth level seperately\n"
         "\t--context             [0/1/2/3/4] context for show, 0 represent 'C/ALL' context, 1 'CG' context, 2 'CHG' context, 3 'CHH' context, 4 calculate and print strand meth level seperately\n"
-        "\t--printcoverage       [0/1] print countC and coverage instead of methratio. [0]\n"
+        "\t--printcoverage       [0/1] print countC and coverage instead of methratio. [0]. Input dm files must contain coverage information.\n"
         "\t--print2one           [int] print all the countC and coverage results of C/CG/CHG/CHH context methylation to same file, only valid when --printcoverage 1. 0 for no, 1 for yes. [0]\n"
 //        "\t--mincover            >= minumum coverage show, default: 0\n"
 //        "\t--maxcover            <= maximum coverage show, default: 10000\n"
@@ -347,7 +348,7 @@ const char* Help_String_bodystats="Command Format :  dmtools bodystats [opnions]
         "\t--regionextend        also calculate DNA methylation level of upstream and downstream N-bp window. default 2000.\n"
         "\t--strand              [0/1/2/3] strand for show, 0 represent '+' positive strand, 1 '-' negative strand, 2 '.' all information, 3 calculate and print strand meth level seperately, only valid while -r para\n"
         "\t--context             [0/1/2/3/4] context for show, 0 represent 'C/ALL' context, 1 'CG' context, 2 'CHG' context, 3 'CHH' context, 4 calculate and print strand meth level seperately, default: 4.\n"
-		"\t--printcoverage       [0/1] also print countC and coverage of body instead of methratio. [0]\n"
+		"\t--printcoverage       [0/1] also print countC and coverage of body instead of methratio. [0]. Input dm files must contain coverage information.\n"
         "\t--print2one           [int] print all the countC and coverage results of C/CG/CHG/CHH context methylation to same file, only valid when --printcoverage 1. 0 for no, 1 for yes. [0]\n"
         "\t-h|--help";
 
@@ -385,7 +386,7 @@ const char* Help_String_chromstats="Command Format :  dmtools chromstats [opnion
         "\t--stepmove            [int] step move, default: 50000, if no overlap, please define same as --chromstep\n"
         "\t--context             [0/1/2/3/4] context for show, 0 represent 'C/ALL' context, 1 'CG' context, 2 'CHG' context, 3 'CHH' context, 4 calculate and print context meth level seperately. [4]\n"
         "\t--fstrand             [0/1/2/3] strand for calculation, 0 represent '+' positive strand, 1 '-' negative strand, 2 '.' without strand information, 3 calculate and print strand meth level seperately. [2]\n"
-		"\t--printcoverage       [0/1] print countC and coverage instead of methratio. [0]\n"
+		"\t--printcoverage       [0/1] print countC and coverage instead of methratio. [0]. Input dm files must contain coverage information.\n"
         "\t--print2one           [int] print all the countC and coverage results of C/CG/CHG/CHH context methylation to same file, only valid when --printcoverage 1. 0 for no, 1 for yes. [0]\n"
         "\t-h|--help";
 
@@ -416,11 +417,13 @@ int printcoverage = 0; // print countC and countCT instead of methratio
 int NTHREAD = 10;
 int *Fcover;
 unsigned long *mPs;
+unsigned long mPs_0;
 //mP1 = 0, mP2 = 0, mP3 = 0, mP4 = 0, mP5 = 0;
 int statsSize = 10;
 int alwaysprint = 0;
 int minC = 2;
 int taps=0;
+int mergeStrand = 0;
 
 int main(int argc, char *argv[]) {
     binaMethFile_t *fp = NULL;
@@ -619,6 +622,9 @@ int main(int argc, char *argv[]) {
             }else if(strcmp(argv[i], "--regionextend") == 0){
                 regionextend = atoi(argv[++i]);
                 assert(regionextend>0);
+            }else if(strcmp(argv[i], "--mergeStrand") == 0){
+                mergeStrand = atoi(argv[++i]);
+                assert(mergeStrand==0 || mergeStrand==1);
             }else if(strcmp(argv[i], "--profilemovestep") == 0){
                 defineprofilemovestep = 1;
                 profilemovestep = atof(argv[++i]);
@@ -733,6 +739,7 @@ int main(int argc, char *argv[]) {
         char abspathtmp[1024];
         get_executable_path(abspathtmp, processname, sizeof(abspathtmp));
         char cmd[3000]; char seqfq[500]; char seqfq1[500]; char seqfq2[500]; char pthread[10];  strcpy(pthread, "6"); char fastp[100];
+        int singleE=0,pairedE=0;
         for(i=2; i< argc; i++){
             if(strcmp(argv[i], "-g") == 0){
                 strcpy(chromlenf, argv[i+1]);
@@ -745,6 +752,7 @@ int main(int argc, char *argv[]) {
                     free(matchedFiles);
                 }else
                     strcpy(seqfq, argv[i+1]);
+                singleE = 1;
             }else if(strcmp(argv[i], "-1") == 0){
                 int caw = containsAnyWildcard(argv[i + 1], "*?[]+");
                 if(caw == 1){
@@ -762,6 +770,7 @@ int main(int argc, char *argv[]) {
                     free(matchedFiles);
                 }else
                     strcpy(seqfq2, argv[i+1]);
+                pairedE =1;
             }else if(strcmp(argv[i], "-p") == 0){
                 strcpy(pthread, argv[i+1]);
             }else if(strcmp(argv[i], "--fastp") == 0){
@@ -794,7 +803,7 @@ int main(int argc, char *argv[]) {
            strcat(cmd, " --fastp ");
            strcat(cmd, fastp);
         }
-        if(seqfq[0]) {
+        if(seqfq[0] && singleE == 1) {
             strcat(cmd, " -i ");
             strcat(cmd, seqfq);
         }else if(seqfq1[0] && seqfq2[0]){
@@ -1437,13 +1446,13 @@ int main(int argc, char *argv[]) {
 
             // print stats
             //fprintf(outfp_stats, "m1\tm2\tm3\tm4\tm5\n%ld\t%ld\t%ld\t%ld\t%ld\n", mP1, mP2, mP3, mP4, mP5);
-            fprintf(outfp_stats, "catary\t0");
+            fprintf(outfp_stats, "catary\t0\t0.0");
             for(i=1; i<statsSize; i++){
               fprintf(outfp_stats, "\t%.2f", ((float)(i))/statsSize);
             }
             fprintf(outfp_stats, "\n");
 
-            fprintf(outfp_stats, "percent\t%ld", mPs[0]);
+            fprintf(outfp_stats, "percent\t%ld\t%ld", mPs_0, mPs[0]);
             for(i=1; i< statsSize; i++){
                 fprintf(outfp_stats, "\t%ld", mPs[i]);
             }
@@ -3871,7 +3880,7 @@ int main_view_bm(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outfor
     char *pszBuf = malloc(sizeof(char)*40000000);
     char *tempstore = pszBuf;
     char *tempchar = malloc(30);
-    int Nprint = 0; int cover = 0; float methlevel = 0;
+    int Nprint = 0; int cover = 0; float methlevel = 0; int keyvalue = 0;
     //char *strand = malloc(100*sizeof(char)); int strand;
     for(i=0;i<slen; i++){
         chrom = strtok(regions[i], ",:-");
@@ -3917,6 +3926,11 @@ int main_view_bm(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outfor
                     }
                     if(ifp->hdr->version & BM_STRAND){
                         strands[Nprint] = o->strand[j];
+                       if(mergeStrand) {
+                           if(strands[Nprint] == 1 && values[Nprint] != 0){
+                               values[Nprint] = 0-o->value[j];
+                           }
+                       }
                     }
                     if(ifp->hdr->version & BM_CONTEXT) {
                         contexts[Nprint] = o->context[j];
@@ -3932,7 +3946,14 @@ int main_view_bm(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outfor
                     //else if(methlevel >= 0.4) mP3++;
                     //else if(methlevel >= 0.2) mP2++;
                     //else mP1++;
-                    mPs[(int)(methlevel*statsSize - 0.01/statsSize)]++;
+                    if(methlevel == 0) {
+                        //keyvalue = 0;
+                        mPs_0++;
+                    }else{
+                        keyvalue = (int)(methlevel*statsSize - 0.0001/statsSize);
+                        if(keyvalue<0) keyvalue = 0;
+                        mPs[keyvalue]++;
+                    }
 
                     if(ifp->hdr->version & BM_COVER) {
                         cover = o->coverage[j]-1;
@@ -3952,7 +3973,17 @@ int main_view_bm(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outfor
                         sprintf(tempchar, "\t%"PRIu32"", o->end[j]);
                         tempstore = fastStrcat(tempstore, tempchar);
                     }
-                    sprintf(tempchar, "\t%f", o->value[j]);
+                    if(mergeStrand) {
+                       if(ifp->hdr->version & BM_STRAND){
+                           if(o->strand[j] == 1 && o->value[j] != 0){
+                               sprintf(tempchar, "\t-%f", o->value[j]);
+                           }else{
+                               sprintf(tempchar, "\t%f", o->value[j]);
+                           }
+                       }
+                    }else{
+                        sprintf(tempchar, "\t%f", o->value[j]);
+                    }
                     tempstore = fastStrcat(tempstore, tempchar);
                     if(ifp->hdr->version & BM_COVER) {
                         sprintf(tempchar, "\t%"PRIu16"", o->coverage[j]);
@@ -4083,7 +4114,7 @@ int main_view(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outformat
     char *tempstore = pszBuf;
     char *tempchar = malloc(20);
     int Nprint = 0; int cover = 0; float methlevel = 0;
-    int usingLine = 0;
+    int usingLine = 0; int keyvalue = 0;
     if(strcmp(outformat, "dm") == 0) {
         char **chromsUse = malloc(sizeof(char*)*MAX_LINE_PRINT);
         char **entryid = malloc(sizeof(char*)*MAX_LINE_PRINT);
@@ -4156,7 +4187,14 @@ int main_view(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outformat
                         //else if(methlevel >= 0.4) mP3++;
                         //else if(methlevel >= 0.2) mP2++;
                         //else mP1++;
-                        mPs[(int)(methlevel*statsSize - 0.01/statsSize)]++;
+                        if(methlevel == 0) {
+                            //keyvalue = 0;
+                            mPs_0++;
+                        }else{
+                            keyvalue = (int)(methlevel*statsSize - 0.0001/statsSize);
+                            if(keyvalue<0) keyvalue = 0;
+                            mPs[keyvalue]++;
+                        }
 
                         if(ifp->hdr->version & BM_COVER) {
                             cover = o->coverage[j]-1;
@@ -4240,7 +4278,7 @@ int main_view_bedfile(char *inbmF, char *bedfile, int type, FILE* outfileF, char
     int i =0, j = 0;
     
     char *chrom = malloc(100*sizeof(char)); int start=0, end=0;
-    char region[200]; int cover = 0; float methlevel = 0;
+    char region[200]; int cover = 0; float methlevel = 0; int keyvalue = 0;
     while (fgets(region,200,BedF)!=0){
         chrom = strtok(region, ":-");
         start = atoi(strtok(NULL,":-"));
@@ -4263,7 +4301,14 @@ int main_view_bedfile(char *inbmF, char *bedfile, int type, FILE* outfileF, char
                     //else if(methlevel >= 0.4) mP3++;
                     //else if(methlevel >= 0.2) mP2++;
                     //else mP1++;
-                    mPs[(int)(methlevel*statsSize - 0.01/statsSize)]++;
+                    if(methlevel == 0) {
+                        //keyvalue = 0;
+                        mPs_0++;
+                    }else{
+                        keyvalue = (int)(methlevel*statsSize - 0.0001/statsSize);
+                        if(keyvalue<0) keyvalue = 0;
+                        mPs[keyvalue]++;
+                    }
 
                     if(ifp->hdr->version & BM_COVER) {
                         cover = o->coverage[j]-1;

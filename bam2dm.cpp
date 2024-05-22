@@ -14,6 +14,7 @@
 #include <errno.h>
 #include "binaMeth.h"
 #include <stdlib.h>
+#include <unordered_map>
 
 #include "htslib/htslib/sam.h"
 #include "htslib/htslib/hts.h"
@@ -78,6 +79,7 @@ using namespace std;
 bool Collision=false;
 map <string,int> String_Hash;
 float ENTROPY_CUTOFF=0;
+int no_overlap = 1;
 ///g++ ./src/split.cpp -o ./src/split -lpthread
 //{-----------------------------  FUNCTION PRTOTYPES  -------------------------------------------------
 int fprintf_time(FILE *stream, const char *format, ...);
@@ -168,6 +170,7 @@ binaMethFile_t *fp;
 binaMethFile_t *fp_gch; //GCH sites (GCA/GCT/GCC) were used to analyze chromatin accessibility
 string contextfilter="C";
 string tech="BS-Seq";
+std::unordered_map<std::string, int> myMap;
 int main(int argc, char* argv[])
 {
 	time_t Start_Time,End_Time;
@@ -187,6 +190,7 @@ int main(int argc, char* argv[])
 		"\t-r|--remove_dup       REMOVE_DUP, default:false\n"
         "\t--mrtxt               print prefix.methratio.txt file\n"
         "\t--cf                  context filter for print results, C, CG, CHG, CHH, default: C\n"
+        "\t--pe_overlap          skip paired end overlap region, 0 or 1, default 1\n"
         "\t-p                    [int] threads\n"
         "\t--NoMe                data type for NoMe-seq\n"
         "\t [DM format] paramaters\n"
@@ -251,6 +255,9 @@ int main(int argc, char* argv[])
             contextfilter = argv[++i];
         }else if(!strcmp(argv[i],"--NoMe")){
             tech = "NoMe";
+        }
+        else if(!strcmp(argv[i],"--pe_overlap")){
+            no_overlap = atoi(argv[++i]);
         }
 		else if(!strcmp(argv[i], "--sam-seq-beforeBS"))
 		{
@@ -1624,6 +1631,7 @@ void *Process_read(void *arg)
 	bam1_t *b = bam_init1();
     hts_idx_t *idx = NULL;
     hts_itr_t *iter;
+    int left_end = -1;
     if(strcmp(((ARGS *)arg)->processChr, "NAN-mm") != 0){
         if ((idx = sam_index_load(((ARGS *)arg)->BamInFile, ((ARGS *)arg)->INbamfilename )) == 0) {
             fprintf(stderr, "[E::%s] fail to load the BAM index\n", __func__);
@@ -1637,6 +1645,8 @@ void *Process_read(void *arg)
 
 	while( (!bamformat && (samaddress = fgets(s2t,BATBUF,((ARGS *)arg)->samINFILE))!=NULL) || (bamformat && r>0 ))
 	{
+        left_end = -1;
+
 		if(r < -1) {
 			fprintf(stderr, "\ntruncated file.\n");
 		}
@@ -1745,6 +1755,20 @@ void *Process_read(void *arg)
 
 		int Nmismatch=conutMismatch(CIGr, ((ARGS *)arg)->Genome_Offsets[H].Offset, ((ARGS *)arg)->Genome_List[H].Genome, readString, pos, hitType);
 		if(Nmismatch > 0.5 + UPPER_MAX_MISMATCH * strlen(readString.c_str())) continue;
+
+        if(no_overlap) {
+            if (Flag & 0x1) {
+                if(strcmp(Chrom_P, "=") == 0 && pos > pos_P){
+                    std::string key = Dummy;
+                    auto it = myMap.find(key);
+                    if (it != myMap.end()) {
+                        left_end = it->second; //myMap[key];
+                        myMap.erase(it);
+                        //myMap.erase(key);
+                    }
+                }
+            }
+        }
 		
 		unsigned long G_Skip=((ARGS *)arg)->Genome_List[H].Genome - ((ARGS *)arg)->Org_Genome;
             int Flag_rm=0;
@@ -1784,6 +1808,10 @@ void *Process_read(void *arg)
 					{
 						read_Methyl_Info[r] = '=';
 						if (pos+g-1 >= ((ARGS *)arg)->Genome_Offsets[Hash_Index].Offset) break;
+
+                        if(pos+g < left_end) {
+                            continue;
+                        }
 
 						char genome_Char = toupper(((ARGS *)arg)->Genome_List[H].Genome[pos+g-1]);//
 						char genome_CharFor1 = toupper(((ARGS *)arg)->Genome_List[H].Genome[pos+g+1-1]);
@@ -1915,6 +1943,15 @@ void *Process_read(void *arg)
 				}
 			}
 			if(CONTINUE) continue;
+
+            if(no_overlap) {
+                if (Flag & 0x1) {
+                    if(strcmp(Chrom_P, "=") == 0 && pos <= pos_P && pos+strlen(readString.c_str()) > pos_P ) {
+                        std::string key = Dummy;
+                        myMap[key] = pos+Glens;
+                    }
+                }
+            }
 							
 			read_Methyl_Info[RLens]='\0';
 			rawReadBeforeBS[lens]='\0';
