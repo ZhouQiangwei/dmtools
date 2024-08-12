@@ -30,6 +30,7 @@
 //#define max(a,b) ( ((a)>(b)) ? (a):(b) )
 //#define min(a,b) ( ((a)>(b)) ? (b):(a) )
 
+//#define DEBUG 2
 const float QLIMIT=QLIMIT_FLOAT;
 
 struct Mismatch
@@ -106,6 +107,8 @@ int Get_String_Length(FILE* INFILE);
 string remove_soft_split(string & cigar,int & Read_Len,int & pos);
 
 void ReverseC_Context(char* Dest,const char* seq,int & stringlength);
+void Reverse_Comp(char* Dest, char* seq);
+void onlyComp(char* Dest, char* seq);
 //---------------------------------------------------------------------------------------------------------------
 unsigned Total_Reads_all;
 unsigned long Total_Reads=0, Total_mapped = 0, forward_mapped = 0, reverse_mapped = 0;
@@ -163,6 +166,7 @@ unsigned long plusCGcount=0,plusCHGcount=0,plusCHHcount=0;
 unsigned long Neg_mCGcount=0,Neg_mCHGcount=0,Neg_mCHHcount=0;
 unsigned long NegCGcount=0,NegCHGcount=0,NegCHHcount=0;
 string Prefix="None";
+string hsPrefix="hseq.txt";
 #define MAX_LINE_PRINT 1000000
 #define BUFSIZE 1000000
 #define MAX_CHROM 1000000
@@ -171,6 +175,8 @@ binaMethFile_t *fp_gch; //GCH sites (GCA/GCT/GCC) were used to analyze chromatin
 string contextfilter="C";
 string tech="BS-Seq";
 std::unordered_map<std::string, int> myMap;
+int onlyPHead = 0;
+int PHead = 0;
 int main(int argc, char* argv[])
 {
 	time_t Start_Time,End_Time;
@@ -182,12 +188,13 @@ int main(int argc, char* argv[])
 		"\t-b|--binput           Bam format file, sorted by chrom.\n"
         "\t-m|--methratio        methratio.dm output file\n"
 		"\t [bam2dm] mode paramaters, options\n"
-        "\t-n|--Nmismatch        Number of mismatches, default 0.06 percentage of read length. [0-1]\n"
+        "\t-n|--Nmismatch        Number of mismatches, default 0.1 percentage of read length. [0-1]\n"
 		"\t-Q                    caculate the methratio while read QulityScore >= Q. default:30\n"
 		"\t-c|--coverage         >= <INT> coverage. default:4\n"
 		"\t--maxcoverage         <= <INT> coverage. default:1000\n"
 		"\t-nC		             >= <INT> nCs per region. default:1\n"
 		"\t-r|--remove_dup       REMOVE_DUP, default:false\n"
+        "\t--ph                  print head bases of seq, default: seq.txt, motif analysis\n"
         "\t--mrtxt               print prefix.methratio.txt file\n"
         "\t--cf                  context filter for print results, C, CG, CHG, CHH, default: C\n"
         "\t--pe_overlap          skip paired end overlap region, 0 or 1, default 1\n"
@@ -208,6 +215,7 @@ int main(int argc, char* argv[])
 	Char2Comp['G']=Char2Comp['g']='C';
 	Char2Comp['T']=Char2Comp['t']='A';
 	Char2Comp['N']=Char2Comp['n']='N';
+    Char2Comp['U']=Char2Comp['u']='U';
 	int Genome_CountX=0;
 	char Output_Name[100];
 	strcpy(Output_Name, "None");
@@ -258,6 +266,9 @@ int main(int argc, char* argv[])
         }
         else if(!strcmp(argv[i],"--pe_overlap")){
             no_overlap = atoi(argv[++i]);
+        }else if(!strcmp(argv[i],"--ph")){
+            PHead = 1;
+            hsPrefix=argv[++i];
         }
 		else if(!strcmp(argv[i], "--sam-seq-beforeBS"))
 		{
@@ -352,8 +363,10 @@ int main(int argc, char* argv[])
 		}
 		
 	}
+    if(DEBUG>1) fprintf(stderr, "\nXXX111\n");
 	for(int i = 0; i < argc; i++) {CMD.append(argv[i]); CMD.append(" ");}
     if(strcmp(Prefix.c_str(),"None")==0) Prefix = Prefix2;
+    if(!Methratio) onlyPHead = 1;
 	
 	if(argc<=3) printf("%s \n",Help_String);
 	if (argc >3  && InFileStart) 
@@ -570,6 +583,7 @@ int main(int argc, char* argv[])
 					//samfile_t *bamin = 0;
 					args.BamInFile = 0;
 					args.header;
+                    if(DEBUG>1) fprintf(stderr, "\nXXX3333.1\n");
                                         if(bamformat)
                                         {
                                              strcpy(args.INbamfilename, argv[f]);
@@ -629,7 +643,8 @@ int main(int argc, char* argv[])
 						}
 					}
 				}
-				if(f==InFileStart){
+                if(DEBUG>1) fprintf(stderr, "\nXXX3333.2\n");
+				if(f==InFileStart && Methratio){
 					//Allow up to 10 zoom levels, though fewer will be used in practice
 					if(bmCreateHdr(fp, zoomlevel)) exit(0);
 					//Create the chromosome lists
@@ -650,9 +665,11 @@ int main(int argc, char* argv[])
                         if(bmWriteHdr(fp_gch)) exit(0);
                     }
 				}
+                if(DEBUG>1) fprintf(stderr, "\nXXX3333.4\n");
 				//nothreads
                 args.processChr=new char[1000];
                 strcpy(args.processChr, processChr);
+                if(DEBUG>1) fprintf(stderr, "\nss000111\n");
 				Process_read(&args);
 				Done_Progress();
 				if(!bamformat) fclose(args.samINFILE);
@@ -1460,7 +1477,6 @@ int conutMismatch(string CIGr, int chrLen, char* Genome_seq, string readString, 
 			for(int k=lens,r=RLens,g=Glens;k<length+lens;r++,k++,g++)
 			{
 				if (pos+g-1 >= chrLen) break;
-
 				char genome_Char = toupper(Genome_seq[pos+g-1]);
 				if (hitType==1 || hitType==3) {
 					if (readString[k] != genome_Char && !(readString[k]=='T' && genome_Char=='C')) 
@@ -1608,6 +1624,7 @@ void *Process_read(void *arg)
 	string fileIS = Prefix + ".insert_size.1M.txt";
 	long process_vali = 0;
 	FILE* fIS = File_Open(fileIS.c_str(), "w");
+    FILE* fPH=File_Open(hsPrefix.c_str(),"w");
 	int processed_vali = 0;
 	int Progress=0;Number_of_Tags=INITIAL_PROGRESS_READS;
 	Init_Progress();
@@ -1621,6 +1638,7 @@ void *Process_read(void *arg)
 	//start to read batman hit file
 	char *s2t = (char*) malloc(1000);
 	char read_Methyl_Info[600];char rawReadBeforeBS[600];char temp[5];
+    char headseq[4]; unsigned int hs=0, hs_r =3; int printh = 0; char headseq_rc[4]; 
 	char Dummy[BATBUF],forReadString[BATBUF],Chrom[CHROMSIZE];
 	char Chrom_P[CHROMSIZE];int pos_P=0;int Insert_Size=0;int Qsingle=0; //Paired-end reads
 	string CIGr;char CIG[BATBUF];
@@ -1672,7 +1690,7 @@ void *Process_read(void *arg)
             }
 		}
         Total_Reads++;
-		
+
 		if ( fileprocess>=1000000  ) {
 			fprintf_time(stderr, "Processed %d reads.\n", Total_Reads);
 			fileprocess = 0;
@@ -1732,14 +1750,15 @@ void *Process_read(void *arg)
 				else if(Flag==16)
 					hitType=4;
 			}else if( !(Flag & 0x10)  && (Flag & 0x40) )
-				hitType=1;
+				hitType=1;  //99
 			else if( !(Flag & 0x10)  && (Flag & 0x80) )
-				hitType=2;
+				hitType=2; //163
 			else if( (Flag & 0x10)  && (Flag & 0x80) )
-				hitType=3;
+				hitType=3; //147
 			else if( (Flag & 0x10)  && (Flag & 0x40) )
-				hitType=4;
+				hitType=4; //83
 			if(hitType==0) continue;
+            // 1+3, 2+4
 		}
 		Total_mapped++;
 		if(hitType == 1 || hitType == 2) forward_mapped++;
@@ -1785,6 +1804,8 @@ void *Process_read(void *arg)
 			unsigned lens=0;int Glens=0;int RLens=0;
 			unsigned n=0;bool CONTINUE=false;
 			const char* cigr=CIGr.c_str();
+            if(DEBUG>1) fprintf(fPH, "%s %d %s %s\n", Dummy, hitType, cigr, readString.c_str());
+            printh = 0;
 			while(*cigr!='\0')//RLens--READs Length \\ lens--raw reads length \\ GLens--genome Lens
 			{
 				if(*cigr>='0' && *cigr<='9')
@@ -1803,13 +1824,16 @@ void *Process_read(void *arg)
 	                cigr++;n=0;
 				}else if(*cigr=='M')
 				{
+                    hs = 0; hs_r = 3;
 					temp[n]='\0';int length=atoi(temp);
 					for(int k=lens,r=RLens,g=Glens;k<length+lens;r++,k++,g++)
 					{
+                        //if(strcmp(Dummy, "A00545:105:HWCWLDSX2:3:1105:1118:36182")== 0) fprintf(stderr, "%d %d %d %c, %d %d\n", lens, length, k, readString[k], k-lens, length-4);
 						read_Methyl_Info[r] = '=';
 						if (pos+g-1 >= ((ARGS *)arg)->Genome_Offsets[Hash_Index].Offset) break;
 
                         if(pos+g < left_end) {
+                            //fprintf(stderr, "AAAAA");
                             continue;
                         }
 
@@ -1823,6 +1847,28 @@ void *Process_read(void *arg)
 							genome_CharBac2 = toupper(((ARGS *)arg)->Genome_List[H].Genome[pos+g-2-1]);
 						}
 						if (hitType==1 || hitType==3) {
+                            if(hitType==1) {
+                              if(k-lens<4){
+                                if (readString[k]=='T' && genome_Char=='C') headseq[hs] = 'U';
+                                else headseq[hs] = readString[k];
+                                hs++;
+                              }
+                            }else{
+                              if(k-lens>=length-4) {
+                                if (readString[k]=='T' && genome_Char=='C') headseq[hs_r] = 'U';
+                                else headseq[hs_r] = readString[k];
+                                hs_r--;
+                              }
+                            }
+                            if(PHead == 1) {
+                              if(hs == 4 || hs_r == -1) {
+                                if(hitType==1 && printh==0) 
+                                    fprintf(fPH, "%s\t%d\t%s\t%d\t%s\t%s\n", Dummy, hitType, Chrom, pos, CIGr.c_str(), headseq);
+                                printh = 1;
+                                if(onlyPHead == 1) break;
+                              }
+                            }
+
 							if (readString[k]=='C' && genome_Char=='C')
 							{
 								read_Methyl_Info[r] = 'M';
@@ -1870,6 +1916,27 @@ void *Process_read(void *arg)
 							}
 						}
 						else if (hitType==2 || hitType==4) {
+                            if(hitType==2) {
+                              if(k-lens<4){
+                                if (readString[k]=='A' && genome_Char=='G') headseq[hs] = 'U';
+                                else headseq[hs] = readString[k];
+                                hs++;
+                              }
+                            }else{
+                              if(k-lens>=length-4) {
+                                if (readString[k]=='A' && genome_Char=='G') headseq[hs_r] = 'U';
+                                else headseq[hs_r] = readString[k];
+                                hs_r--;
+                              }
+                            }
+                            if(PHead == 1) {
+                              if(hs == 4 || hs_r == -1) {
+                                if(hitType==2 && printh == 0) fprintf(fPH, "%s\t%d\t%s\t%d\t%s\t%s\n", Dummy, hitType, Chrom, pos, CIGr.c_str(), headseq);
+                                printh = 1;
+                                if(onlyPHead == 1) break;
+                              }
+                            }
+
 							if (readString[k]=='G' && genome_Char=='G')
 							{
 								read_Methyl_Info[r] = 'M';
@@ -1942,6 +2009,11 @@ void *Process_read(void *arg)
 					break;
 				}
 			}
+            if((hitType==3 || hitType==4) && printh == 1) {
+                onlyComp(headseq_rc, headseq);
+                //fprintf(fPH, "%s %d %s %d %s %s\n", Dummy, hitType, Chrom, pos, CIGr.c_str(), headseq_rc);
+                fprintf(fPH, "%s\t%d\t%s\t%d\t%s\t%s\n", Dummy, hitType, Chrom, pos, CIGr.c_str(), headseq_rc);
+            }
 			if(CONTINUE) continue;
 
             if(no_overlap) {
@@ -1982,6 +2054,7 @@ void *Process_read(void *arg)
 	}
 	free(s2t);
 	fclose(fIS);
+    free(fPH);
 }
 
 void Print_Mismatch_Quality(FILE* OUTFILE_MM, int L) {
@@ -2360,6 +2433,42 @@ void ReverseC_Context(char* Dest,const char* seq,int & stringlength)
 	}
 	
         for (int i=stringlength-1;i>=0;i--)
+        {
+                *Dest=Char2Comp[seq[i]];
+                Dest++;
+        }
+        *Dest=0;
+        //return Dest;
+}
+
+
+void Reverse_Comp(char* Dest, char* seq)
+{
+    int stringlength = strlen(seq);
+    if(stringlength<=0) {
+        fprintf(stderr, "\nError string %d %d %s\n", stringlength, seq);
+        exit(0);
+    }
+
+        for (int i=stringlength-1;i>=0;i--)
+        {
+                *Dest=Char2Comp[seq[i]];
+                Dest++;
+        }
+        *Dest=0;
+        //return Dest;
+}
+
+
+void onlyComp(char* Dest, char* seq)
+{
+    int stringlength = strlen(seq);
+    if(stringlength<=0) {
+        fprintf(stderr, "\nError string %d %d %s\n", stringlength, seq);
+        exit(0);
+    }
+
+        for (int i=0;i<stringlength;i++)
         {
                 *Dest=Char2Comp[seq[i]];
                 Dest++;
