@@ -6,6 +6,7 @@
 #include <string>
 #include <limits.h>
 #include <sstream>
+#include <fstream>
 #include <vector>
 #include <dirent.h>
 #include <unistd.h>
@@ -774,11 +775,12 @@ void process_other_line(char *line) {
  //   printf("\n");
 }
 
-void fixsam() {
+void fixsam(std::istream& input) {
     char line[MAX_LINE_LENGTH];
 
     // Read lines from standard input
-    while (fgets(line, MAX_LINE_LENGTH, stdin) != NULL) {
+//    while (fgets(line, MAX_LINE_LENGTH, stdin) != NULL) {
+      while(input.getline(line, MAX_LINE_LENGTH)) {
         if (line[0] == '@') {
             if (strncmp(line, "@SQ", 3) == 0) {
                 process_sq_line(line);
@@ -926,7 +928,17 @@ int main(int argc, char* argv[])
         }
     }
     if(mode == "fixsam"){
-        fixsam();
+        if (argc > 2 && strcmp(argv[2], "-") != 0) {
+            std::ifstream file(argv[2]);
+            if (!file.is_open()) {
+                std::cerr << "Error opening file: " << argv[2] << std::endl;
+                return 1;
+            }
+            fixsam(file);
+            file.close();
+        } else {
+            fixsam(std::cin);
+        }
     }
     if(mode == "align"){
         string cmd = "bwa mem ";
