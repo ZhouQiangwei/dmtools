@@ -290,7 +290,7 @@ int main(int argc, char* argv[])
 			QualCut=atoi(argv[++i]);
         }else if(!strcmp(argv[i], "-p"))
         {
-            NTHREADS=atoi(argv[++i]);
+            NTHREADS=atoi(argv[++i]);;
         }
         else if(!strcmp(argv[i],"--cf")){
             contextfilter = argv[++i];

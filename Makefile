@@ -5,7 +5,7 @@
 RPATH = $(shell pwd)
 SOURCES = $(wildcard *.cpp)
 OBJECTS = $(patsubst %.cpp,%.o,$(SOURCES))
-PROGS = dmtools bam2dm dmDMR dmalign
+PROGS = dmtools bam2dm dmDMR dmalign bam2motif
 
 CXX = g++
 CC = gcc
@@ -123,19 +123,22 @@ dmalign:
 bam2dm:
 	$(CXX) -std=c++11 $(CFLAGS) bam2dm.cpp -o bam2dm -m64 -I. -L. -lz -lBinaMeth -Wl,-rpath $(RPATH) $(LDFLAGS_SUB)
 
+bam2motif:
+	$(CXX) -std=c++11 $(CFLAGS) bam2motif.cpp -o bam2motif -m64 -I. -L. -lz -lBinaMeth -Wl,-rpath $(RPATH) $(LDFLAGS_SUB)
+
 test/exampleWrite: libBinaMeth.so
 	$(CC) -o $@ -I. -L. $(CFLAGS) test/exampleWrite.c -lBinaMeth $(LIBS) -Wl,-rpath .
 
 test/testIterator: libBinaMeth.a
 	$(CC) -o $@ -I. $(CFLAGS) test/testIterator.c libBinaMeth.a $(LIBS)
 
-install: dmtools bam2dm dmDMR dmalign
+install: dmtools bam2dm dmDMR dmalign bam2motif
 
 test: test/testLocal test/testRemote test/testWrite test/testLocal dmtools test/exampleWrite test/testRemoteManyContigs test/testIterator
 	./test/test.py
 
 clean:
-	rm -f *.o libBinaMeth.a libBinaMeth.so *.pico test/testLocal test/testRemote test/testWrite dmtools dmDMR bam2dm dmalign test/exampleWrite test/testRemoteManyContigs test/testIterator genome2cg genomebinLen dmalign
+	rm -f *.o libBinaMeth.a libBinaMeth.so *.pico test/testLocal test/testRemote test/testWrite dmtools dmDMR bam2dm bam2motif dmalign test/exampleWrite test/testRemoteManyContigs test/testIterator genome2cg genomebinLen dmalign
 	make clean -C htslib
 
 cleandm:

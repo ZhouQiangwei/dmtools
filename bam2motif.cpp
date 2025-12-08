@@ -65,7 +65,6 @@ typedef struct {
    char* Marked_GenomeE;
    Methy_Hash Methy_List;
    FILE* OUTFILE;
-   FILE* OUTFILEMS;
    FILE* samINFILE;
    FILE* bedFILE;
    samFile* BamInFile;
@@ -82,7 +81,7 @@ using namespace std;
 bool Collision=false;
 map <string,int> String_Hash;
 float ENTROPY_CUTOFF=0;
-int skipOverlap = 1; //
+int no_overlap = 1;
 int countreadC = 0;
 ///g++ ./src/split.cpp -o ./src/split -lpthread
 //{-----------------------------  FUNCTION PRTOTYPES  -------------------------------------------------
@@ -123,7 +122,7 @@ unsigned ALL_Map_Remdup=0;
 float UPPER_MAX_MISMATCH=0.1;
 bool REMOVE_DUP=false; //true; //true to removeDup, false will not remove PCR-dup
 unsigned Mismatch_Qual[255][255][255]; //[readLength][255][255]
-int QualCut=30;
+int QualCut=-1;
 const int POWLIMIT=300;
 float POW10[POWLIMIT];
 int QUALITYCONVERSIONFACTOR=33;
@@ -181,8 +180,6 @@ std::unordered_map<std::string, int> myMap;
 int onlyPHead = 0;
 int PHead = 0;
 int rrbs=0;
-int printmethstate = 0;
-int onlyM = 0;
 int main(int argc, char* argv[])
 {
 	time_t Start_Time,End_Time;
@@ -217,7 +214,6 @@ int main(int argc, char* argv[])
         "\t--countreadC          count number of mC and C for per read\n"
         "\t--chrom               chr/chr:s-e only process this region\n"
         "\t--bedfile             bedfile for process countreadC\n"
-        "\t--pms                 file name for print methstate\n"
 //        "\t--rrbs                RRBS mode\n"
         "\t-h|--help";
 
@@ -230,9 +226,6 @@ int main(int argc, char* argv[])
 	int Genome_CountX=0;
 	char Output_Name[100];
 	strcpy(Output_Name, "None");
-    char Output_Name_MS[100];
-    strcpy(Output_Name_MS, "None");
-
 	string Prefix2="None";
 	string methOutfileName;
     string GCHOutfileName;
@@ -263,11 +256,7 @@ int main(int argc, char* argv[])
 		{
 			strcpy(Output_Name, argv[++i]);
 			Sam=1;
-		}else if(!strcmp(argv[i], "--pms")  )
-        {
-            strcpy(Output_Name_MS, argv[++i]);
-            printmethstate=1;
-        }else if(!strcmp(argv[i], "--rrbs") )
+		}else if(!strcmp(argv[i], "--rrbs") )
         {
             //rrbs=1;
         }
@@ -290,7 +279,7 @@ int main(int argc, char* argv[])
 			QualCut=atoi(argv[++i]);
         }else if(!strcmp(argv[i], "-p"))
         {
-            NTHREADS=atoi(argv[++i]);
+            NTHREADS=atoi(argv[++i]);;
         }
         else if(!strcmp(argv[i],"--cf")){
             contextfilter = argv[++i];
@@ -298,7 +287,7 @@ int main(int argc, char* argv[])
             tech = "NoMe";
         }
         else if(!strcmp(argv[i],"--pe_overlap")){
-            skipOverlap = atoi(argv[++i]);
+            no_overlap = atoi(argv[++i]);
         }else if(!strcmp(argv[i],"--ph")){
             PHead = 1;
             hsPrefix=argv[++i];
@@ -532,11 +521,9 @@ int main(int argc, char* argv[])
 			}
 			
 			args.OUTFILE = NULL;
-            args.OUTFILEMS = NULL;
 			assert(longestChr>0);
 			fprintf(stderr, "[DM::calmeth] Longest chr: %d\n",longestChr);
 			if(Sam && strcmp(Output_Name,"None") ) args.OUTFILE=File_Open(Output_Name,"w");
-            if(strcmp(Output_Name_MS,"None") ) args.OUTFILEMS=File_Open(Output_Name_MS,"w");
 
 			char* Split_Point=args.Org_Genome;//split and write...
 			args.Genome_List = new Gene_Hash[Genome_Count];
@@ -724,8 +711,7 @@ int main(int argc, char* argv[])
 			}
 
             if(countreadC && strcmp(bedfilename, "")!=0) fclose(args.bedFILE);
-            if(Sam && strcmp(Output_Name,"None") ) fclose(args.OUTFILE);
-            if(printmethstate == 1) fclose(args.OUTFILEMS);
+
 
 			map<string, int>::iterator iter;
 			int H = -1;
@@ -742,6 +728,8 @@ int main(int argc, char* argv[])
 				}
 			 }
 			fprintf(stderr, "genome process done!\n");
+			//if(args.OUTFILE!=NULL) fclose(args.OUTFILE);
+			if(Sam && strcmp(Output_Name,"None") ) fclose(args.OUTFILE);
 			
 			fprintf(stderr, "Raw count of Met_C in CG:\t%lu\n",met_CG);
 			fprintf(stderr, "Raw count of Non_Met_C in CG:\t%lu\n",non_met_CG);
@@ -760,7 +748,6 @@ int main(int argc, char* argv[])
 				fprintf(ALIGNLOG, "Mapped_reverse\t%u\n", reverse_mapped);
 				fclose(ALIGNLOG);
 			}
-            myMap.clear();
 			fprintf(stderr, "[DM::calmeth] dm closing\n");
         	bmClose(fp);
             if(tech=="NoMe"){
@@ -802,7 +789,7 @@ int main(int argc, char* argv[])
 		}
 
 		time(&End_Time);fprintf(stderr, "[DM::calmeth] Time Taken  - %.0lf Seconds ..\n ",difftime(End_Time,Start_Time));
-	    exit(0);
+	
 	    //fclose(OUTLOG);
 	}
 	
@@ -1688,6 +1675,7 @@ void *Process_read(void *arg)
 	char *s2t = (char*) malloc(1000);
 	char read_Methyl_Info[600];char rawReadBeforeBS[600];char temp[5];
     char headseq[4]; unsigned int hs=0, hs_r =3; int printh = 0; char headseq_rc[4]; 
+    char headseq_raw[4]; char headseq_raw_rc[4];
 	char Dummy[BATBUF],forReadString[BATBUF],Chrom[CHROMSIZE];
 	char Chrom_P[CHROMSIZE];int pos_P=0;int Insert_Size=0;int Qsingle=0; //Paired-end reads
 	string CIGr;char CIG[BATBUF];
@@ -1852,9 +1840,9 @@ void *Process_read(void *arg)
 		}
 
 		int Nmismatch=conutMismatch(CIGr, ((ARGS *)arg)->Genome_Offsets[H].Offset, ((ARGS *)arg)->Genome_List[H].Genome, readString, pos, hitType);
-		if(Nmismatch > 0.5 + UPPER_MAX_MISMATCH * strlen(readString.c_str())) continue;
+//		if(Nmismatch > 0.5 + UPPER_MAX_MISMATCH * strlen(readString.c_str())) continue;
 
-        if(skipOverlap == 1) {
+        if(no_overlap) {
             if (Flag & 0x1) {
                 if(strcmp(Chrom_P, "=") == 0 && pos > pos_P){
                     std::string key = Dummy;
@@ -1912,7 +1900,7 @@ void *Process_read(void *arg)
 						if (pos+g-1 >= ((ARGS *)arg)->Genome_Offsets[Hash_Index].Offset) break;
 
                         if(pos+g < left_end) {
-                            //fprintf(stderr, "AAAAA -------- WWWWW");
+                            //fprintf(stderr, "AAAAA");
                             continue;
                         }
 
@@ -1935,19 +1923,21 @@ void *Process_read(void *arg)
                               if(k-lens<4){
                                 if (readString[k]=='T' && genome_Char=='C') headseq[hs] = 'U';
                                 else headseq[hs] = readString[k];
+                                headseq_raw[hs] = genome_Char;
                                 hs++;
                               }
                             }else{
                               if(k-lens>=length-4) {
                                 if (readString[k]=='T' && genome_Char=='C') headseq[hs_r] = 'U';
                                 else headseq[hs_r] = readString[k];
+                                headseq_raw[hs_r] = genome_Char;
                                 hs_r--;
                               }
                             }
                             if(PHead == 1) {
                               if(hs == 4 || hs_r == -1) {
                                 if(hitType==1 && printh==0) 
-                                    fprintf(fPH, "%s\t%d\t%s\t%d\t%s\t%s\n", Dummy, hitType, Chrom, pos, CIGr.c_str(), headseq);
+                                    fprintf(fPH, "%s\t%d\t%s\t%d\t%s\t%s\t%s\t%d\n", Dummy, hitType, Chrom, pos, CIGr.c_str(), headseq, headseq_raw, Insert_Size);
                                 printh = 1;
                                 if(onlyPHead == 1) break;
                               }
@@ -1958,7 +1948,6 @@ void *Process_read(void *arg)
                                 readC++; readmC++;
 								read_Methyl_Info[r] = 'M';
 								if(Methratio ) ((ARGS *)arg)->Methy_List.plusMethylated[pos+g-1]++;
-                                if(onlyM == 1){
 									if(genome_CharFor1=='G') 
 									{
                                         readCG++; readmCG++;
@@ -1974,7 +1963,6 @@ void *Process_read(void *arg)
                                         readCHH++; readmCHH++;
 										read_Methyl_Info[r] = 'X';met_CHG++;
 									}//X methylated C in CHG context
-                                }
 							}
 							else if (readString[k]=='T' && genome_Char=='C')
 							{
@@ -1982,7 +1970,6 @@ void *Process_read(void *arg)
 								read_Methyl_Info[r] = 'U';
 								rawReadBeforeBS[k] = 'C';
 								if(Methratio ) ((ARGS *)arg)->Methy_List.plusUnMethylated[pos+g-1]++;
-                                if(onlyM == 1){
 									if(genome_CharFor1=='G')
 									{
                                         readCG++;
@@ -1998,12 +1985,11 @@ void *Process_read(void *arg)
                                         readCHH++;
 										read_Methyl_Info[r] = 'x';non_met_CHG++;
 									}//x unmethylated C in CHG context
-                                }
 								
 							}
 							else if (readString[k] != genome_Char) 
 							{
-								read_Methyl_Info[r] = genome_Char;  //readString[k]; // genome_Char; for hypol
+								read_Methyl_Info[r] = readString[k]; // genome_Char; for hypol
 							}
 							if(Methratio)
 							{
@@ -2016,18 +2002,20 @@ void *Process_read(void *arg)
                               if(k-lens<4){
                                 if (readString[k]=='A' && genome_Char=='G') headseq[hs] = 'U';
                                 else headseq[hs] = readString[k];
+                                headseq_raw[hs] = genome_Char;
                                 hs++;
                               }
                             }else{
                               if(k-lens>=length-4) {
                                 if (readString[k]=='A' && genome_Char=='G') headseq[hs_r] = 'U';
                                 else headseq[hs_r] = readString[k];
+                                headseq_raw[hs_r] = genome_Char;
                                 hs_r--;
                               }
                             }
                             if(PHead == 1) {
                               if(hs == 4 || hs_r == -1) {
-                                if(hitType==2 && printh == 0) fprintf(fPH, "%s\t%d\t%s\t%d\t%s\t%s\n", Dummy, hitType, Chrom, pos, CIGr.c_str(), headseq);
+                                if(hitType==2 && printh == 0) fprintf(fPH, "%s\t%d\t%s\t%d\t%s\t%s\t%s\t%d\n", Dummy, hitType, Chrom, pos, CIGr.c_str(), headseq, headseq_raw, Insert_Size);
                                 printh = 1;
                                 if(onlyPHead == 1) break;
                               }
@@ -2038,7 +2026,6 @@ void *Process_read(void *arg)
                                 readC++; readmC++;
 								read_Methyl_Info[r] = 'M';
 								if(Methratio ) ((ARGS *)arg)->Methy_List.NegMethylated[pos+g-1]++;
-                                if(onlyM == 1){
 									if(genome_CharBac1=='C') 
 									{
                                         readCG++; readmCG++;
@@ -2054,7 +2041,6 @@ void *Process_read(void *arg)
                                         readCHH++; readmCHH++;
 										read_Methyl_Info[r] = 'X';met_CHG++;
 									}
-                               }
 							}
 							else if (readString[k]=='A' && genome_Char=='G')
 							{
@@ -2062,7 +2048,6 @@ void *Process_read(void *arg)
 								read_Methyl_Info[r] = 'U';
 								rawReadBeforeBS[k] = 'G';
 								if(Methratio) ((ARGS *)arg)->Methy_List.NegUnMethylated[pos+g-1]++;
-                                if(onlyM == 1){
 									if(genome_CharBac1=='C') 
 									{
                                         readCG++;
@@ -2078,11 +2063,10 @@ void *Process_read(void *arg)
                                         readCHH++;
 										read_Methyl_Info[r] = 'x';non_met_CHG++;
 									}
-                                }
 							}
 							else if (readString[k] != genome_Char) {
 								
-								read_Methyl_Info[r] = genome_Char;  //readString[k]; //genome_Char;
+								read_Methyl_Info[r] = readString[k]; //genome_Char;
 							}
 							if(Methratio)
 							{
@@ -2119,12 +2103,13 @@ void *Process_read(void *arg)
 			}
             if((hitType==3 || hitType==4) && printh == 1) {
                 onlyComp(headseq_rc, headseq);
+                onlyComp(headseq_raw_rc, headseq_raw);
                 //fprintf(fPH, "%s %d %s %d %s %s\n", Dummy, hitType, Chrom, pos, CIGr.c_str(), headseq_rc);
-                fprintf(fPH, "%s\t%d\t%s\t%d\t%s\t%s\n", Dummy, hitType, Chrom, pos, CIGr.c_str(), headseq_rc);
+                fprintf(fPH, "%s\t%d\t%s\t%d\t%s\t%s\t%s\t%d\n", Dummy, hitType, Chrom, pos, CIGr.c_str(), headseq_rc, headseq_raw_rc, Insert_Size);
             }
 			if(CONTINUE) continue;
 
-            if(skipOverlap == 1) {
+            if(no_overlap) {
                 if (Flag & 0x1) {
                     if(strcmp(Chrom_P, "=") == 0 && pos <= pos_P && pos+strlen(readString.c_str()) > pos_P ) {
                         std::string key = Dummy;
@@ -2148,11 +2133,6 @@ void *Process_read(void *arg)
 			else if(hitType==4) mappingStrand="YC:Z:CT\tYD:Z:r";
 			else if(hitType==3) mappingStrand="YC:Z:GA\tYD:Z:r";
 			else if(hitType==2) mappingStrand="YC:Z:GA\tYD:Z:f";
-            if(printmethstate == 1 && ((ARGS *)arg)->OUTFILEMS != NULL) {
-                flockfile(((ARGS *)arg)->OUTFILEMS);
-                fprintf(((ARGS *)arg)->OUTFILEMS, "%s\t%s\t%s\t%s\t%s\t%u\t%d\n", Dummy, read_Methyl_Info, readString.c_str(), CIGr.c_str(), Chrom, pos, hitType);
-                funlockfile(((ARGS *)arg)->OUTFILEMS);
-            }
             if(Sam && ((ARGS *)arg)->OUTFILE != NULL) {
 			    flockfile(((ARGS *)arg)->OUTFILE);
 			    if(Sam ) //&& Nmismatch <= UPPER_MAX_MISMATCH )
