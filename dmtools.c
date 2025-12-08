@@ -154,7 +154,7 @@ const char* Help_String_bam2dm="Command Format :  dmtools bam2dm [options] -g ge
         "\t--ph                  print head bases of seq, default: seq.txt, motif analysis\n"
         "\t--mrtxt               print prefix.methratio.txt file\n"
         "\t--cf                  context filter for print results, C, CG, CHG, CHH, default: C\n"
-//        "\t-p                    [int] threads\n"
+        "\t-p                    [int] threads\n"
         "\t--NoMe                data type for NoMe-seq\n"
         "\t[DM format] paramaters\n"
         "\t--zl                  The maximum number of zoom levels. [0-10], default: 2\n"
@@ -229,6 +229,7 @@ const char* Help_String_view="Command Format :  dmtools view [opnions] -i meth.d
         "\t--mincover            >= minumum coverage show, default: 0\n"
         "\t--maxcover            <= maximum coverage show, default: 10000\n"
         "\t--outformat           txt or dm format [txt]\n"
+        "\t--printbed            print text formt with bed format\n"
         "\t--zl                  The maximum number of zoom levels. [0-10], valid for dm out\n"
 		"\t-h|--help";
 
@@ -425,6 +426,8 @@ int alwaysprint = 0;
 int minC = 2;
 int taps=0;
 int mergeStrand = 0;
+int printbed = 0;
+int printwarning = 0;
 
 int main(int argc, char *argv[]) {
     binaMethFile_t *fp = NULL;
@@ -536,7 +539,7 @@ int main(int argc, char *argv[]) {
         exit(0);
     }
     char bam2bm_paras[1024]; bam2bm_paras[0] = '\0';
-    int precison = 1;
+    int precison = 2;
     if(strcmp(mode, "bam2dm") == 0){
         for(i=2; i< argc; i++){
             if(strcmp(argv[i], "-g") == 0){
@@ -579,6 +582,8 @@ int main(int argc, char *argv[]) {
                 strcpy(outbmfile, argv[++i]);
             }else if(strcmp(argv[i], "--outformat") == 0){
                 strcpy(outformat, argv[++i]);
+            }else if(strcmp(argv[i], "--printbed") == 0){
+                printbed=1;
             }else if(strcmp(argv[i], "-i") == 0){
                 strcpy(inbmfile, argv[++i]);
             }else if(strcmp(argv[i], "--minC") == 0){
@@ -690,6 +695,8 @@ int main(int argc, char *argv[]) {
                 maxcover = atoi(argv[++i]);
             }else if(strcmp(argv[i], "--sv") == 0){
                 strandmeth = 1;
+            }else if(strcmp(argv[i], "--pr") == 0){
+                printwarning = 1;
             }else if(strcmp(argv[i], "-o") == 0 || strcmp(argv[i], "--out") == 0){
                 if(strcmp(mode, "mr2dm") == 0){
                     if(!outbmfile){
@@ -852,11 +859,11 @@ int main(int argc, char *argv[]) {
         strcat(cmd, bam2bm_paras);
         //char mergecmd[10000];
         char* mergecmd = (char*) malloc(10000 * sizeof(char));
-        sprintf(mergecmd, "%s/dmtools merge --outformat dm -o %s -i ", abspathtmp, outfile);
+        sprintf(mergecmd, "%s/dmtools merge --pr --outformat dm -o %s -i ", abspathtmp, outfile);
 
         //这里可以加多线程，根据染色体，修改bam2dm输入--chr chrN，每个线程处理一条染色体，最后合并输出结果。
         //onlyexecuteCMD(cmd, Help_String_bam2dm);
-        if(NTHREAD>1 && NTHREAD<0)
+        if(NTHREAD>1)
         {
             struct Threading* Thread_Info=(struct Threading*) malloc(sizeof(struct Threading)*NTHREAD);
             pthread_attr_t Attrib;
@@ -1220,7 +1227,7 @@ int main(int argc, char *argv[]) {
                 //    int tmpv = (int)(value*1000);
                 //    value = ((double)tmpv/1000);
                 //}
-                if(strcmp(mrformat, "simpleme") != 0) {
+                if(strcmp(mrformat, "simpleme") == 0) {
                     if(precison == 1) sprintf(decide, "%.2f", ((double) coverC/ coverage) );
                     else sprintf(decide, "%.4f", ((double) coverC/ coverage) );
                     value = atof(decide);
@@ -3973,6 +3980,9 @@ int main_view_bm(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outfor
                     if(ifp->hdr->version & BM_END) { //ifp->type
                         sprintf(tempchar, "\t%"PRIu32"", o->end[j]);
                         tempstore = fastStrcat(tempstore, tempchar);
+                    }else if(printbed == 1){
+                        sprintf(tempchar, "\t%"PRIu32"", o->start[j]+1);
+                        tempstore = fastStrcat(tempstore, tempchar);
                     }
                     if(mergeStrand) {
                        if(ifp->hdr->version & BM_STRAND){
@@ -4349,7 +4359,15 @@ int bm_merge_all_mul(char *inbmFs, char *outfile, uint8_t pstrand, int m_method,
     int sizeifp = 0, i = 0;
 
     while (substr != NULL) {
-        strcpy(infiles[sizeifp++], substr);
+        if (access(substr, F_OK) == 0){
+            strcpy(infiles[sizeifp++], substr);
+        }else{
+            fprintf(stderr, "Error: File not found - '%s'\n", substr);
+            fprintf(stderr, "Please check the file path and try again.\n");
+            if(printwarning == 0){
+                exit(0);
+            }
+        }
         substr = strtok(NULL,",");
     }
 

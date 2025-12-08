@@ -65,7 +65,9 @@ typedef struct {
    char* Marked_GenomeE;
    Methy_Hash Methy_List;
    FILE* OUTFILE;
+   FILE* OUTFILEMS;
    FILE* samINFILE;
+   FILE* bedFILE;
    samFile* BamInFile;
    bam1_t *b;
    bam_hdr_t *header;
@@ -80,7 +82,8 @@ using namespace std;
 bool Collision=false;
 map <string,int> String_Hash;
 float ENTROPY_CUTOFF=0;
-int no_overlap = 1;
+int skipOverlap = 1; //
+int countreadC = 0;
 ///g++ ./src/split.cpp -o ./src/split -lpthread
 //{-----------------------------  FUNCTION PRTOTYPES  -------------------------------------------------
 int fprintf_time(FILE *stream, const char *format, ...);
@@ -177,6 +180,9 @@ string tech="BS-Seq";
 std::unordered_map<std::string, int> myMap;
 int onlyPHead = 0;
 int PHead = 0;
+int rrbs=0;
+int printmethstate = 0;
+int onlyM = 0;
 int main(int argc, char* argv[])
 {
 	time_t Start_Time,End_Time;
@@ -208,6 +214,11 @@ int main(int argc, char* argv[])
         "\t--Id                  print ID\n"
         "\t--zl                  The maximum number of zoom levels. [1-10], default: 2\n"
         "\t-i|--input            Sam format file, sorted by chrom.\n"
+        "\t--countreadC          count number of mC and C for per read\n"
+        "\t--chrom               chr/chr:s-e only process this region\n"
+        "\t--bedfile             bedfile for process countreadC\n"
+        "\t--pms                 file name for print methstate\n"
+//        "\t--rrbs                RRBS mode\n"
         "\t-h|--help";
 
 	Char2Comp['A']=Char2Comp['a']='T';
@@ -219,6 +230,9 @@ int main(int argc, char* argv[])
 	int Genome_CountX=0;
 	char Output_Name[100];
 	strcpy(Output_Name, "None");
+    char Output_Name_MS[100];
+    strcpy(Output_Name_MS, "None");
+
 	string Prefix2="None";
 	string methOutfileName;
     string GCHOutfileName;
@@ -237,6 +251,10 @@ int main(int argc, char* argv[])
 	int zoomlevel = 0;
     char processChr[1000];
     strcpy(processChr, "NAN-mm");
+    char processRegion[1000];
+    strcpy(processRegion, "NAN-mm");
+    char bedfilename[1000];
+    strcpy(bedfilename, "");
     int NTHREADS = 0;
 
 	for(int i=1;i<argc;i++)
@@ -245,19 +263,34 @@ int main(int argc, char* argv[])
 		{
 			strcpy(Output_Name, argv[++i]);
 			Sam=1;
-		}
+		}else if(!strcmp(argv[i], "--pms")  )
+        {
+            strcpy(Output_Name_MS, argv[++i]);
+            printmethstate=1;
+        }else if(!strcmp(argv[i], "--rrbs") )
+        {
+            //rrbs=1;
+        }
 		else if(!strcmp(argv[i], "-g") || !strcmp(argv[i], "--genome"))
 		{
 			Geno=argv[++i];
 		}else if(!strcmp(argv[i], "--chrom"))
         {
-            strcpy(processChr, argv[++i]);
-        }else if(!strcmp(argv[i], "-Q"))
+            strcpy(processRegion, argv[++i]);
+            char tempRegion[1000];
+            strcpy(tempRegion, processRegion);
+            strcpy(processChr, strtok(tempRegion, ",:-"));
+            fprintf(stderr, "%s %s\n", processRegion, processChr);
+        }else if(!strcmp(argv[i], "--bedfile"))
+        {
+            strcpy(bedfilename, argv[++i]);
+        }
+        else if(!strcmp(argv[i], "-Q"))
 		{
 			QualCut=atoi(argv[++i]);
         }else if(!strcmp(argv[i], "-p"))
         {
-            NTHREADS=atoi(argv[++i]);;
+            NTHREADS=atoi(argv[++i]);
         }
         else if(!strcmp(argv[i],"--cf")){
             contextfilter = argv[++i];
@@ -265,7 +298,7 @@ int main(int argc, char* argv[])
             tech = "NoMe";
         }
         else if(!strcmp(argv[i],"--pe_overlap")){
-            no_overlap = atoi(argv[++i]);
+            skipOverlap = atoi(argv[++i]);
         }else if(!strcmp(argv[i],"--ph")){
             PHead = 1;
             hsPrefix=argv[++i];
@@ -310,7 +343,10 @@ int main(int argc, char* argv[])
 		{
 			Methratio=true;
 			Prefix=argv[++i];
-		}else if(!strcmp(argv[i],"-o"))
+		}else if(!strcmp(argv[i],"--countreadC"))
+        {
+            countreadC=1;
+        }else if(!strcmp(argv[i],"-o"))
         {
             Methratio=true;
             Prefix2=argv[++i];
@@ -344,12 +380,13 @@ int main(int argc, char* argv[])
 		}else if(!strcmp(argv[i], "-b") || !strcmp(argv[i], "--binput"))
 		{
 			InFileStart=++i;
-			while(i!=(argc-1) && argv[i][0]!='-')
-			{
-				i++;
-				continue;
-			}
-			if(argv[i][0]=='-') {InFileEnd=--i;}else {InFileEnd=i ;}
+			//while(i!=(argc-1) && argv[i][0]!='-')
+			//{
+			//	i++;
+			//	continue;
+			//}
+			//if(argv[i][0]=='-') {InFileEnd=--i;}else {InFileEnd=i ;}
+            InFileEnd=InFileStart;
 			bamformat=true;
 		}
 		else if(!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")){
@@ -386,7 +423,7 @@ int main(int argc, char* argv[])
                 mCcatero=Prefix;
                 mCcatero+=".mCcatero.txt";
 
-		printf("[DM::calmeth] Coverage and validC: %d %d, %d\n", Mcoverage, maxcoverage, nCs);	
+		fprintf(stderr, "[DM::calmeth] Coverage and validC: %d %d, %d\n", Mcoverage, maxcoverage, nCs);	
 		try
 		{
 			time(&Start_Time);
@@ -398,7 +435,7 @@ int main(int argc, char* argv[])
 			uint32_t *chrLens = (uint32_t *)malloc(sizeof(uint32_t) * MAX_CHROM);
 			
 			FILE* GenomeFILE=File_Open(Geno.c_str(),"r");
-			printf("[DM::calmeth] Loading genome sequence : %s\n", Geno.c_str());
+			fprintf(stderr, "[DM::calmeth] Loading genome sequence : %s\n", Geno.c_str());
 			ARGS args;
 			fseek(GenomeFILE, 0L, SEEK_END);off64_t Genome_Size=ftello64(GenomeFILE);rewind(GenomeFILE);//load original genome..
 			args.Org_Genome=new char[Genome_Size];if(!args.Org_Genome) throw("Insufficient memory to load genome..\n"); 
@@ -495,9 +532,11 @@ int main(int argc, char* argv[])
 			}
 			
 			args.OUTFILE = NULL;
+            args.OUTFILEMS = NULL;
 			assert(longestChr>0);
-			printf("[DM::calmeth] Longest chr: %d\n",longestChr);
+			fprintf(stderr, "[DM::calmeth] Longest chr: %d\n",longestChr);
 			if(Sam && strcmp(Output_Name,"None") ) args.OUTFILE=File_Open(Output_Name,"w");
+            if(strcmp(Output_Name_MS,"None") ) args.OUTFILEMS=File_Open(Output_Name_MS,"w");
 
 			char* Split_Point=args.Org_Genome;//split and write...
 			args.Genome_List = new Gene_Hash[Genome_Count];
@@ -572,10 +611,13 @@ int main(int argc, char* argv[])
                 }
 
 			}
-                        args.INbamfilename = new char[1000];
+
+            args.INbamfilename = new char[1000];
+            if(countreadC && strcmp(bedfilename, "")!=0) args.bedFILE=File_Open(bedfilename,"r");
+
 			for(int f=InFileStart;f<=InFileEnd;f++)
 			{
-				printf("[DM::calmeth] Processing %d out of %d. File: %s, %d\n\n", f-InFileStart+1,InFileEnd-InFileStart+1, argv[f], bamformat);
+				fprintf(stderr, "[DM::calmeth] Processing %d out of %d. File: %s, %d\n\n", f-InFileStart+1,InFileEnd-InFileStart+1, argv[f], bamformat);
 				//fseek(args.INFILE, 0L, SEEK_END);args.File_Size=ftello64(args.INFILE);rewind(args.INFILE);
 				char s2t[BATBUF];
 				//if(args.OUTFILE!=NULL)
@@ -584,8 +626,9 @@ int main(int argc, char* argv[])
 					args.BamInFile = 0;
 					args.header;
                     if(DEBUG>1) fprintf(stderr, "\nXXX3333.1\n");
-                                        if(bamformat)
-                                        {
+
+                    if(bamformat)
+                    {
                                              strcpy(args.INbamfilename, argv[f]);
 						if ((args.BamInFile = sam_open(argv[f], "rb")) == 0) {
 								fprintf(stderr, "fail to open \"%s\" for reading.\n", argv[f]);
@@ -668,10 +711,10 @@ int main(int argc, char* argv[])
                 if(DEBUG>1) fprintf(stderr, "\nXXX3333.4\n");
 				//nothreads
                 args.processChr=new char[1000];
-                strcpy(args.processChr, processChr);
+                strcpy(args.processChr, processRegion);
                 if(DEBUG>1) fprintf(stderr, "\nss000111\n");
 				Process_read(&args);
-				Done_Progress();
+				if(!countreadC) Done_Progress();
 				if(!bamformat) fclose(args.samINFILE);
             	if(bamformat)
             	{
@@ -679,6 +722,10 @@ int main(int argc, char* argv[])
                 	sam_close(args.BamInFile);
             	}
 			}
+
+            if(countreadC && strcmp(bedfilename, "")!=0) fclose(args.bedFILE);
+            if(Sam && strcmp(Output_Name,"None") ) fclose(args.OUTFILE);
+            if(printmethstate == 1) fclose(args.OUTFILEMS);
 
 			map<string, int>::iterator iter;
 			int H = -1;
@@ -694,16 +741,14 @@ int main(int argc, char* argv[])
 					fclose(METHOUTFILE);
 				}
 			 }
-			printf("genome process done!\n");
-			//if(args.OUTFILE!=NULL) fclose(args.OUTFILE);
-			if(Sam && strcmp(Output_Name,"None") ) fclose(args.OUTFILE);
+			fprintf(stderr, "genome process done!\n");
 			
-			printf("Raw count of Met_C in CG:\t%lu\n",met_CG);
-			printf("Raw count of Non_Met_C in CG:\t%lu\n",non_met_CG);
-			printf("Raw count of Met_C in CHG:\t%lu\n",met_CHG);
-			printf("Raw count of Non_Met_C in CHG:\t%lu\n",non_met_CHG);
-			printf("Raw count of Met_C in CHH:\t%lu\n",met_CHH);
-			printf("Raw count of Non_Met_C in CHH:\t%lu\n",non_met_CHH);
+			fprintf(stderr, "Raw count of Met_C in CG:\t%lu\n",met_CG);
+			fprintf(stderr, "Raw count of Non_Met_C in CG:\t%lu\n",non_met_CG);
+			fprintf(stderr, "Raw count of Met_C in CHG:\t%lu\n",met_CHG);
+			fprintf(stderr, "Raw count of Non_Met_C in CHG:\t%lu\n",non_met_CHG);
+			fprintf(stderr, "Raw count of Met_C in CHH:\t%lu\n",met_CHH);
+			fprintf(stderr, "Raw count of Non_Met_C in CHH:\t%lu\n",non_met_CHH);
 
             // print align summary
 			if(AlignSum){
@@ -715,6 +760,7 @@ int main(int argc, char* argv[])
 				fprintf(ALIGNLOG, "Mapped_reverse\t%u\n", reverse_mapped);
 				fclose(ALIGNLOG);
 			}
+            myMap.clear();
 			fprintf(stderr, "[DM::calmeth] dm closing\n");
         	bmClose(fp);
             if(tech=="NoMe"){
@@ -755,8 +801,8 @@ int main(int argc, char* argv[])
 			exit(-1);
 		}
 
-		time(&End_Time);printf("[DM::calmeth] Time Taken  - %.0lf Seconds ..\n ",difftime(End_Time,Start_Time));
-	
+		time(&End_Time);fprintf(stderr, "[DM::calmeth] Time Taken  - %.0lf Seconds ..\n ",difftime(End_Time,Start_Time));
+	    exit(0);
 	    //fclose(OUTLOG);
 	}
 	
@@ -1521,6 +1567,9 @@ int processbamread(const bam_hdr_t *header, const bam1_t *b, char* Dummy,int &Fl
 
 	if( (Flag & 0x100) || (Flag & 0x200) || (Flag & 0x400) || (Flag & 0x800) || (Flag & 0x4))
         	return -1;
+    if(Flag & 0x8) return -1; //remove later f9o test
+    if(!(Flag & 0x2)) return -1; // only keep pair
+
 	if( !(Flag & 0x1) )
         {
         	if(Flag==0)
@@ -1547,7 +1596,7 @@ int processbamread(const bam_hdr_t *header, const bam1_t *b, char* Dummy,int &Fl
 	mapQuality = c->qual;
 
 	//define
-	if(mapQuality < QualCut || Flag==4 || (int)pos <= 0 ) return -1;
+	if(Flag==4 || (int)pos <= 0 ) return -1;
 	char strtemp[256];int j=0;
         if (c->n_cigar == 0) return -1;
         else {
@@ -1627,7 +1676,7 @@ void *Process_read(void *arg)
     FILE* fPH=File_Open(hsPrefix.c_str(),"w");
 	int processed_vali = 0;
 	int Progress=0;Number_of_Tags=INITIAL_PROGRESS_READS;
-	Init_Progress();
+	if(!countreadC) Init_Progress();
 	int mismatch=0;int pos=0;int Top_Penalty=0;int mapQuality=0;int Flag=-1;
 	string readString="";
 	int hitType=0;
@@ -1643,13 +1692,29 @@ void *Process_read(void *arg)
 	char Chrom_P[CHROMSIZE];int pos_P=0;int Insert_Size=0;int Qsingle=0; //Paired-end reads
 	string CIGr;char CIG[BATBUF];
 	char forQuality[BATBUF],rcQuality[BATBUF],Quality[BATBUF];
-	int r=1;char* samaddress;
+	int bamr=1;char* samaddress;
     struct timeval now;
     struct timespec outtime;
 	bam1_t *b = bam_init1();
     hts_idx_t *idx = NULL;
     hts_itr_t *iter;
     int left_end = -1;
+    int readC = 0, readmC = 0, readCG = 0, readmCG = 0, readCHG = 0, readmCHG = 0, readCHH = 0, readmCHH = 0;
+
+  char PerLine[2000];
+  char chrom[100]; int start=0, end=0;
+  char processregion[200];
+  int psta = 0;
+  while(strcmp(((ARGS *)arg)->processChr, "NAN-mm") != 0 || ( ((ARGS *)arg)->bedFILE != NULL && fgets(PerLine,2000,((ARGS *)arg)->bedFILE)!=NULL) || psta == 0){
+    psta = 1;
+
+    if(PerLine[0] != '\0' && PerLine[0] == '#') continue;
+    if(PerLine[0] != '\0') {
+      sscanf(PerLine, "%s%d%d", chrom, &start, &end);
+      sprintf(processregion, "%s:%d-%d", chrom, start, end);
+      fprintf(stderr, "Processing... %s\n", processregion);
+    }
+
     if(strcmp(((ARGS *)arg)->processChr, "NAN-mm") != 0){
         if ((idx = sam_index_load(((ARGS *)arg)->BamInFile, ((ARGS *)arg)->INbamfilename )) == 0) {
             fprintf(stderr, "[E::%s] fail to load the BAM index\n", __func__);
@@ -1660,12 +1725,24 @@ void *Process_read(void *arg)
             exit(0);
         }
     }
+    else if(processregion[0] != '\0') {
+        if ((idx = sam_index_load(((ARGS *)arg)->BamInFile, ((ARGS *)arg)->INbamfilename )) == 0) {
+            fprintf(stderr, "[E::%s] fail to load the BAM index\n", __func__);
+            exit(0);
+        }
+        if ((iter = sam_itr_querys(idx, ((ARGS *)arg)->header, processregion)) == 0) {
+            fprintf(stderr, "[E::%s] fail to parse region '%s'\n", __func__, processregion);
+            exit(0);
+        }
+    }
+    bamr=1;
 
-	while( (!bamformat && (samaddress = fgets(s2t,BATBUF,((ARGS *)arg)->samINFILE))!=NULL) || (bamformat && r>0 ))
+	while( (!bamformat && (samaddress = fgets(s2t,BATBUF,((ARGS *)arg)->samINFILE))!=NULL) || (bamformat && bamr>0 ))
 	{
+
         left_end = -1;
 
-		if(r < -1) {
+		if(bamr < -1) {
 			fprintf(stderr, "\ntruncated file.\n");
 		}
 		hitType = 0;
@@ -1675,16 +1752,16 @@ void *Process_read(void *arg)
 
 		if(bamformat) 
 		{
-            if(strcmp(((ARGS *)arg)->processChr, "NAN-mm") == 0){
+            if(strcmp(((ARGS *)arg)->processChr, "NAN-mm") == 0 && processregion[0] == '\0'){
 			    //(r = samread(( (ARGS *)arg)->BamInFile, b));
-                r = sam_read1(( (ARGS *)arg)->BamInFile, ((ARGS *)arg)->header, b);
-                if(r<=0) break;
+                bamr = sam_read1(( (ARGS *)arg)->BamInFile, ((ARGS *)arg)->header, b);
+                if(bamr<=0) break;
 			    //bam_tostring(((ARGS *)arg)->header , b, s2t);
 			    int ct = processbamread(((ARGS *)arg)->header, b, Dummy,Flag,Chrom,pos,mapQuality,CIG,Chrom_P,pos_P,Insert_Size,forReadString,forQuality, hitType);
 			    if(ct == -1) continue;
             }else{
-                r = sam_itr_next(((ARGS *)arg)->BamInFile, iter, b);
-                if(r<=0) break;
+                bamr = sam_itr_next(((ARGS *)arg)->BamInFile, iter, b);
+                if(bamr<=0) break;
                 int ct = processbamread(((ARGS *)arg)->header, b, Dummy,Flag,Chrom,pos,mapQuality,CIG,Chrom_P,pos_P,Insert_Size,forReadString,forQuality, hitType);
                 if(ct == -1) continue;
             }
@@ -1719,6 +1796,8 @@ void *Process_read(void *arg)
 			}
 	        processingchr = Chrom;
 		}
+
+        if(mapQuality < QualCut) continue;
 
 		if(!bamformat){
  			if(mapQuality < QualCut || Flag==4 || (int)pos <= 0 ) continue;
@@ -1775,7 +1854,7 @@ void *Process_read(void *arg)
 		int Nmismatch=conutMismatch(CIGr, ((ARGS *)arg)->Genome_Offsets[H].Offset, ((ARGS *)arg)->Genome_List[H].Genome, readString, pos, hitType);
 		if(Nmismatch > 0.5 + UPPER_MAX_MISMATCH * strlen(readString.c_str())) continue;
 
-        if(no_overlap) {
+        if(skipOverlap == 1) {
             if (Flag & 0x1) {
                 if(strcmp(Chrom_P, "=") == 0 && pos > pos_P){
                     std::string key = Dummy;
@@ -1833,9 +1912,14 @@ void *Process_read(void *arg)
 						if (pos+g-1 >= ((ARGS *)arg)->Genome_Offsets[Hash_Index].Offset) break;
 
                         if(pos+g < left_end) {
-                            //fprintf(stderr, "AAAAA");
+                            //fprintf(stderr, "AAAAA -------- WWWWW");
                             continue;
                         }
+
+//                        if(rrbs){
+//                            if(hitType==1 || hitType == 4) {if(k+2>=RLens) break;}
+//                            if(hitType==2 || hitType == 3) {if(k<2) continue;}
+//                        }
 
 						char genome_Char = toupper(((ARGS *)arg)->Genome_List[H].Genome[pos+g-1]);//
 						char genome_CharFor1 = toupper(((ARGS *)arg)->Genome_List[H].Genome[pos+g+1-1]);
@@ -1871,43 +1955,55 @@ void *Process_read(void *arg)
 
 							if (readString[k]=='C' && genome_Char=='C')
 							{
+                                readC++; readmC++;
 								read_Methyl_Info[r] = 'M';
 								if(Methratio ) ((ARGS *)arg)->Methy_List.plusMethylated[pos+g-1]++;
+                                if(onlyM == 1){
 									if(genome_CharFor1=='G') 
 									{
+                                        readCG++; readmCG++;
 										read_Methyl_Info[r] = 'Z';met_CG++;
 									}//Z methylated C in CpG context
 									else if(genome_CharFor1!='G' && genome_CharFor2!='G')
 									{
+                                        readCHG++; readmCHG++;
 										read_Methyl_Info[r] = 'H';met_CHH++;
 									}//H methylated C in CHH context
 									else if(genome_CharFor1!='G' && genome_CharFor2=='G')
 									{
+                                        readCHH++; readmCHH++;
 										read_Methyl_Info[r] = 'X';met_CHG++;
 									}//X methylated C in CHG context
+                                }
 							}
 							else if (readString[k]=='T' && genome_Char=='C')
 							{
+                                readC++;
 								read_Methyl_Info[r] = 'U';
 								rawReadBeforeBS[k] = 'C';
 								if(Methratio ) ((ARGS *)arg)->Methy_List.plusUnMethylated[pos+g-1]++;
+                                if(onlyM == 1){
 									if(genome_CharFor1=='G')
 									{
+                                        readCG++;
 										read_Methyl_Info[r] = 'z';non_met_CG++;
 									}//z unmethylated C in CpG context
 									else if(genome_CharFor1!='G' && genome_CharFor2!='G') 
 									{
+                                        readCHG++;
 										read_Methyl_Info[r] = 'h';non_met_CHH++;
 									}//h unmethylated C in CHH context
 									else if(genome_CharFor1!='G' && genome_CharFor2=='G') 
 									{
+                                        readCHH++;
 										read_Methyl_Info[r] = 'x';non_met_CHG++;
 									}//x unmethylated C in CHG context
+                                }
 								
 							}
 							else if (readString[k] != genome_Char) 
 							{
-								read_Methyl_Info[r] = readString[k]; // genome_Char; for hypol
+								read_Methyl_Info[r] = genome_Char;  //readString[k]; // genome_Char; for hypol
 							}
 							if(Methratio)
 							{
@@ -1939,42 +2035,54 @@ void *Process_read(void *arg)
 
 							if (readString[k]=='G' && genome_Char=='G')
 							{
+                                readC++; readmC++;
 								read_Methyl_Info[r] = 'M';
 								if(Methratio ) ((ARGS *)arg)->Methy_List.NegMethylated[pos+g-1]++;
+                                if(onlyM == 1){
 									if(genome_CharBac1=='C') 
 									{
+                                        readCG++; readmCG++;
 										read_Methyl_Info[r] = 'Z';met_CG++;
 									}
 									else if(genome_CharBac1!='C' && genome_CharBac2!='C') 
 									{
+                                        readCHG++; readmCHG++;
 										read_Methyl_Info[r] = 'H';met_CHH++;
 									}
 									else if(genome_CharBac1!='C' && genome_CharBac2=='C') 
 									{
+                                        readCHH++; readmCHH++;
 										read_Methyl_Info[r] = 'X';met_CHG++;
 									}
+                               }
 							}
 							else if (readString[k]=='A' && genome_Char=='G')
 							{
+                                readC++;
 								read_Methyl_Info[r] = 'U';
 								rawReadBeforeBS[k] = 'G';
 								if(Methratio) ((ARGS *)arg)->Methy_List.NegUnMethylated[pos+g-1]++;
+                                if(onlyM == 1){
 									if(genome_CharBac1=='C') 
 									{
+                                        readCG++;
 										read_Methyl_Info[r] = 'z';non_met_CG++;
 									}
 									else if(genome_CharBac1!='C' && genome_CharBac2!='C') 
 									{
+                                        readCHG++;
 										read_Methyl_Info[r] = 'h';non_met_CHH++;
 									}
 									else if(genome_CharBac1!='C' && genome_CharBac2=='C') 
 									{
+                                        readCHH++;
 										read_Methyl_Info[r] = 'x';non_met_CHG++;
 									}
+                                }
 							}
 							else if (readString[k] != genome_Char) {
 								
-								read_Methyl_Info[r] = readString[k]; //genome_Char;
+								read_Methyl_Info[r] = genome_Char;  //readString[k]; //genome_Char;
 							}
 							if(Methratio)
 							{
@@ -2016,7 +2124,7 @@ void *Process_read(void *arg)
             }
 			if(CONTINUE) continue;
 
-            if(no_overlap) {
+            if(skipOverlap == 1) {
                 if (Flag & 0x1) {
                     if(strcmp(Chrom_P, "=") == 0 && pos <= pos_P && pos+strlen(readString.c_str()) > pos_P ) {
                         std::string key = Dummy;
@@ -2024,7 +2132,15 @@ void *Process_read(void *arg)
                     }
                 }
             }
-							
+			
+            if(countreadC){
+               if(processregion != '\0')
+                 fprintf(stdout ,"%s\t%u\t%s\t%u\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s\n",Dummy,Flag,Chrom,pos,readmCG, readCG,readmCHG, readCHG,readmCHH, readCHH, readmC, readC, processregion);
+               else if(strcmp(((ARGS *)arg)->processChr, "NAN-mm") != 0)
+                 fprintf(stdout ,"%s\t%u\t%s\t%u\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s\n",Dummy,Flag,Chrom,pos,readmCG, readCG,readmCHG, readCHG,readmCHH, readCHH, readmC, readC, ((ARGS *)arg)->processChr);
+               else fprintf(stdout ,"%s\t%u\t%s\t%u\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n",Dummy,Flag,Chrom,pos,readmCG, readCG,readmCHG, readCHG,readmCHH, readCHH, readmC, readC);
+               readmC=0; readC = 0;readmCG=0; readCG = 0;readmCHG=0; readCHG = 0;readmCHH=0; readCHH = 0;
+            }
 			read_Methyl_Info[RLens]='\0';
 			rawReadBeforeBS[lens]='\0';
 			string mappingStrand="N";
@@ -2032,6 +2148,11 @@ void *Process_read(void *arg)
 			else if(hitType==4) mappingStrand="YC:Z:CT\tYD:Z:r";
 			else if(hitType==3) mappingStrand="YC:Z:GA\tYD:Z:r";
 			else if(hitType==2) mappingStrand="YC:Z:GA\tYD:Z:f";
+            if(printmethstate == 1 && ((ARGS *)arg)->OUTFILEMS != NULL) {
+                flockfile(((ARGS *)arg)->OUTFILEMS);
+                fprintf(((ARGS *)arg)->OUTFILEMS, "%s\t%s\t%s\t%s\t%s\t%u\t%d\n", Dummy, read_Methyl_Info, readString.c_str(), CIGr.c_str(), Chrom, pos, hitType);
+                funlockfile(((ARGS *)arg)->OUTFILEMS);
+            }
             if(Sam && ((ARGS *)arg)->OUTFILE != NULL) {
 			    flockfile(((ARGS *)arg)->OUTFILE);
 			    if(Sam ) //&& Nmismatch <= UPPER_MAX_MISMATCH )
@@ -2052,6 +2173,9 @@ void *Process_read(void *arg)
 			((ARGS *)arg)->Marked_GenomeE[pos+G_Skip+readString.size()] |= Flag_rm;
 		}
 	}
+
+    if(((ARGS *)arg)->bedFILE == NULL || strcmp(((ARGS *)arg)->processChr, "NAN-mm") != 0 ) break;
+  }
 	free(s2t);
 	fclose(fIS);
     free(fPH);
