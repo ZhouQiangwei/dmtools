@@ -3860,8 +3860,9 @@ int main_view_all(binaMethFile_t *ifp, FILE* outfileF, char *outformat, binaMeth
 //    fprintf(stderr, "\nWWW0W\n");
 
     free(region);
-    for(i =0; i < 1; i++){ //usingLine
-        free(chromsUse[i]); free(entryid[i]);
+    for(i =0; i < usingLine; i++){
+        if(chromsUse[i]) free(chromsUse[i]);
+        if(entryid[i]) free(entryid[i]);
     }
     free(chromsUse); free(entryid); free(starts);
     free(ends); free(values); free(coverages); free(strands); free(contexts);
@@ -4148,9 +4149,9 @@ int main_view(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outformat
             usingLine = write_dm(ifp, regions[i], outfileF, outformat, ofp, chromsUse, starts, ends, values, coverages, strands, contexts, entryid, newchr);
         }
         //free mem
-        for(i =0; i < 1; i++){ //usingLine
-//            if(chromsUse[i]) free(chromsUse[i]); 
-//            if(entryid[i]) free(entryid[i]);
+        for(i =0; i < usingLine; i++){
+            if(chromsUse[i]) free(chromsUse[i]);
+            if(entryid[i]) free(entryid[i]);
         }
         free(chromsUse); free(entryid); free(starts);
         free(ends); free(values); free(coverages); free(strands); free(contexts);

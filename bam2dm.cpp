@@ -430,9 +430,9 @@ int main(int argc, char* argv[])
 			Build_Pow10();
 
 			
-			char **chroms = (char **)malloc(sizeof(char*)*MAX_CHROM);
-			//if(!chroms) goto error;
-			uint32_t *chrLens = (uint32_t *)malloc(sizeof(uint32_t) * MAX_CHROM);
+                        char **chroms = (char **)calloc(MAX_CHROM, sizeof(char*));
+                        //if(!chroms) goto error;
+                        uint32_t *chrLens = (uint32_t *)malloc(sizeof(uint32_t) * MAX_CHROM);
 			
 			FILE* GenomeFILE=File_Open(Geno.c_str(),"r");
 			fprintf(stderr, "[DM::calmeth] Loading genome sequence : %s\n", Geno.c_str());
@@ -769,11 +769,11 @@ int main(int argc, char* argv[])
     	    fprintf(stderr, "[DM::calmeth] dm closed\n");
 	        bmCleanup();
 //delete
-			fprintf(stderr, "[DM::calmeth] Done and release memory!\n");
-			for(int i =0; i < MAX_CHROM; i++){
-        	    free(chroms[i]);
-    	    }
-			free(chroms);free(chrLens);
+                        fprintf(stderr, "[DM::calmeth] Done and release memory!\n");
+                        for(int i =0; i < Genome_Count; i++){
+                    if(chroms[i]) free(chroms[i]);
+            }
+                        free(chroms);free(chrLens);
 			if(RELESEM){
 				for ( int i=0;i<1;i++)
 				{
@@ -843,80 +843,75 @@ int Read_Tag(FILE *INFILE,char s2t[],string hits[],int& cntHit)
 	}
 }
 
-char* process_cigar(const char* cig,int Read_Len)
+std::string process_cigar(const char* cig,int Read_Len)
 {
-	char temp[8];
-	char* cigar_rm = new char[1000]();*cigar_rm=0;unsigned n=0;
-	char* buffer_cigar=new char[100]();*buffer_cigar=0;
-	while(*cig!='\0')
-	{
-		if(*cig>='0' && *cig<='9')
-		{
-			temp[n]=*cig;
-			cig++;n++;
-		}else if(*cig=='S')
-		{
-			int i;temp[n]='\0';int length=atoi(temp);
-			if(length>0) 
-			{
-				sprintf(buffer_cigar,"%dS",length);
-				strcat(cigar_rm, buffer_cigar);
-			}
+        char temp[8];
+        std::string cigar_rm;
+        std::string buffer_cigar;
+        unsigned n=0;
+        while(*cig!='\0')
+        {
+                if(*cig>='0' && *cig<='9')
+                {
+                        temp[n]=*cig;
+                        cig++;n++;
+                }else if(*cig=='S')
+                {
+                        temp[n]='\0';int length=atoi(temp);
+                        if(length>0)
+                        {
+                                buffer_cigar = std::to_string(length) + "S";
+                                cigar_rm += buffer_cigar;
+                        }
             cig++;n=0;
-		}else if(*cig=='M')
-		{
-			temp[n]='\0';int length=atoi(temp);
-			if(length>0) 
-			{
-				sprintf(buffer_cigar,"%dM",length);
-				strcat(cigar_rm, buffer_cigar);
-			}
-			cig++;n=0;
-			char buf[1024]="\0";
-			sprintf( buf , "%dM",Read_Len);
-			char buf_tmp[1024]="\0";
-			sprintf( buf_tmp, "%dM",length);
-			if( !strcmp(buf,  buf_tmp ) )
-			{
-				if(!strcmp(buf, cig))
-					break;
-				else
-				{
-					strcpy(cigar_rm, buffer_cigar);
-				}
-				
-			}
-		}else if(*cig=='I')
-		{
-			int i;temp[n]='\0';int length=atoi(temp);
-			if(length>0) 
-			{
-				if(length==1) sprintf(buffer_cigar,"1I");
-				else if(length==2) sprintf(buffer_cigar,"2I");
-				else sprintf(buffer_cigar,"%dI",length);
-				strcat(cigar_rm, buffer_cigar);
-			}
-			cig++;n=0;
-		}else if(*cig=='D')
-		{
-			int i;temp[n]='\0';int length=atoi(temp);
-			if(length>0) 
-			{
-				if(length==1) sprintf(buffer_cigar,"1D");
-				else if(length==2) sprintf(buffer_cigar,"2D");
-				else sprintf(buffer_cigar,"%dD",length);
-				strcat(cigar_rm, buffer_cigar);
-			}
-			cig++;n=0;
-		}else
-		{
-			printf(" --%d%c-- ",atoi(temp),*cig);
-    		continue;//break;
-		}
-	}
-	delete []cigar_rm;
-	delete []buffer_cigar;
-	return cigar_rm;
+                }else if(*cig=='M')
+                {
+                        temp[n]='\0';int length=atoi(temp);
+                        if(length>0)
+                        {
+                                buffer_cigar = std::to_string(length) + "M";
+                                cigar_rm += buffer_cigar;
+                        }
+                        cig++;n=0;
+                        char buf[1024]="\0";
+                        sprintf( buf , "%dM",Read_Len);
+                        char buf_tmp[1024]="\0";
+                        sprintf( buf_tmp, "%dM",length);
+                        if( !strcmp(buf,  buf_tmp ) )
+                        {
+                                if(!strcmp(buf, cig))
+                                        break;
+                                else
+                                {
+                                        cigar_rm = buffer_cigar;
+                                }
+
+                        }
+                }else if(*cig=='I')
+                {
+                        temp[n]='\0';int length=atoi(temp);
+                        if(length>0)
+                        {
+                                buffer_cigar = std::to_string(length) + "I";
+                                cigar_rm += buffer_cigar;
+                        }
+                        cig++;n=0;
+                }else if(*cig=='D')
+                {
+                        temp[n]='\0';int length=atoi(temp);
+                        if(length>0)
+                        {
+                                buffer_cigar = std::to_string(length) + "D";
+                                cigar_rm += buffer_cigar;
+                        }
+                        cig++;n=0;
+                }else
+                {
+                        printf(" --%d%c-- ",atoi(temp),*cig);
+                continue;//break;
+                }
+        }
+        return cigar_rm;
 }
 string getstring(char* seq, int l, int len){
 	char tmp[10];
@@ -950,7 +945,7 @@ void print_meth_tofile(int genome_id, ARGS* args){
 	if(Methratio)
 	{
 		fprintf(stderr, "[DM::calmeth] Start process chrom %d\n", genome_id);
-		chromsUse = (char **)malloc(sizeof(char*)*MAX_LINE_PRINT);
+                chromsUse = (char **)calloc(MAX_LINE_PRINT, sizeof(char*));
 		//entryid = (char **)malloc(sizeof(char*)*MAX_LINE_PRINT);
 		//starts = (uint32_t *)malloc(sizeof(uint32_t) * MAX_LINE_PRINT);
 		starts = (uint32_t *)calloc(MAX_LINE_PRINT, sizeof(uint32_t));
@@ -960,7 +955,7 @@ void print_meth_tofile(int genome_id, ARGS* args){
 		strands = (uint8_t *)malloc(sizeof(uint8_t) * MAX_LINE_PRINT);
 		contexts = (uint8_t *)malloc(sizeof(uint8_t) * MAX_LINE_PRINT);
         //for GCH chromatin accessibility
-        chromsUse_gch = (char **)malloc(sizeof(char*)*MAX_LINE_PRINT);
+        chromsUse_gch = (char **)calloc(MAX_LINE_PRINT, sizeof(char*));
         starts_gch = (uint32_t *)calloc(MAX_LINE_PRINT, sizeof(uint32_t));
         pends_gch = (uint32_t *)malloc(sizeof(uint32_t) * MAX_LINE_PRINT);
         values_gch = (float *)malloc(sizeof(float) * MAX_LINE_PRINT);
