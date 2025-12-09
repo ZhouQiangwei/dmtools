@@ -60,24 +60,25 @@ static bmZoomHdr_t *bmReadZoomHdrs(binaMethFile_t *bm) {
     uint16_t i;
     bmZoomHdr_t *zhdr = malloc(sizeof(bmZoomHdr_t));
     if(!zhdr) return NULL;
-    uint32_t *level = malloc(bm->hdr->nLevels * sizeof(uint64_t));
+    zhdr->level = NULL;
+    zhdr->dataOffset = NULL;
+    zhdr->indexOffset = NULL;
+    zhdr->idx = NULL;
+    uint32_t *level = NULL;
+    uint64_t *dataOffset = NULL;
+    uint64_t *indexOffset = NULL;
+    level = malloc(bm->hdr->nLevels * sizeof(uint64_t));
     if(!level) {
-        free(zhdr);
-        return NULL;
+        goto error;
     }
     uint32_t padding = 0;
-    uint64_t *dataOffset = malloc(sizeof(uint64_t) * bm->hdr->nLevels);
+    dataOffset = malloc(sizeof(uint64_t) * bm->hdr->nLevels);
     if(!dataOffset) {
-        free(zhdr);
-        free(level);
-        return NULL;
+        goto error;
     }
-    uint64_t *indexOffset = malloc(sizeof(uint64_t) * bm->hdr->nLevels);
+    indexOffset = malloc(sizeof(uint64_t) * bm->hdr->nLevels);
     if(!indexOffset) {
-        free(zhdr);
-        free(level);
-        free(dataOffset);
-        return NULL;
+        goto error;
     }
 
     for(i=0; i<bm->hdr->nLevels; i++) {
@@ -96,13 +97,16 @@ static bmZoomHdr_t *bmReadZoomHdrs(binaMethFile_t *bm) {
     return zhdr;
 
 error:
-    for(i=0; i<bm->hdr->nLevels; i++) {
-        if(zhdr->idx[i]) bmDestroyIndex(zhdr->idx[i]);
+    if(zhdr->idx) {
+        for(i=0; i<bm->hdr->nLevels; i++) {
+            if(zhdr->idx[i]) bmDestroyIndex(zhdr->idx[i]);
+        }
+        free(zhdr->idx);
     }
+    if(level) free(level);
+    if(dataOffset) free(dataOffset);
+    if(indexOffset) free(indexOffset);
     free(zhdr);
-    free(level);
-    free(dataOffset);
-    free(indexOffset);
     return NULL;
 }
 
