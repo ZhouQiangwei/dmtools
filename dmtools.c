@@ -202,12 +202,13 @@ const char* Help_String_mr2dm="Command Format :  dmtools mr2dm [opnions] -g geno
         "\t--CF                  coverage filter, >=[int], default 4.\n"
         "\t--sort Y/N            make chromsize file and meth file in same coordinate, default Y\n"
         "\t--zl                  The maximum number of zoom levels. [0-10]\n"
-        "\t-f                    file format. methratio, bedmethyl, bismark or bedsimple [default methratio]\n"
+        "\t-f                    file format. methratio, bedmethyl, bismark, bedsimple, simpleme or modkit_pileup [default methratio]\n"
         "\t  methratio           chrom start strand context meth_reads cover\n"
         "\t  bedmethyl           chrom start end name * strand * * * coverage meth_reads\n"
         "\t  bismark             chrom start strand coverC coverT context\n"
         "\t  bedsimple           chrom start end id strand context meth_reads coverage\n"
         "\t  simpleme            chrom start value coverage strand context\n"
+        "\t  modkit_pileup       chrom start end name score strand thickStart thickEnd itemRgb N_valid_cov fraction_modified N_mod ...\n"
         "\t--pcontext            CG/CHG/CHH/C, needed when bedmethyl format, default C\n"
 //        "\t--context             [0/1/2/3] context for show, 0 represent 'C/ALL' context, 1 'CG' context, 2 'CHG' context, 3 'CHH' context.\n"
         "\t--fcontext            CG/CHG/CHH/ALL, only convert provide context in methratio file or bedsimple, default ALL\n"
@@ -469,6 +470,7 @@ int main(int argc, char *argv[]) {
 
     char *mrformat = malloc(100);
     strcpy(mrformat, "methratio");
+    const char *modkit_mod_code = "m"; // default modification code to keep for modkit pileup
     char *pcontext = malloc(10);
     strcpy(pcontext, "C");
     char *filtercontext = malloc(10);
@@ -1021,7 +1023,7 @@ int main(int argc, char *argv[]) {
             while(fgets(PerLine,2000,methF)!=0){
                 if(PerLine[0] == '#') continue; // remove header #
                 //fprintf(stderr, "%s\n", PerLine);
-                if(strcmp(mrformat, "methratio") == 0 || strcmp(mrformat, "bedmethyl") == 0 || strcmp(mrformat, "bedsimple") == 0 || strcmp(mrformat, "bismark") == 0 || strcmp(mrformat, "simpleme") == 0){
+                if(strcmp(mrformat, "methratio") == 0 || strcmp(mrformat, "bedmethyl") == 0 || strcmp(mrformat, "bedsimple") == 0 || strcmp(mrformat, "bismark") == 0 || strcmp(mrformat, "simpleme") == 0 || strcmp(mrformat, "modkit_pileup") == 0){
                     sscanf(PerLine, "%s", chrom);
                 }else{
                     fprintf(stderr, "Unexpected mr file format!!!\n");
@@ -1137,6 +1139,22 @@ int main(int argc, char *argv[]) {
                 //chrom start value coverage strand context
                 //chr1  10471   0.833333    6   +   CG
                 int result = sscanf(PerLine, "%s\t%u\t%f\t%u\t%s\t%s", chrom, &start, &value, &coverage, strand, context);
+            }else if(strcmp(mrformat, "modkit_pileup") == 0){
+                //chrom start end name score strand thickStart thickEnd itemRgb N_valid_cov fraction_modified N_mod N_canonical N_other_mod N_delete N_fail N_diff N_nocall
+                unsigned int start0 = 0, end0 = 0;
+                char namebuf[100];
+                int parsed = sscanf(PerLine, "%s\t%u\t%u\t%99s\t%*s\t%s\t%*s\t%*s\t%*s\t%u\t%*f\t%u", chrom, &start0, &end0, namebuf, strand, &coverage, &coverC);
+                if(parsed != 7) continue;
+                char *mod_code = strtok(namebuf, ",");
+                char *motif_part = strtok(NULL, ",");
+                if(mod_code == NULL || motif_part == NULL) continue;
+                if(strcmp(mod_code, modkit_mod_code) != 0) continue;
+                strcpy(context, motif_part);
+                start = start0 + 1;
+                end = end0 + 1;
+                if(strand[0] == '.') strcpy(strand, "+");
+                if(coverage == 0) continue;
+                value = ((double) coverC/ coverage);
             }else{
                 fprintf(stderr, "Unexpected mr file format!!!\n");
                 exit(0);
