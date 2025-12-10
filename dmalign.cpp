@@ -469,21 +469,19 @@ void processalign(){
 
 void executeCMD(const char *cmd, string outputdir, string output_prefix)
 {
-    char ps[1024]={0};
     FILE *ptr;
-    strcpy(ps, cmd);
     fprintf(stderr, "%s\n", cmd);
     if(output_prefix != "None" && output_prefix != ""){
-	    string filelogname = outputdir + output_prefix + ".run.log";
-	    FILE* flog = File_Open(filelogname.c_str(), "aw");
-	    fprintf(flog, "%s\n", cmd);
-	    fclose(flog);
-	}
-    ptr=popen(ps, "w");
+            string filelogname = outputdir + output_prefix + ".run.log";
+            FILE* flog = File_Open(filelogname.c_str(), "a");
+            fprintf(flog, "%s\n", cmd);
+            fclose(flog);
+        }
+    ptr=popen(cmd, "w");
 
     if(ptr==NULL)
     {
-        fprintf(stderr, "\nRun program %s error, you can run this step alone.\n", ps);
+        fprintf(stderr, "\nRun program %s error, you can run this step alone.\n", cmd);
         exit(0);
     }
     pclose(ptr);
@@ -492,16 +490,14 @@ void executeCMD(const char *cmd, string outputdir, string output_prefix)
 
 void executeCMDdir(const char *cmd, string outputdir, string output_prefix)
 {
-    char ps[1024]={0};
     FILE *ptr;
-    strcpy(ps, cmd);
     fprintf(stderr, "%s\n", cmd);
 
-    ptr=popen(ps, "w");
+    ptr=popen(cmd, "w");
 
     if(ptr==NULL)
     {
-        fprintf(stderr, "\nRun program %s error, you can run this step alone.\n", ps);
+        fprintf(stderr, "\nRun program %s error, you can run this step alone.\n", cmd);
         exit(0);
     }
     pclose(ptr);
