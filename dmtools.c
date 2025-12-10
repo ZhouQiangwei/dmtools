@@ -5244,11 +5244,9 @@ char *fastStrcat(char *s, char *t)
 void onlyexecuteCMD(const char *cmd, const char *errorinfor)
 {
     //char ps[1024]={0};
-    char* ps = malloc(sizeof(char)*10000);
     FILE *ptr;
-    strcpy(ps, cmd);
     //fprintf(stderr, "[MM] %s\n", cmd);
-    ptr=popen(ps, "w");
+    ptr=popen(cmd, "w");
 
     if(ptr==NULL)
     {
