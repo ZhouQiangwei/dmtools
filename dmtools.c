@@ -446,6 +446,7 @@ int main(int argc, char *argv[]) {
     uint8_t *contexts = malloc(sizeof(uint8_t) * MAX_LINE_PRINT);
 
     char* chromlenf = malloc(1000*sizeof(char));
+    chromlenf[0] = '\0';
     int chromlenf_yes = 0;
     char* outformat = malloc(100); strcpy(outformat, "txt");
     Fcover = malloc(sizeof(int)*16);
@@ -748,7 +749,7 @@ int main(int argc, char *argv[]) {
         char processname[1024];
         char abspathtmp[1024];
         get_executable_path(abspathtmp, processname, sizeof(abspathtmp));
-        char cmd[3000]; char seqfq[500]; char seqfq1[500]; char seqfq2[500]; char pthread[10];  strcpy(pthread, "6"); char fastp[100];
+        char cmd[3000]; char seqfq[500] = {0}; char seqfq1[500] = {0}; char seqfq2[500] = {0}; char pthread[10];  strcpy(pthread, "6"); char fastp[100] = {0};
         int singleE=0,pairedE=0;
         for(i=2; i< argc; i++){
             if(strcmp(argv[i], "-g") == 0){
@@ -793,6 +794,16 @@ int main(int argc, char *argv[]) {
             }
         }
 
+        if(!chromlenf_yes){
+            fprintf(stderr, "unvalid genome file\n");
+            exit(0);
+        }
+
+        if(!outfile){
+            fprintf(stderr, "please provide output alignment file with -o/--out\n");
+            exit(0);
+        }
+
         if(taps==1) {
             if(!fileExists(chromlenf)){
                 fprintf(stderr, "\nUnvalid chromosome file %s, please run 'dmtools index -g %s --taps' first\n", chromlenf);
@@ -823,10 +834,6 @@ int main(int argc, char *argv[]) {
             strcat(cmd, seqfq2);
         }else{
             fprintf(stderr, "unvalid input fastq ..");
-            exit(0);
-        }
-        if(!chromlenf_yes) {
-            fprintf(stderr, "unvalid genome file");
             exit(0);
         }
         strcat(cmd, " | bwa mem -t ");
