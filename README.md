@@ -60,10 +60,20 @@ And calmeth in batmeth2-dm can convert align bs bam file to dm file, https://dmt
 | --FDR               | adjust pvalue cutoff default : 1.0                                       |
 | --methdiff          | the cutoff of methylation differention. default: 0.25 [CpG]              |
 | --context           | Context for DM. CG/CHG/CHH/C, [C]                                        |
-| -h|--help                                                                                      | 
+| -h|--help                                                                                      |
 
 
 This is a BS-Seq results dm format file view and process tool based on htslib and libBigWig.
+
+### Single-cell QC (sc-qc)
+
+dmtools supports an ID field in dm files for per-cell tagging. You can summarize basic QC metrics per cell with:
+
+```
+dmtools sc-qc -i singlecell.dm -o sc_qc.tsv --context CG --min-coverage 3
+```
+
+The output table reports `cell_id`, `n_sites`, `total_coverage`, `mean_coverage`, and coverage-weighted `mean_meth` for each cell ID.
 
 For more information, please see https://dmtools-docs.rtfd.io/ 
 

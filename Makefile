@@ -123,7 +123,7 @@ test/testWrite: libBinaMeth.a
 	$(CC) -o $@ -I. $(CFLAGS) test/testWrite.c libBinaMeth.a $(LIBS)
 
 dmtools: libBinaMeth.so
-	$(CC) -o $@ -I. -L. $(CFLAGS) dmtools.c -lBinaMeth $(LIBS) -Wl,-rpath $(RPATH) -lpthread
+	$(CC) -o $@ -I. -L. $(CFLAGS) dmtools.c dmSingleCell.c -lBinaMeth $(LIBS) -Wl,-rpath $(RPATH) -lpthread
 
 #bam2dm: libBinaMeth.so
 #	$(CXX) -o $@ -I. -L. $(CFLAGS) bam2dm.cpp -lBinaMeth -Wl,-rpath $(RPATH) htslib/libhts.a -llzma -lbz2 -lz
