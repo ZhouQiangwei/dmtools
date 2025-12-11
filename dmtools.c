@@ -79,6 +79,7 @@ int bm_merge_mul(binaMethFile_t **ifp1s, int sizeifp, int m_method, char *chrom,
 void *multithread_cmd(void *arg);
 int dm_sc_qc_main(int argc, char **argv);
 int dm_sc_matrix_main(int argc, char **argv);
+int dm_sc_aggregate_main(int argc, char **argv);
 
 struct ARGS{
     char* runCMD;
@@ -103,7 +104,7 @@ struct Threading
 #define MAX_BUFF_PRINT 20000000
 const char* Help_String_main="Command Format :  dmtools <mode> [opnions]\n"
                 "\nUsage:\n"
-        "\t  [mode]         index align bam2dm mr2dm view ebsrate viewheader overlap regionstats bodystats profile chromstats sc-qc sc-matrix\n\n"
+        "\t  [mode]         index align bam2dm mr2dm view ebsrate viewheader overlap regionstats bodystats profile chromstats sc-qc sc-matrix sc-aggregate\n\n"
         "\t  index          build index for genome\n"
         "\t  align          alignment fastq\n"
         "\t  bam2dm         calculate DNA methylation (DM format) with BAM file\n"
@@ -123,7 +124,8 @@ const char* Help_String_main="Command Format :  dmtools <mode> [opnions]\n"
         "\t  dmDMR          differential DNA methylation analysis\n"
         "\t  bw             convert dm file to bigwig file\n"
         "\t  sc-qc          per-cell QC summary for single-cell dm files (ID as cell_id)\n"
-        "\t  sc-matrix      build a cell x region methylation matrix from single-cell dm files (ID as cell_id)\n";
+        "\t  sc-matrix      build a cell x region methylation matrix from single-cell dm files (ID as cell_id)\n"
+        "\t  sc-aggregate   aggregate single-cell methylation into group-level profiles (ID as cell_id)\n";
 
 const char* Help_String_scqc="Command Format :  dmtools sc-qc [options] -i <dm> -o <out.tsv>\n"
         "\nUsage: dmtools sc-qc -i input.dm -o sc_qc.tsv [--context CG] [--min-coverage 1]\n"
@@ -149,6 +151,22 @@ const char* Help_String_scmatrix="Command Format :  dmtools sc-matrix [options] 
         "\t--agg                aggregation for coverage: mean (default) or sum\n"
         "\t--sparse             write sparse Matrix Market output (default)\n"
         "\t--dense              write dense TSV matrix\n"
+        "\t-h|--help";
+
+const char* Help_String_scaggregate="Command Format :  dmtools sc-aggregate [options] -i <dm> --groups <mapping.tsv> -o <out prefix> --bed <regions.bed> | --binsize <N>\n"
+        "\nUsage: dmtools sc-aggregate -i input.dm -o agg_prefix --groups cell_to_group.tsv --bed regions.bed [--context CG] [--min-coverage 1] [--dense]\n"
+        "\t [sc-aggregate] mode parameters, required\n"
+        "\t-i|--input           input DM file with ID (repeatable)\n"
+        "\t-o|--output          output prefix for aggregation files\n"
+        "\t    --groups         TSV mapping of cell_id to group label\n"
+        "\t    --bed            BED file of regions (chrom start end [name])\n"
+        "\t    --binsize        fixed window size for genome-wide bins\n"
+        "\t [sc-aggregate] mode parameters, options\n"
+        "\t--context            context filter: C, CG, CHG, CHH (default: no filter)\n"
+        "\t--min-coverage       minimum coverage per site (default: 1)\n"
+        "\t--value              value to report: mean-meth (default) or coverage\n"
+        "\t--agg                aggregation for coverage: mean (default) or sum\n"
+        "\t--dense              write dense TSV matrix output in addition to summary\n"
         "\t-h|--help";
 
 const char* Help_String_bw="Command Format :  dmtools bw [options] -i <dm> -o <out bigwig file>\n"
@@ -465,6 +483,8 @@ int main(int argc, char *argv[]) {
         return dm_sc_qc_main(argc-1, argv+1);
     } else if(argc>1 && strcmp(argv[1], "sc-matrix") == 0){
         return dm_sc_matrix_main(argc-1, argv+1);
+    } else if(argc>1 && strcmp(argv[1], "sc-aggregate") == 0){
+        return dm_sc_aggregate_main(argc-1, argv+1);
     }
 
     binaMethFile_t *fp = NULL;
@@ -569,6 +589,8 @@ int main(int argc, char *argv[]) {
             fprintf(stderr, "%s\n", Help_String_scqc);
         }else if(strcmp(mode, "sc-matrix") == 0){
            fprintf(stderr, "%s\n", Help_String_scmatrix);
+        }else if(strcmp(mode, "sc-aggregate") == 0){
+           fprintf(stderr, "%s\n", Help_String_scaggregate);
          }else if(strcmp(mode, "addzm") == 0){
              fprintf(stderr, "%s\n", Help_String_addzm);
          }else{
