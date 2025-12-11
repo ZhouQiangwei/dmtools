@@ -85,6 +85,16 @@ dmtools sc-matrix -i singlecell.dm --bed regions.bed -o sc_matrix --context CG -
 
 Provide regions via `--bed` (chrom start end [name]) or define fixed windows with `--binsize N`. Sparse Matrix Market output is written by default along with `barcodes.tsv` and `features.tsv`; pass `--dense` to write a dense TSV matrix instead.
 
+### Single-cell aggregation (sc-aggregate)
+
+Aggregate single-cell methylation into group-level profiles using a cell → group mapping:
+
+```
+dmtools sc-aggregate -i singlecell.dm --groups cell_to_group.tsv --bed regions.bed -o sc_agg --context CG --min-coverage 3 --dense
+```
+
+This writes per-group region summaries and, with `--dense`, a group × region matrix alongside optional feature and group listings.
+
 For more information, please see https://dmtools-docs.rtfd.io/
 
 And calmeth in batmeth2-dm can convert align bs bam file to dm file, https://dmtools-docs.readthedocs.io/en/latest/function/bam2dm.html

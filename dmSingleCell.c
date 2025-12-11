@@ -9,6 +9,8 @@
 #include <string.h>
 #include <strings.h>
 
+extern const char* Help_String_scaggregate;
+
 typedef struct {
     char *id;
     uint64_t n_sites;
@@ -770,6 +772,432 @@ success:
     free(cellIds);
     free(acc);
     free(valueType); free(aggMethod);
+    return 0;
+}
+
+typedef struct {
+    char *cell;
+    int group_idx;
+} dm_sc_group_map_t;
+
+typedef struct {
+    int group_idx;
+    int region_idx;
+    uint64_t sum_cov;
+    double sum_meth_weighted;
+    uint64_t n_sites;
+    int *cells;
+    size_t n_cells;
+    size_t cap_cells;
+} dm_sc_group_accum_t;
+
+static int dm_sc_find_or_add_string(char ***ids, size_t *n, size_t *cap, const char *id) {
+    for (size_t i = 0; i < *n; i++) {
+        if (strcmp((*ids)[i], id) == 0) return (int)i;
+    }
+    if (*n == *cap) {
+        size_t newCap = (*cap == 0) ? 16 : (*cap * 2);
+        char **tmp = realloc(*ids, newCap * sizeof(char *));
+        if (!tmp) return -1;
+        *ids = tmp;
+        *cap = newCap;
+    }
+    (*ids)[*n] = strdup(id);
+    if (!(*ids)[*n]) return -1;
+    (*n)++;
+    return (int)(*n - 1);
+}
+
+static int dm_sc_group_add_cell(dm_sc_group_accum_t *acc, int cell_idx) {
+    for (size_t i = 0; i < acc->n_cells; i++) {
+        if (acc->cells[i] == cell_idx) return 0;
+    }
+    if (acc->n_cells == acc->cap_cells) {
+        size_t newCap = acc->cap_cells ? acc->cap_cells * 2 : 4;
+        int *tmp = realloc(acc->cells, newCap * sizeof(int));
+        if (!tmp) return -1;
+        acc->cells = tmp;
+        acc->cap_cells = newCap;
+    }
+    acc->cells[acc->n_cells++] = cell_idx;
+    return 0;
+}
+
+static int dm_sc_group_find_or_add_accum(dm_sc_group_accum_t **acc, size_t *n, size_t *cap, int group_idx, int region_idx) {
+    for (size_t i = 0; i < *n; i++) {
+        if ((*acc)[i].group_idx == group_idx && (*acc)[i].region_idx == region_idx) return (int)i;
+    }
+    if (*n == *cap) {
+        size_t newCap = (*cap == 0) ? 64 : (*cap * 2);
+        dm_sc_group_accum_t *tmp = realloc(*acc, newCap * sizeof(dm_sc_group_accum_t));
+        if (!tmp) return -1;
+        *acc = tmp;
+        *cap = newCap;
+    }
+    (*acc)[*n].group_idx = group_idx;
+    (*acc)[*n].region_idx = region_idx;
+    (*acc)[*n].sum_cov = 0;
+    (*acc)[*n].sum_meth_weighted = 0.0;
+    (*acc)[*n].n_sites = 0;
+    (*acc)[*n].cells = NULL;
+    (*acc)[*n].n_cells = 0;
+    (*acc)[*n].cap_cells = 0;
+    (*n)++;
+    return (int)(*n - 1);
+}
+
+static int dm_sc_group_value(dm_sc_group_accum_t *a, const char *valueType, const char *agg, double *out) {
+    if (strcasecmp(valueType, "coverage") == 0) {
+        if (strcasecmp(agg, "sum") == 0) {
+            *out = (double)a->sum_cov;
+            return 0;
+        }
+        if (a->n_sites == 0) {
+            *out = 0.0;
+            return 0;
+        }
+        *out = (double)a->sum_cov / (double)a->n_sites;
+        return 0;
+    }
+    if (a->sum_cov == 0) {
+        *out = 0.0;
+        return 0;
+    }
+    *out = a->sum_meth_weighted / (double)a->sum_cov;
+    return 0;
+}
+
+static void dm_sc_group_free_accum(dm_sc_group_accum_t *acc, size_t n) {
+    if (!acc) return;
+    for (size_t i = 0; i < n; i++) free(acc[i].cells);
+    free(acc);
+}
+
+static int dm_sc_group_parse_map(const char *path, dm_sc_group_map_t **map, size_t *nMap, char ***groups, size_t *nGroups) {
+    FILE *f = fopen(path, "r");
+    if (!f) {
+        fprintf(stderr, "Error: cannot open groups file %s\n", path);
+        return 1;
+    }
+    size_t capMap = 0, capGroups = 0;
+    char line[4096];
+    int isHeader = 1;
+    while (fgets(line, sizeof(line), f)) {
+        if (line[0] == '#' || line[0] == '\n') continue;
+        char *cell = strtok(line, "\t\n");
+        char *group = strtok(NULL, "\t\n");
+        if (!cell || !group) continue;
+        if (isHeader && (strcasecmp(cell, "cell") == 0 || strcasecmp(cell, "cell_id") == 0 || strcasecmp(cell, "cellid") == 0)) {
+            isHeader = 0;
+            continue;
+        }
+        isHeader = 0;
+        int gidx = dm_sc_find_or_add_string(groups, nGroups, &capGroups, group);
+        if (gidx < 0) { fclose(f); return 1; }
+        if (*nMap == capMap) {
+            size_t newCap = capMap ? capMap * 2 : 128;
+            dm_sc_group_map_t *tmp = realloc(*map, newCap * sizeof(dm_sc_group_map_t));
+            if (!tmp) { fclose(f); return 1; }
+            *map = tmp; capMap = newCap;
+        }
+        (*map)[*nMap].cell = strdup(cell);
+        (*map)[*nMap].group_idx = gidx;
+        if (!(*map)[*nMap].cell) { fclose(f); return 1; }
+        (*nMap)++;
+    }
+    fclose(f);
+    if (*nMap == 0) {
+        fprintf(stderr, "Error: no mappings read from %s\n", path);
+        return 1;
+    }
+    return 0;
+}
+
+static int dm_sc_group_lookup(dm_sc_group_map_t *map, size_t nMap, const char *cell) {
+    for (size_t i = 0; i < nMap; i++) {
+        if (strcmp(map[i].cell, cell) == 0) return map[i].group_idx;
+    }
+    return -1;
+}
+
+int dm_sc_aggregate_main(int argc, char **argv) {
+    char **inputs = NULL;
+    size_t nInputs = 0, capInputs = 0;
+    char *outputPrefix = NULL;
+    char *bedPath = NULL;
+    uint32_t binsize = 0;
+    char *groupsPath = NULL;
+    int contextSet = 0;
+    uint8_t contextFilter = 0;
+    uint64_t minCoverage = 1;
+    int dense = 0;
+    char *valueType = strdup("mean-meth");
+    char *aggMethod = strdup("mean");
+
+    static struct option long_opts[] = {
+        {"input", required_argument, 0, 'i'},
+        {"output", required_argument, 0, 'o'},
+        {"bed", required_argument, 0, 1},
+        {"binsize", required_argument, 0, 2},
+        {"groups", required_argument, 0, 3},
+        {"context", required_argument, 0, 4},
+        {"min-coverage", required_argument, 0, 5},
+        {"value", required_argument, 0, 6},
+        {"agg", required_argument, 0, 7},
+        {"dense", no_argument, 0, 8},
+        {"help", no_argument, 0, 'h'},
+        {0, 0, 0, 0}
+    };
+
+    int opt, long_idx = 0;
+    while ((opt = getopt_long(argc, argv, "hi:o:", long_opts, &long_idx)) != -1) {
+        switch (opt) {
+            case 'i': {
+                if (nInputs == capInputs) {
+                    size_t newCap = capInputs ? capInputs * 2 : 4;
+                    char **tmp = realloc(inputs, newCap * sizeof(char *));
+                    if (!tmp) { fprintf(stderr, "Error: memory allocation failed for inputs.\n"); goto error; }
+                    inputs = tmp; capInputs = newCap;
+                }
+                inputs[nInputs++] = strdup(optarg);
+                if (!inputs[nInputs - 1]) { fprintf(stderr, "Error: memory allocation failed for input path.\n"); goto error; }
+                break;
+            }
+            case 'o':
+                outputPrefix = strdup(optarg);
+                if (!outputPrefix) { fprintf(stderr, "Error: memory allocation failed for output prefix.\n"); goto error; }
+                break;
+            case 1:
+                bedPath = strdup(optarg);
+                if (!bedPath) { fprintf(stderr, "Error: memory allocation failed for bed path.\n"); goto error; }
+                break;
+            case 2:
+                binsize = (uint32_t)strtoul(optarg, NULL, 10);
+                break;
+            case 3:
+                groupsPath = strdup(optarg);
+                if (!groupsPath) { fprintf(stderr, "Error: memory allocation failed for groups path.\n"); goto error; }
+                break;
+            case 4:
+                if (dm_sc_qc_parse_context(optarg, &contextFilter) != 0) {
+                    fprintf(stderr, "Error: invalid context '%s'. Use C, CG, CHG, or CHH.\n", optarg);
+                    goto error;
+                }
+                contextSet = 1;
+                break;
+            case 5:
+                minCoverage = strtoull(optarg, NULL, 10);
+                break;
+            case 6:
+                free(valueType);
+                valueType = strdup(optarg);
+                if (!valueType) goto error;
+                break;
+            case 7:
+                free(aggMethod);
+                aggMethod = strdup(optarg);
+                if (!aggMethod) goto error;
+                break;
+            case 8:
+                dense = 1;
+                break;
+            case 'h':
+                fprintf(stderr, "%s\n", Help_String_scaggregate);
+                goto success;
+            default:
+                fprintf(stderr, "%s\n", Help_String_scaggregate);
+                goto error;
+        }
+    }
+
+    if (nInputs == 0 || !outputPrefix || !groupsPath || ((bedPath == NULL) == (binsize == 0))) {
+        fprintf(stderr, "Error: -i, -o, --groups and exactly one of --bed or --binsize are required.\n");
+        fprintf(stderr, "%s\n", Help_String_scaggregate);
+        goto error;
+    }
+
+    if (strcasecmp(valueType, "mean-meth") != 0 && strcasecmp(valueType, "coverage") != 0) {
+        fprintf(stderr, "Error: --value must be mean-meth or coverage.\n");
+        goto error;
+    }
+    if (strcasecmp(aggMethod, "mean") != 0 && strcasecmp(aggMethod, "sum") != 0) {
+        fprintf(stderr, "Error: --agg must be mean or sum.\n");
+        goto error;
+    }
+
+    dm_sc_group_map_t *mapping = NULL;
+    size_t nMap = 0;
+    char **groups = NULL;
+    size_t nGroups = 0, capGroups = 0;
+    if (dm_sc_group_parse_map(groupsPath, &mapping, &nMap, &groups, &nGroups) != 0) goto error;
+
+    dm_region_t *regions = NULL;
+    size_t nRegions = 0;
+    dm_region_index_t *regionGroups = NULL;
+    size_t nRegionGroups = 0;
+    dm_bin_index_t *binIndex = NULL;
+    size_t nBinChrom = 0;
+
+    dm_sc_group_accum_t *acc = NULL;
+    size_t nAcc = 0, capAcc = 0;
+    char **cellIds = NULL; size_t nCells = 0, capCells = 0;
+
+    for (size_t fi = 0; fi < nInputs; fi++) {
+        binaMethFile_t *fp = bmOpen(inputs[fi], NULL, "r");
+        if (!fp) { fprintf(stderr, "Error: cannot open input file %s\n", inputs[fi]); goto error_all; }
+        if (!(fp->hdr->version & BM_ID)) { fprintf(stderr, "Error: sc-aggregate requires dm files with ID (BM_ID set). File %s has no ID field.\n", inputs[fi]); bmClose(fp); goto error_all; }
+        if (!(fp->hdr->version & BM_COVER)) { fprintf(stderr, "Error: sc-aggregate requires coverage information. File %s lacks BM_COVER.\n", inputs[fi]); bmClose(fp); goto error_all; }
+        if (contextSet && !(fp->hdr->version & BM_CONTEXT)) { fprintf(stderr, "Error: context filter requested but file %s lacks BM_CONTEXT.\n", inputs[fi]); bmClose(fp); goto error_all; }
+
+        if (fi == 0) {
+            if (bedPath) {
+                if (dm_sc_matrix_load_bed(bedPath, &regions, &nRegions, &regionGroups, &nRegionGroups) != 0) { bmClose(fp); goto error_all; }
+            } else {
+                binIndex = dm_sc_matrix_make_bins(fp, binsize, &nBinChrom, &regions, &nRegions);
+                if (!binIndex) { fprintf(stderr, "Error: failed to generate bins.\n"); bmClose(fp); goto error_all; }
+            }
+        }
+
+        int missing_warned = 0;
+        for (uint64_t ci = 0; ci < fp->cl->nKeys; ci++) {
+            char *chrom = fp->cl->chrom[ci];
+            uint32_t chromLen = fp->cl->len[ci];
+            bmOverlappingIntervals_t *o = bmGetOverlappingIntervals(fp, chrom, 0, chromLen);
+            if (!o) { fprintf(stderr, "Error: failed to read intervals for %s in %s\n", chrom, inputs[fi]); bmClose(fp); goto error_all; }
+            for (uint64_t j = 0; j < o->l; j++) {
+                if (contextSet && o->context[j] != contextFilter) continue;
+                if (o->coverage[j] < minCoverage) continue;
+                const char *id = o->entryid ? o->entryid[j] : NULL;
+                if (!id) continue;
+                int gidx = dm_sc_group_lookup(mapping, nMap, id);
+                if (gidx < 0) {
+                    if (!missing_warned) {
+                        fprintf(stderr, "Warning: cell_id %s not found in groups mapping, skipping (further warnings suppressed)\n", id);
+                        missing_warned = 1;
+                    }
+                    continue;
+                }
+                int rowCell = dm_sc_find_or_add_string(&cellIds, &nCells, &capCells, id);
+                if (rowCell < 0) { bmDestroyOverlappingIntervals(o); bmClose(fp); goto error_all; }
+                int col = -1;
+                if (bedPath) {
+                    col = dm_sc_matrix_region_lookup_bed(regionGroups, nRegionGroups, regions, chrom, o->start[j]);
+                } else {
+                    int tmpCol = -1;
+                    if (dm_sc_matrix_bin_lookup(binIndex, nBinChrom, chrom, o->start[j], &tmpCol) == 0) col = tmpCol;
+                }
+                if (col < 0) continue;
+                int accIdx = dm_sc_group_find_or_add_accum(&acc, &nAcc, &capAcc, gidx, col);
+                if (accIdx < 0) { bmDestroyOverlappingIntervals(o); bmClose(fp); goto error_all; }
+                acc[accIdx].n_sites++;
+                acc[accIdx].sum_cov += o->coverage[j];
+                acc[accIdx].sum_meth_weighted += ((double)o->value[j]) * o->coverage[j];
+                if (dm_sc_group_add_cell(&acc[accIdx], rowCell) != 0) { bmDestroyOverlappingIntervals(o); bmClose(fp); goto error_all; }
+            }
+            bmDestroyOverlappingIntervals(o);
+        }
+        bmClose(fp);
+    }
+
+    size_t pathLen = strlen(outputPrefix) + 13;
+    char *groupPath = malloc(pathLen);
+    if (!groupPath) goto error_all;
+    snprintf(groupPath, pathLen, "%s.groups.tsv", outputPrefix);
+    FILE *gout = fopen(groupPath, "w");
+    free(groupPath);
+    if (!gout) { fprintf(stderr, "Error: cannot open output file %s.groups.tsv\n", outputPrefix); goto error_all; }
+    fprintf(gout, "group\tchrom\tstart\tend\tn_cells\tn_sites\ttotal_coverage\tmean_coverage\tmean_meth\n");
+    for (size_t i = 0; i < nAcc; i++) {
+        dm_sc_group_accum_t *a = &acc[i];
+        dm_region_t *r = &regions[a->region_idx];
+        double value = 0.0;
+        dm_sc_group_value(a, valueType, aggMethod, &value);
+        double mean_cov = a->n_sites ? (double)a->sum_cov / (double)a->n_sites : 0.0;
+        fprintf(gout, "%s\t%s\t%u\t%u\t%zu\t%" PRIu64 "\t%" PRIu64 "\t%.6f\t%.6f\n",
+                groups[a->group_idx], r->chrom, r->start, r->end,
+                a->n_cells, a->n_sites, a->sum_cov, mean_cov, value);
+    }
+    fclose(gout);
+
+    if (dense) {
+        size_t len = strlen(outputPrefix) + 14;
+        char *path = malloc(len);
+        if (!path) goto error_all;
+        snprintf(path, len, "%s.matrix.tsv", outputPrefix);
+        FILE *f = fopen(path, "w");
+        free(path);
+        if (!f) goto error_all;
+        fprintf(f, "group");
+        for (size_t c = 0; c < nRegions; c++) fprintf(f, "\t%s", regions[c].name);
+        fprintf(f, "\n");
+        double *matrix = calloc(nGroups * nRegions, sizeof(double));
+        if (!matrix) { fclose(f); goto error_all; }
+        for (size_t i = 0; i < nAcc; i++) {
+            double val = 0.0;
+            dm_sc_group_value(&acc[i], valueType, aggMethod, &val);
+            matrix[((size_t)acc[i].group_idx * nRegions) + acc[i].region_idx] = val;
+        }
+        for (size_t g = 0; g < nGroups; g++) {
+            fprintf(f, "%s", groups[g]);
+            for (size_t c = 0; c < nRegions; c++) fprintf(f, "\t%.6f", matrix[g * nRegions + c]);
+            fprintf(f, "\n");
+        }
+        free(matrix);
+        fclose(f);
+        if (dm_sc_matrix_write_features(outputPrefix, regions, nRegions) != 0) { fprintf(stderr, "Error: failed to write features.tsv\n"); goto error_all; }
+        size_t groupsOnlyLen = strlen(outputPrefix) + 18;
+        char *groupsOnly = malloc(groupsOnlyLen);
+        if (!groupsOnly) goto error_all;
+        snprintf(groupsOnly, groupsOnlyLen, "%s.groups_only.tsv", outputPrefix);
+        FILE *gf = fopen(groupsOnly, "w");
+        free(groupsOnly);
+        if (!gf) goto error_all;
+        for (size_t g = 0; g < nGroups; g++) fprintf(gf, "%s\n", groups[g]);
+        fclose(gf);
+    }
+
+    goto success;
+
+error_all:
+    dm_sc_matrix_free_regions(regions, nRegions);
+    dm_sc_matrix_free_region_index(regionGroups, nRegionGroups);
+    dm_sc_matrix_free_bins(binIndex, nBinChrom);
+    for (size_t i = 0; i < nInputs; i++) free(inputs[i]);
+    free(inputs);
+    free(outputPrefix); free(bedPath); free(groupsPath);
+    free(valueType); free(aggMethod);
+    for (size_t i = 0; i < nMap; i++) free(mapping[i].cell);
+    free(mapping);
+    for (size_t i = 0; i < nGroups; i++) free(groups[i]);
+    free(groups);
+    for (size_t i = 0; i < nCells; i++) free(cellIds[i]);
+    free(cellIds);
+    dm_sc_group_free_accum(acc, nAcc);
+    goto cleanup;
+
+error:
+    for (size_t i = 0; i < nInputs; i++) free(inputs[i]);
+    free(inputs);
+    free(outputPrefix); free(bedPath); free(groupsPath);
+    free(valueType); free(aggMethod);
+cleanup:
+    return 1;
+
+success:
+    dm_sc_matrix_free_regions(regions, nRegions);
+    dm_sc_matrix_free_region_index(regionGroups, nRegionGroups);
+    dm_sc_matrix_free_bins(binIndex, nBinChrom);
+    for (size_t i = 0; i < nInputs; i++) free(inputs[i]);
+    free(inputs);
+    free(outputPrefix); free(bedPath); free(groupsPath);
+    free(valueType); free(aggMethod);
+    for (size_t i = 0; i < nMap; i++) free(mapping[i].cell);
+    free(mapping);
+    for (size_t i = 0; i < nGroups; i++) free(groups[i]);
+    free(groups);
+    for (size_t i = 0; i < nCells; i++) free(cellIds[i]);
+    free(cellIds);
+    dm_sc_group_free_accum(acc, nAcc);
     return 0;
 }
 
