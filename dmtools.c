@@ -5142,6 +5142,15 @@ FILE* File_Open(const char* File_Name,const char* Mode)
 void bmPrintHdr(binaMethFile_t *bm) {
     uint64_t i;
     int64_t i64;
+    uint16_t computedFields = 2; // chrom, start
+    if(bm->hdr->version & BM_END) computedFields += 1; // end
+    computedFields += 1; // value
+    if(bm->hdr->version & BM_COVER) computedFields += 1;
+    if(bm->hdr->version & BM_STRAND) computedFields += 1;
+    if(bm->hdr->version & BM_CONTEXT) computedFields += 1;
+    if(bm->hdr->version & BM_ID) computedFields += 1;
+    uint16_t fieldCount = bm->hdr->fieldCount ? bm->hdr->fieldCount : computedFields;
+    uint16_t definedFieldCount = bm->hdr->definedFieldCount ? bm->hdr->definedFieldCount : fieldCount;
     fprintf(stderr, "Ver code:    %"PRIu16"\n", bm->hdr->version);
     if(bm->hdr->version & BM_END) fprintf(stderr, "BM_END:    yes\n");
     else fprintf(stderr, "BM_END:    no\n");
@@ -5153,6 +5162,16 @@ void bmPrintHdr(binaMethFile_t *bm) {
     else fprintf(stderr, "BM_STRAND:    no\n");
     if(bm->hdr->version & BM_ID) fprintf(stderr, "BM_ID:    yes\n");
     else fprintf(stderr, "BM_ID:    no\n");
+    fprintf(stderr, "fieldCount: %"PRIu16"\n", fieldCount);
+    fprintf(stderr, "definedFieldCount: %"PRIu16"\n", definedFieldCount);
+    fprintf(stderr, "Fields (order): chrom start");
+    if(bm->hdr->version & BM_END) fprintf(stderr, " end");
+    fprintf(stderr, " value");
+    if(bm->hdr->version & BM_COVER) fprintf(stderr, " coverage");
+    if(bm->hdr->version & BM_STRAND) fprintf(stderr, " strand");
+    if(bm->hdr->version & BM_CONTEXT) fprintf(stderr, " context");
+    if(bm->hdr->version & BM_ID) fprintf(stderr, " id");
+    fprintf(stderr, "\n");
     fprintf(stderr, "Levels:     %"PRIu16"\n", bm->hdr->nLevels);
     //fprintf(stderr, "ctOffset:   0x%"PRIx64"\n", bm->hdr->ctOffset);
     //fprintf(stderr, "dataOffset: 0x%"PRIx64"\n", bm->hdr->dataOffset);
