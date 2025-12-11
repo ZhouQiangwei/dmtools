@@ -78,6 +78,7 @@ int bm_merge_mul(binaMethFile_t **ifp1s, int sizeifp, int m_method, char *chrom,
     char **chromsUse, uint32_t *starts, uint32_t *ends, float *values, uint16_t *coverages, uint8_t *strands, uint8_t *contexts, char **entryid, uint16_t *coverC, FILE *output_txt, char *outformat);
 void *multithread_cmd(void *arg);
 int dm_sc_qc_main(int argc, char **argv);
+int dm_sc_matrix_main(int argc, char **argv);
 
 struct ARGS{
     char* runCMD;
@@ -101,8 +102,8 @@ struct Threading
 #define MAX_LINE_PRINT 1000100
 #define MAX_BUFF_PRINT 20000000
 const char* Help_String_main="Command Format :  dmtools <mode> [opnions]\n"
-		"\nUsage:\n"
-        "\t  [mode]         index align bam2dm mr2dm view ebsrate viewheader overlap regionstats bodystats profile chromstats sc-qc\n\n"
+                "\nUsage:\n"
+        "\t  [mode]         index align bam2dm mr2dm view ebsrate viewheader overlap regionstats bodystats profile chromstats sc-qc sc-matrix\n\n"
         "\t  index          build index for genome\n"
         "\t  align          alignment fastq\n"
         "\t  bam2dm         calculate DNA methylation (DM format) with BAM file\n"
@@ -121,7 +122,8 @@ const char* Help_String_main="Command Format :  dmtools <mode> [opnions]\n"
         "\t  stats          coverage and methylation level distribution of data\n"
         "\t  dmDMR          differential DNA methylation analysis\n"
         "\t  bw             convert dm file to bigwig file\n"
-        "\t  sc-qc          per-cell QC summary for single-cell dm files (ID as cell_id)\n";
+        "\t  sc-qc          per-cell QC summary for single-cell dm files (ID as cell_id)\n"
+        "\t  sc-matrix      build a cell x region methylation matrix from single-cell dm files (ID as cell_id)\n";
 
 const char* Help_String_scqc="Command Format :  dmtools sc-qc [options] -i <dm> -o <out.tsv>\n"
         "\nUsage: dmtools sc-qc -i input.dm -o sc_qc.tsv [--context CG] [--min-coverage 1]\n"
@@ -131,6 +133,22 @@ const char* Help_String_scqc="Command Format :  dmtools sc-qc [options] -i <dm> 
         "\t [sc-qc] mode paramaters, options\n"
         "\t--context            context filter: C, CG, CHG, CHH (default: no filter)\n"
         "\t--min-coverage       minimum coverage per site (default: 1)\n"
+        "\t-h|--help";
+
+const char* Help_String_scmatrix="Command Format :  dmtools sc-matrix [options] -i <dm> -o <out prefix> --bed <regions.bed> | --binsize <N>\n"
+        "\nUsage: dmtools sc-matrix -i input.dm -o matrix_prefix --bed regions.bed [--context CG] [--min-coverage 1] [--sparse|--dense]\n"
+        "\t [sc-matrix] mode parameters, required\n"
+        "\t-i|--input           input DM file with ID (repeatable)\n"
+        "\t-o|--output          output prefix for matrix files\n"
+        "\t    --bed            BED file of regions (chrom start end [name])\n"
+        "\t    --binsize        fixed window size for genome-wide bins\n"
+        "\t [sc-matrix] mode parameters, options\n"
+        "\t--context            context filter: C, CG, CHG, CHH (default: no filter)\n"
+        "\t--min-coverage       minimum coverage per site (default: 1)\n"
+        "\t--value              value to report: mean-meth (default) or coverage\n"
+        "\t--agg                aggregation for coverage: mean (default) or sum\n"
+        "\t--sparse             write sparse Matrix Market output (default)\n"
+        "\t--dense              write dense TSV matrix\n"
         "\t-h|--help";
 
 const char* Help_String_bw="Command Format :  dmtools bw [options] -i <dm> -o <out bigwig file>\n"
@@ -445,6 +463,8 @@ int printwarning = 0;
 int main(int argc, char *argv[]) {
     if(argc>1 && strcmp(argv[1], "sc-qc") == 0){
         return dm_sc_qc_main(argc-1, argv+1);
+    } else if(argc>1 && strcmp(argv[1], "sc-matrix") == 0){
+        return dm_sc_matrix_main(argc-1, argv+1);
     }
 
     binaMethFile_t *fp = NULL;
@@ -543,13 +563,15 @@ int main(int argc, char *argv[]) {
            fprintf(stderr, "%s\n", Help_String_align);
         }else if(strcmp(mode, "index") == 0){
            fprintf(stderr, "%s\n", Help_String_index);
-        }else if(strcmp(mode, "dmDMR") == 0){
-           fprintf(stderr, "%s\n", Help_String_dmDMR);
-        }else if(strcmp(mode, "sc-qc") == 0){
-           fprintf(stderr, "%s\n", Help_String_scqc);
-        }else if(strcmp(mode, "addzm") == 0){
-            fprintf(stderr, "%s\n", Help_String_addzm);
-        }else{
+         }else if(strcmp(mode, "dmDMR") == 0){
+            fprintf(stderr, "%s\n", Help_String_dmDMR);
+         }else if(strcmp(mode, "sc-qc") == 0){
+            fprintf(stderr, "%s\n", Help_String_scqc);
+        }else if(strcmp(mode, "sc-matrix") == 0){
+           fprintf(stderr, "%s\n", Help_String_scmatrix);
+         }else if(strcmp(mode, "addzm") == 0){
+             fprintf(stderr, "%s\n", Help_String_addzm);
+         }else{
             fprintf(stderr, "Please define correct mode!!!\n");
             fprintf(stderr, "%s\n", Help_String_main);
         }
