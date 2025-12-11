@@ -92,6 +92,21 @@ int bmCreateHdr(binaMethFile_t *fp, int32_t maxZooms) {
     if(!hdr) return 2;
 
     hdr->version = 4;
+    /*
+     * fieldCount/definedFieldCount describe the on-disk record layout and
+     * should include optional fields flagged in fp->type (BM_* bitmask).
+     * chrom/start are always present; end/value are included depending on
+     * BM_END; other optional fields follow in fixed order.
+     */
+    hdr->fieldCount = 2; // chrom, start
+    if(fp->type & BM_END) hdr->fieldCount += 1; // end
+    hdr->fieldCount += 1; // value
+    if(fp->type & BM_COVER) hdr->fieldCount += 1;
+    if(fp->type & BM_STRAND) hdr->fieldCount += 1;
+    if(fp->type & BM_CONTEXT) hdr->fieldCount += 1;
+    if(fp->type & BM_ID) hdr->fieldCount += 1;
+    hdr->definedFieldCount = hdr->fieldCount;
+
     if(maxZooms < 0 || maxZooms > 65535) {
         hdr->nLevels = 10;
     } else {
@@ -236,6 +251,10 @@ int bmWriteHdr(binaMethFile_t *bm) {
     if(fwrite(&magic, sizeof(uint32_t), 1, fp) != 1) return 4;
     if(fwrite(&two, sizeof(uint16_t), 1, fp) != 1) return 5;
     if(fwrite(p, sizeof(uint8_t), 58, fp) != 58) return 6;
+
+    // fieldCount and definedFieldCount describe which columns exist
+    if(writeAtPos(&(bm->hdr->fieldCount), sizeof(uint16_t), 1, 0x20, fp)) return 7;
+    if(writeAtPos(&(bm->hdr->definedFieldCount), sizeof(uint16_t), 1, 0x22, fp)) return 7;
 
     //Empty zoom headers
     if(bm->hdr->nLevels) {
