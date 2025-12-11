@@ -1696,9 +1696,11 @@ void *Process_read(void *arg)
     int left_end = -1;
     int readC = 0, readmC = 0, readCG = 0, readmCG = 0, readCHG = 0, readmCHG = 0, readCHH = 0, readmCHH = 0;
 
-  char PerLine[2000];
-  char chrom[100]; int start=0, end=0;
-  char processregion[200];
+    char PerLine[2000];
+    char chrom[100]; int start=0, end=0;
+    char processregion[200];
+    PerLine[0] = '\0';
+    processregion[0] = '\0';
   int psta = 0;
   while(strcmp(((ARGS *)arg)->processChr, "NAN-mm") != 0 || ( ((ARGS *)arg)->bedFILE != NULL && fgets(PerLine,2000,((ARGS *)arg)->bedFILE)!=NULL) || psta == 0){
     psta = 1;
@@ -2129,7 +2131,7 @@ void *Process_read(void *arg)
             }
 			
             if(countreadC){
-               if(processregion != '\0')
+                if(processregion[0] != '\0')
                  fprintf(stdout ,"%s\t%u\t%s\t%u\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s\n",Dummy,Flag,Chrom,pos,readmCG, readCG,readmCHG, readCHG,readmCHH, readCHH, readmC, readC, processregion);
                else if(strcmp(((ARGS *)arg)->processChr, "NAN-mm") != 0)
                  fprintf(stdout ,"%s\t%u\t%s\t%u\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s\n",Dummy,Flag,Chrom,pos,readmCG, readCG,readmCHG, readCHG,readmCHH, readCHH, readmC, readC, ((ARGS *)arg)->processChr);
