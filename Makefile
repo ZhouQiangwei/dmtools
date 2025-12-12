@@ -140,11 +140,11 @@ dmalign:
 htslib/libhts.a:
 	$(MAKE) -C htslib libhts.a
 
-bam2dm: htslib/libhts.a
-	$(CXX) $(CXXFLAGS) -no-pie bam2dm.cpp -o bam2dm -m64 -I. -L. -lz -lBinaMeth -Wl,-rpath $(RPATH) $(LDFLAGS_SUB)
+bam2dm: libBinaMeth.a htslib/libhts.a
+	$(CXX) $(CXXFLAGS) -no-pie bam2dm.cpp -o bam2dm -m64 -I. libBinaMeth.a -Wl,-rpath $(RPATH) htslib/libhts.a $(LDFLAGS_SUB)
 
-bam2motif: htslib/libhts.a
-	$(CXX) $(CXXFLAGS) -no-pie bam2motif.cpp -o bam2motif -m64 -I. -L. -lz -lBinaMeth -Wl,-rpath $(RPATH) $(LDFLAGS_SUB)
+bam2motif: libBinaMeth.a htslib/libhts.a
+	$(CXX) $(CXXFLAGS) -no-pie bam2motif.cpp -o bam2motif -m64 -I. libBinaMeth.a -Wl,-rpath $(RPATH) htslib/libhts.a $(LDFLAGS_SUB)
 
 test/exampleWrite: libBinaMeth.so
 	$(CC) -o $@ -I. -L. $(CFLAGS) test/exampleWrite.c -lBinaMeth $(LIBS) -Wl,-rpath .
