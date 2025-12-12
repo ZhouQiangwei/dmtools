@@ -430,9 +430,9 @@ int main(int argc, char* argv[])
 			Build_Pow10();
 
 			
-			char **chroms = (char **)malloc(sizeof(char*)*MAX_CHROM);
-			//if(!chroms) goto error;
-			uint32_t *chrLens = (uint32_t *)malloc(sizeof(uint32_t) * MAX_CHROM);
+                        char **chroms = (char **)calloc(MAX_CHROM, sizeof(char*));
+                        //if(!chroms) goto error;
+                        uint32_t *chrLens = (uint32_t *)malloc(sizeof(uint32_t) * MAX_CHROM);
 			
 			FILE* GenomeFILE=File_Open(Geno.c_str(),"r");
 			fprintf(stderr, "[DM::calmeth] Loading genome sequence : %s\n", Geno.c_str());
@@ -583,31 +583,31 @@ int main(int argc, char* argv[])
 				methOutfileName=Prefix;
 //                methOutfileName+=".methratio.dm";
 
-				if(bmInit(1<<17) != 0) {
-        		    fprintf(stderr, "Received an error in dmInit\n");
-		            return 1;
-        		}
-				fp = (binaMethFile_t*)bmOpen((char*)methOutfileName.data(), NULL, "w");
-	        	fp->type = write_type;
-				if(!fp) {
-					fprintf(stderr, "An error occurred while opening example_output.dm for writingn\n");
-					return 1;
-				}
+                                if(bmInit(1<<17) != 0) {
+                                        fprintf(stderr, "Received an error in dmInit\n");
+                                        return 1;
+                                }
+                                fp = (binaMethFile_t*)bmOpen((char*)methOutfileName.data(), NULL, "w");
+                                if(!fp) {
+                                        fprintf(stderr, "An error occurred while opening %s for writing\n", methOutfileName.c_str());
+                                        return 1;
+                                }
+                                fp->type = write_type;
 
                 if(tech=="NoMe"){
                     fp_gch = NULL;
                     GCHOutfileName=Prefix+".gch.dm";
 
                     if(bmInit(1<<17) != 0) {
-                        fprintf(stderr, "Received an error in dmInit\n");
+                        fprintf(stderr, "Received an error in dmInit for GCH output\n");
                         return 1;
                     }
                     fp_gch = (binaMethFile_t*)bmOpen((char*)GCHOutfileName.data(), NULL, "w");
-                    fp_gch->type = write_type;
                     if(!fp_gch) {
-                        fprintf(stderr, "An error occurred while opening example_output.dm for writingn\n");
+                        fprintf(stderr, "An error occurred while opening %s for writing\n", GCHOutfileName.c_str());
                         return 1;
                     }
+                    fp_gch->type = write_type;
                 }
 
 			}
@@ -687,25 +687,43 @@ int main(int argc, char* argv[])
 					}
 				}
                 if(DEBUG>1) fprintf(stderr, "\nXXX3333.2\n");
-				if(f==InFileStart && Methratio){
-					//Allow up to 10 zoom levels, though fewer will be used in practice
-					if(bmCreateHdr(fp, zoomlevel)) exit(0);
-					//Create the chromosome lists
-					fp->cl = bmCreateChromList(chroms, chrLens, Genome_Count); //2
-					if(!fp->cl) exit(0);
-					//Write the header
-					if(bmWriteHdr(fp)) exit(0);
-					//Some example methlevel
-					if(DEBUG>1) fprintf(stderr, "====HHH type %d\n", fp->type);
+                                if(f==InFileStart && Methratio){
+                                        //Allow up to 10 zoom levels, though fewer will be used in practice
+                                        if(bmCreateHdr(fp, zoomlevel)) {
+                                                fprintf(stderr, "Failed to create dm header for %s\n", methOutfileName.c_str());
+                                                exit(1);
+                                        }
+                                        //Create the chromosome lists
+                                        fp->cl = bmCreateChromList(chroms, chrLens, Genome_Count); //2
+                                        if(!fp->cl) {
+                                                fprintf(stderr, "Failed to create dm chrom list for %s\n", methOutfileName.c_str());
+                                                exit(1);
+                                        }
+                                        //Write the header
+                                        if(bmWriteHdr(fp)) {
+                                                fprintf(stderr, "Failed to write dm header for %s\n", methOutfileName.c_str());
+                                                exit(1);
+                                        }
+                                        //Some example methlevel
+                                        if(DEBUG>1) fprintf(stderr, "====HHH type %d\n", fp->type);
 
-                    if(tech=="NoMe"){
+                        if(tech=="NoMe"){
                         //Allow up to 10 zoom levels, though fewer will be used in practice
-                        if(bmCreateHdr(fp_gch, zoomlevel)) exit(0);
+                        if(bmCreateHdr(fp_gch, zoomlevel)) {
+                                fprintf(stderr, "Failed to create dm header for %s\n", GCHOutfileName.c_str());
+                                exit(1);
+                        }
                         //Create the chromosome lists
                         fp_gch->cl = bmCreateChromList(chroms, chrLens, Genome_Count); //2
-                        if(!fp_gch->cl) exit(0);
+                        if(!fp_gch->cl) {
+                                fprintf(stderr, "Failed to create dm chrom list for %s\n", GCHOutfileName.c_str());
+                                exit(1);
+                        }
                         //Write the header
-                        if(bmWriteHdr(fp_gch)) exit(0);
+                        if(bmWriteHdr(fp_gch)) {
+                                fprintf(stderr, "Failed to write dm header for %s\n", GCHOutfileName.c_str());
+                                exit(1);
+                        }
                     }
 				}
                 if(DEBUG>1) fprintf(stderr, "\nXXX3333.4\n");
@@ -761,19 +779,21 @@ int main(int argc, char* argv[])
 				fclose(ALIGNLOG);
 			}
             myMap.clear();
-			fprintf(stderr, "[DM::calmeth] dm closing\n");
-        	bmClose(fp);
-            if(tech=="NoMe"){
+            fprintf(stderr, "[DM::calmeth] dm closing\n");
+            if(Methratio && fp){
+                bmClose(fp);
+            }
+            if(Methratio && tech=="NoMe" && fp_gch){
                 bmClose(fp_gch);
             }
-    	    fprintf(stderr, "[DM::calmeth] dm closed\n");
-	        bmCleanup();
+            fprintf(stderr, "[DM::calmeth] dm closed\n");
+            if(Methratio) bmCleanup();
 //delete
-			fprintf(stderr, "[DM::calmeth] Done and release memory!\n");
-			for(int i =0; i < MAX_CHROM; i++){
-        	    free(chroms[i]);
-    	    }
-			free(chroms);free(chrLens);
+                        fprintf(stderr, "[DM::calmeth] Done and release memory!\n");
+                        for(int i =0; i < Genome_Count; i++){
+                    if(chroms[i]) free(chroms[i]);
+            }
+                        free(chroms);free(chrLens);
 			if(RELESEM){
 				for ( int i=0;i<1;i++)
 				{
@@ -843,80 +863,75 @@ int Read_Tag(FILE *INFILE,char s2t[],string hits[],int& cntHit)
 	}
 }
 
-char* process_cigar(const char* cig,int Read_Len)
+std::string process_cigar(const char* cig,int Read_Len)
 {
-	char temp[8];
-	char* cigar_rm = new char[1000]();*cigar_rm=0;unsigned n=0;
-	char* buffer_cigar=new char[100]();*buffer_cigar=0;
-	while(*cig!='\0')
-	{
-		if(*cig>='0' && *cig<='9')
-		{
-			temp[n]=*cig;
-			cig++;n++;
-		}else if(*cig=='S')
-		{
-			int i;temp[n]='\0';int length=atoi(temp);
-			if(length>0) 
-			{
-				sprintf(buffer_cigar,"%dS",length);
-				strcat(cigar_rm, buffer_cigar);
-			}
+        char temp[8];
+        std::string cigar_rm;
+        std::string buffer_cigar;
+        unsigned n=0;
+        while(*cig!='\0')
+        {
+                if(*cig>='0' && *cig<='9')
+                {
+                        temp[n]=*cig;
+                        cig++;n++;
+                }else if(*cig=='S')
+                {
+                        temp[n]='\0';int length=atoi(temp);
+                        if(length>0)
+                        {
+                                buffer_cigar = std::to_string(length) + "S";
+                                cigar_rm += buffer_cigar;
+                        }
             cig++;n=0;
-		}else if(*cig=='M')
-		{
-			temp[n]='\0';int length=atoi(temp);
-			if(length>0) 
-			{
-				sprintf(buffer_cigar,"%dM",length);
-				strcat(cigar_rm, buffer_cigar);
-			}
-			cig++;n=0;
-			char buf[1024]="\0";
-			sprintf( buf , "%dM",Read_Len);
-			char buf_tmp[1024]="\0";
-			sprintf( buf_tmp, "%dM",length);
-			if( !strcmp(buf,  buf_tmp ) )
-			{
-				if(!strcmp(buf, cig))
-					break;
-				else
-				{
-					strcpy(cigar_rm, buffer_cigar);
-				}
-				
-			}
-		}else if(*cig=='I')
-		{
-			int i;temp[n]='\0';int length=atoi(temp);
-			if(length>0) 
-			{
-				if(length==1) sprintf(buffer_cigar,"1I");
-				else if(length==2) sprintf(buffer_cigar,"2I");
-				else sprintf(buffer_cigar,"%dI",length);
-				strcat(cigar_rm, buffer_cigar);
-			}
-			cig++;n=0;
-		}else if(*cig=='D')
-		{
-			int i;temp[n]='\0';int length=atoi(temp);
-			if(length>0) 
-			{
-				if(length==1) sprintf(buffer_cigar,"1D");
-				else if(length==2) sprintf(buffer_cigar,"2D");
-				else sprintf(buffer_cigar,"%dD",length);
-				strcat(cigar_rm, buffer_cigar);
-			}
-			cig++;n=0;
-		}else
-		{
-			printf(" --%d%c-- ",atoi(temp),*cig);
-    		continue;//break;
-		}
-	}
-	delete []cigar_rm;
-	delete []buffer_cigar;
-	return cigar_rm;
+                }else if(*cig=='M')
+                {
+                        temp[n]='\0';int length=atoi(temp);
+                        if(length>0)
+                        {
+                                buffer_cigar = std::to_string(length) + "M";
+                                cigar_rm += buffer_cigar;
+                        }
+                        cig++;n=0;
+                        char buf[1024]="\0";
+                        sprintf( buf , "%dM",Read_Len);
+                        char buf_tmp[1024]="\0";
+                        sprintf( buf_tmp, "%dM",length);
+                        if( !strcmp(buf,  buf_tmp ) )
+                        {
+                                if(!strcmp(buf, cig))
+                                        break;
+                                else
+                                {
+                                        cigar_rm = buffer_cigar;
+                                }
+
+                        }
+                }else if(*cig=='I')
+                {
+                        temp[n]='\0';int length=atoi(temp);
+                        if(length>0)
+                        {
+                                buffer_cigar = std::to_string(length) + "I";
+                                cigar_rm += buffer_cigar;
+                        }
+                        cig++;n=0;
+                }else if(*cig=='D')
+                {
+                        temp[n]='\0';int length=atoi(temp);
+                        if(length>0)
+                        {
+                                buffer_cigar = std::to_string(length) + "D";
+                                cigar_rm += buffer_cigar;
+                        }
+                        cig++;n=0;
+                }else
+                {
+                        printf(" --%d%c-- ",atoi(temp),*cig);
+                continue;//break;
+                }
+        }
+        return cigar_rm;
 }
 string getstring(char* seq, int l, int len){
 	char tmp[10];
@@ -950,7 +965,7 @@ void print_meth_tofile(int genome_id, ARGS* args){
 	if(Methratio)
 	{
 		fprintf(stderr, "[DM::calmeth] Start process chrom %d\n", genome_id);
-		chromsUse = (char **)malloc(sizeof(char*)*MAX_LINE_PRINT);
+                chromsUse = (char **)calloc(MAX_LINE_PRINT, sizeof(char*));
 		//entryid = (char **)malloc(sizeof(char*)*MAX_LINE_PRINT);
 		//starts = (uint32_t *)malloc(sizeof(uint32_t) * MAX_LINE_PRINT);
 		starts = (uint32_t *)calloc(MAX_LINE_PRINT, sizeof(uint32_t));
@@ -960,7 +975,7 @@ void print_meth_tofile(int genome_id, ARGS* args){
 		strands = (uint8_t *)malloc(sizeof(uint8_t) * MAX_LINE_PRINT);
 		contexts = (uint8_t *)malloc(sizeof(uint8_t) * MAX_LINE_PRINT);
         //for GCH chromatin accessibility
-        chromsUse_gch = (char **)malloc(sizeof(char*)*MAX_LINE_PRINT);
+        chromsUse_gch = (char **)calloc(MAX_LINE_PRINT, sizeof(char*));
         starts_gch = (uint32_t *)calloc(MAX_LINE_PRINT, sizeof(uint32_t));
         pends_gch = (uint32_t *)malloc(sizeof(uint32_t) * MAX_LINE_PRINT);
         values_gch = (float *)malloc(sizeof(float) * MAX_LINE_PRINT);
@@ -1139,12 +1154,18 @@ void print_meth_tofile(int genome_id, ARGS* args){
                         if(chrprinHdr==0){
                             int response = bmAddIntervals(fp, chromsUse, starts, pends, values, coverages, strands, contexts,
                             entryid, 1);
-                            if(response) goto error;
+                            if(response) {
+                                fprintf(stderr, "bmAddIntervals failed for %s (code %d)\n", chromsUse[0], response);
+                                goto error;
+                            }
                         }
                         else if(printL>MAX_LINE_PRINT){
                             //We can continue appending similarly formatted entries
                             //N.B. you can't append a different chromosome (those always go into different
-                            if(bmAppendIntervals(fp, starts+1, pends+1, values+1, coverages+1, strands+1, contexts+1, entryid, printL-1)) goto error;
+                            if(bmAppendIntervals(fp, starts+1, pends+1, values+1, coverages+1, strands+1, contexts+1, entryid, printL-1)) {
+                                fprintf(stderr, "bmAppendIntervals failed while processing %s\n", chromsUse[0]);
+                                goto error;
+                            }
                             printL = 0;
                         }
                         chrprinHdr = 1;
@@ -1168,12 +1189,18 @@ void print_meth_tofile(int genome_id, ARGS* args){
                             if(chrprinHdr==0){
                                 int response = bmAddIntervals(fp, chromsUse, starts, pends, values, coverages, strands, contexts,
                                 entryid, 1);
-                                if(response) goto error;
+                                if(response) {
+                                    fprintf(stderr, "bmAddIntervals failed for %s (code %d)\n", chromsUse[0], response);
+                                    goto error;
+                                }
                             }
                             else if(printL>MAX_LINE_PRINT){
                                 //We can continue appending similarly formatted entries
                                 //N.B. you can't append a different chromosome (those always go into different
-                                if(bmAppendIntervals(fp, starts+1, pends+1, values+1, coverages+1, strands+1, contexts+1, entryid, printL-1)) goto error;
+                                if(bmAppendIntervals(fp, starts+1, pends+1, values+1, coverages+1, strands+1, contexts+1, entryid, printL-1)) {
+                                    fprintf(stderr, "bmAppendIntervals failed while processing %s\n", chromsUse[0]);
+                                    goto error;
+                                }
                                 printL = 0;
                             }
                             chrprinHdr = 1;
@@ -1190,12 +1217,18 @@ void print_meth_tofile(int genome_id, ARGS* args){
                             if(chrprinHdr_gch==0){
                                 int response = bmAddIntervals(fp_gch, chromsUse_gch, starts_gch, pends_gch, values_gch, coverages_gch, strands_gch, contexts_gch,
                                 entryid_gch, 1);
-                                if(response) goto error;
+                                if(response) {
+                                    fprintf(stderr, "bmAddIntervals failed for %s (code %d)\n", chromsUse_gch[0], response);
+                                    goto error;
+                                }
                             }
                             else if(printL_gch>MAX_LINE_PRINT){
                                 //We can continue appending similarly formatted entries
                                 //N.B. you can't append a different chromosome (those always go into different
-                                if(bmAppendIntervals(fp_gch, starts_gch+1, pends_gch+1, values_gch+1, coverages_gch+1, strands_gch+1, contexts_gch+1, entryid_gch, printL_gch-1)) goto error;
+                                if(bmAppendIntervals(fp_gch, starts_gch+1, pends_gch+1, values_gch+1, coverages_gch+1, strands_gch+1, contexts_gch+1, entryid_gch, printL_gch-1)) {
+                                    fprintf(stderr, "bmAppendIntervals failed while processing %s GCH output\n", chromsUse_gch[0]);
+                                    goto error;
+                                }
                                 printL_gch = 0;
                             }
                             chrprinHdr_gch = 1;
@@ -1342,18 +1375,24 @@ void print_meth_tofile(int genome_id, ARGS* args){
 					    }else{ // if(strcmp(context.c_str(), "CHH") == 0){
 					    	contexts[printL] = 3;
 					    }
-					    printL++;
-					    if(chrprinHdr==0){
-					    	int response = bmAddIntervals(fp, chromsUse, starts, pends, values, coverages, strands, contexts, 
-		                    entryid, 1);
-        		            if(response) goto error;
-					    }
-					    else if(printL>MAX_LINE_PRINT){
-					    	//We can continue appending similarly formatted entries
-					    	//N.B. you can't append a different chromosome (those always go into different
-					    	if(bmAppendIntervals(fp, starts+1, pends+1, values+1, coverages+1, strands+1, contexts+1, entryid, printL-1)) goto error;
-					    	printL = 0;
-					    }
+                                            printL++;
+                                            if(chrprinHdr==0){
+                                                int response = bmAddIntervals(fp, chromsUse, starts, pends, values, coverages, strands, contexts,
+                                    entryid, 1);
+                                    if(response) {
+                                        fprintf(stderr, "bmAddIntervals failed for %s (code %d)\n", chromsUse[0], response);
+                                        goto error;
+                                    }
+                                            }
+                                            else if(printL>MAX_LINE_PRINT){
+                                                //We can continue appending similarly formatted entries
+                                                //N.B. you can't append a different chromosome (those always go into different
+                                                if(bmAppendIntervals(fp, starts+1, pends+1, values+1, coverages+1, strands+1, contexts+1, entryid, printL-1)) {
+                                                    fprintf(stderr, "bmAppendIntervals failed while processing %s\n", chromsUse[0]);
+                                                    goto error;
+                                                }
+                                                printL = 0;
+                                            }
 					    chrprinHdr = 1;
                         if(printtxt == 1){
                             if(revGA>0) fprintf(METHOUTFILE,"%s\t%d\t-\t%s\t%d\t%d\t%f\t%0.001f\t%d\t%d\t%s\t%s\n",args->Genome_Offsets[i].Genome,l+1,context.c_str(),C_count,(C_count+T_count),NegMethratio,float(C_count+T_count)*revGA,rev_G,(rev_G+rev_A),category.c_str(),Fcontext);
@@ -1376,12 +1415,18 @@ void print_meth_tofile(int genome_id, ARGS* args){
                             if(chrprinHdr==0){
                                 int response = bmAddIntervals(fp, chromsUse, starts, pends, values, coverages, strands, contexts,
                                 entryid, 1);
-                                if(response) goto error;
+                                if(response) {
+                                    fprintf(stderr, "bmAddIntervals failed for %s (code %d)\n", chromsUse[0], response);
+                                    goto error;
+                                }
                             }
                             else if(printL>MAX_LINE_PRINT){
                                 //We can continue appending similarly formatted entries
                                 //N.B. you can't append a different chromosome (those always go into different
-                                if(bmAppendIntervals(fp, starts+1, pends+1, values+1, coverages+1, strands+1, contexts+1, entryid, printL-1)) goto error;
+                                if(bmAppendIntervals(fp, starts+1, pends+1, values+1, coverages+1, strands+1, contexts+1, entryid, printL-1)) {
+                                    fprintf(stderr, "bmAppendIntervals failed while processing %s\n", chromsUse[0]);
+                                    goto error;
+                                }
                                 printL = 0;
                             }
                             chrprinHdr = 1;
@@ -1397,12 +1442,18 @@ void print_meth_tofile(int genome_id, ARGS* args){
                             if(chrprinHdr_gch==0){
                                 int response = bmAddIntervals(fp_gch, chromsUse_gch, starts_gch, pends_gch, values_gch, coverages_gch, strands_gch, contexts_gch,
                                 entryid_gch, 1);
-                                if(response) goto error;
+                                if(response) {
+                                    fprintf(stderr, "bmAddIntervals failed for %s (code %d)\n", chromsUse_gch[0], response);
+                                    goto error;
+                                }
                             }
                             else if(printL_gch>MAX_LINE_PRINT){
                                 //We can continue appending similarly formatted entries
                                 //N.B. you can't append a different chromosome (those always go into different
-                                if(bmAppendIntervals(fp_gch, starts_gch+1, pends_gch+1, values_gch+1, coverages_gch+1, strands_gch+1, contexts_gch+1, entryid_gch, printL_gch-1)) goto error;
+                                if(bmAppendIntervals(fp_gch, starts_gch+1, pends_gch+1, values_gch+1, coverages_gch+1, strands_gch+1, contexts_gch+1, entryid_gch, printL_gch-1)) {
+                                    fprintf(stderr, "bmAppendIntervals failed while processing %s GCH output\n", chromsUse_gch[0]);
+                                    goto error;
+                                }
                                 printL_gch = 0;
                             }
                             chrprinHdr_gch = 1;
@@ -1419,20 +1470,29 @@ void print_meth_tofile(int genome_id, ARGS* args){
 		}
 		//end print
         if(tech=="BS-Seq") {
-		    if(printL > 1) {
+                    if(printL > 1) {
                 fprintf(stderr, "[DM::calmeth] print %d %d %d\n", starts[printL-1], pends[printL-1], printL-1);
-                if(bmAppendIntervals(fp, starts+1, pends+1, values+1, coverages+1, strands+1, contexts+1, entryid, printL-1)) goto error;
-                printL = 0; 
+                if(bmAppendIntervals(fp, starts+1, pends+1, values+1, coverages+1, strands+1, contexts+1, entryid, printL-1)) {
+                    fprintf(stderr, "bmAppendIntervals failed while finishing %s\n", chromsUse[0]);
+                    goto error;
+                }
+                printL = 0;
             }
         }else if(tech=="NoMe") {
             if(printL > 1) {
                 fprintf(stderr, "[DM::calmeth] print %d %d %d\n", starts[printL-1], pends[printL-1], printL-1);
-                if(bmAppendIntervals(fp, starts+1, pends+1, values+1, coverages+1, strands+1, contexts+1, entryid, printL-1)) goto error;
+                if(bmAppendIntervals(fp, starts+1, pends+1, values+1, coverages+1, strands+1, contexts+1, entryid, printL-1)) {
+                    fprintf(stderr, "bmAppendIntervals failed while finishing %s\n", chromsUse[0]);
+                    goto error;
+                }
                 printL = 0;
             }
             if(printL_gch > 1) {
                 fprintf(stderr, "[DM::calmeth] print %d %d %d\n", starts_gch[printL_gch-1], pends_gch[printL_gch-1], printL_gch-1);
-                if(bmAppendIntervals(fp_gch, starts_gch+1, pends_gch+1, values_gch+1, coverages_gch+1, strands_gch+1, contexts_gch+1, entryid_gch, printL_gch-1)) goto error;
+                if(bmAppendIntervals(fp_gch, starts_gch+1, pends_gch+1, values_gch+1, coverages_gch+1, strands_gch+1, contexts_gch+1, entryid_gch, printL_gch-1)) {
+                    fprintf(stderr, "bmAppendIntervals failed while finishing %s GCH output\n", chromsUse_gch[0]);
+                    goto error;
+                }
                 printL_gch = 0;
             }
         }
@@ -1701,9 +1761,11 @@ void *Process_read(void *arg)
     int left_end = -1;
     int readC = 0, readmC = 0, readCG = 0, readmCG = 0, readCHG = 0, readmCHG = 0, readCHH = 0, readmCHH = 0;
 
-  char PerLine[2000];
-  char chrom[100]; int start=0, end=0;
-  char processregion[200];
+    char PerLine[2000];
+    char chrom[100]; int start=0, end=0;
+    char processregion[200];
+    PerLine[0] = '\0';
+    processregion[0] = '\0';
   int psta = 0;
   while(strcmp(((ARGS *)arg)->processChr, "NAN-mm") != 0 || ( ((ARGS *)arg)->bedFILE != NULL && fgets(PerLine,2000,((ARGS *)arg)->bedFILE)!=NULL) || psta == 0){
     psta = 1;
@@ -1953,54 +2015,56 @@ void *Process_read(void *arg)
                               }
                             }
 
-							if (readString[k]=='C' && genome_Char=='C')
-							{
+                                                        if (readString[k]=='C' && genome_Char=='C')
+                                                        {
                                 readC++; readmC++;
-								read_Methyl_Info[r] = 'M';
-								if(Methratio ) ((ARGS *)arg)->Methy_List.plusMethylated[pos+g-1]++;
-                                if(onlyM == 1){
-									if(genome_CharFor1=='G') 
-									{
+                                                                read_Methyl_Info[r] = 'M';
+                                                                if(Methratio ) ((ARGS *)arg)->Methy_List.plusMethylated[pos+g-1]++;
+                                if(genome_CharFor1=='G')
+                                {
                                         readCG++; readmCG++;
-										read_Methyl_Info[r] = 'Z';met_CG++;
-									}//Z methylated C in CpG context
-									else if(genome_CharFor1!='G' && genome_CharFor2!='G')
-									{
+                                                                                if(onlyM == 1) read_Methyl_Info[r] = 'Z';
+                                        met_CG++;
+                                }//Z methylated C in CpG context
+                                else if(genome_CharFor1!='G' && genome_CharFor2!='G')
+                                {
                                         readCHG++; readmCHG++;
-										read_Methyl_Info[r] = 'H';met_CHH++;
-									}//H methylated C in CHH context
-									else if(genome_CharFor1!='G' && genome_CharFor2=='G')
-									{
+                                                                                if(onlyM == 1) read_Methyl_Info[r] = 'H';
+                                        met_CHH++;
+                                }//H methylated C in CHH context
+                                else if(genome_CharFor1!='G' && genome_CharFor2=='G')
+                                {
                                         readCHH++; readmCHH++;
-										read_Methyl_Info[r] = 'X';met_CHG++;
-									}//X methylated C in CHG context
-                                }
-							}
-							else if (readString[k]=='T' && genome_Char=='C')
-							{
+                                                                                if(onlyM == 1) read_Methyl_Info[r] = 'X';
+                                        met_CHG++;
+                                }//X methylated C in CHG context
+                                                        }
+                                                        else if (readString[k]=='T' && genome_Char=='C')
+                                                        {
                                 readC++;
-								read_Methyl_Info[r] = 'U';
-								rawReadBeforeBS[k] = 'C';
-								if(Methratio ) ((ARGS *)arg)->Methy_List.plusUnMethylated[pos+g-1]++;
-                                if(onlyM == 1){
-									if(genome_CharFor1=='G')
-									{
+                                                                read_Methyl_Info[r] = 'U';
+                                                                rawReadBeforeBS[k] = 'C';
+                                                                if(Methratio ) ((ARGS *)arg)->Methy_List.plusUnMethylated[pos+g-1]++;
+                                if(genome_CharFor1=='G')
+                                {
                                         readCG++;
-										read_Methyl_Info[r] = 'z';non_met_CG++;
-									}//z unmethylated C in CpG context
-									else if(genome_CharFor1!='G' && genome_CharFor2!='G') 
-									{
+                                                                                if(onlyM == 1) read_Methyl_Info[r] = 'z';
+                                        non_met_CG++;
+                                }//z unmethylated C in CpG context
+                                else if(genome_CharFor1!='G' && genome_CharFor2!='G')
+                                {
                                         readCHG++;
-										read_Methyl_Info[r] = 'h';non_met_CHH++;
-									}//h unmethylated C in CHH context
-									else if(genome_CharFor1!='G' && genome_CharFor2=='G') 
-									{
+                                                                                if(onlyM == 1) read_Methyl_Info[r] = 'h';
+                                        non_met_CHH++;
+                                }//h unmethylated C in CHH context
+                                else if(genome_CharFor1!='G' && genome_CharFor2=='G')
+                                {
                                         readCHH++;
-										read_Methyl_Info[r] = 'x';non_met_CHG++;
-									}//x unmethylated C in CHG context
-                                }
-								
-							}
+                                                                                if(onlyM == 1) read_Methyl_Info[r] = 'x';
+                                        non_met_CHG++;
+                                }//x unmethylated C in CHG context
+
+                                                        }
 							else if (readString[k] != genome_Char) 
 							{
 								read_Methyl_Info[r] = genome_Char;  //readString[k]; // genome_Char; for hypol
@@ -2033,53 +2097,55 @@ void *Process_read(void *arg)
                               }
                             }
 
-							if (readString[k]=='G' && genome_Char=='G')
-							{
+                                                        if (readString[k]=='G' && genome_Char=='G')
+                                                        {
                                 readC++; readmC++;
-								read_Methyl_Info[r] = 'M';
-								if(Methratio ) ((ARGS *)arg)->Methy_List.NegMethylated[pos+g-1]++;
-                                if(onlyM == 1){
-									if(genome_CharBac1=='C') 
-									{
+                                                                read_Methyl_Info[r] = 'M';
+                                                                if(Methratio ) ((ARGS *)arg)->Methy_List.NegMethylated[pos+g-1]++;
+                                if(genome_CharBac1=='C')
+                                {
                                         readCG++; readmCG++;
-										read_Methyl_Info[r] = 'Z';met_CG++;
-									}
-									else if(genome_CharBac1!='C' && genome_CharBac2!='C') 
-									{
-                                        readCHG++; readmCHG++;
-										read_Methyl_Info[r] = 'H';met_CHH++;
-									}
-									else if(genome_CharBac1!='C' && genome_CharBac2=='C') 
-									{
-                                        readCHH++; readmCHH++;
-										read_Methyl_Info[r] = 'X';met_CHG++;
-									}
-                               }
-							}
-							else if (readString[k]=='A' && genome_Char=='G')
-							{
-                                readC++;
-								read_Methyl_Info[r] = 'U';
-								rawReadBeforeBS[k] = 'G';
-								if(Methratio) ((ARGS *)arg)->Methy_List.NegUnMethylated[pos+g-1]++;
-                                if(onlyM == 1){
-									if(genome_CharBac1=='C') 
-									{
-                                        readCG++;
-										read_Methyl_Info[r] = 'z';non_met_CG++;
-									}
-									else if(genome_CharBac1!='C' && genome_CharBac2!='C') 
-									{
-                                        readCHG++;
-										read_Methyl_Info[r] = 'h';non_met_CHH++;
-									}
-									else if(genome_CharBac1!='C' && genome_CharBac2=='C') 
-									{
-                                        readCHH++;
-										read_Methyl_Info[r] = 'x';non_met_CHG++;
-									}
+                                                                                if(onlyM == 1) read_Methyl_Info[r] = 'Z';
+                                        met_CG++;
                                 }
-							}
+                                else if(genome_CharBac1!='C' && genome_CharBac2!='C')
+                                {
+                                        readCHG++; readmCHG++;
+                                                                                if(onlyM == 1) read_Methyl_Info[r] = 'H';
+                                        met_CHH++;
+                                }
+                                else if(genome_CharBac1!='C' && genome_CharBac2=='C')
+                                {
+                                        readCHH++; readmCHH++;
+                                                                                if(onlyM == 1) read_Methyl_Info[r] = 'X';
+                                        met_CHG++;
+                                }
+                               }
+                                                        else if (readString[k]=='A' && genome_Char=='G')
+                                                        {
+                                readC++;
+                                                                read_Methyl_Info[r] = 'U';
+                                                                rawReadBeforeBS[k] = 'G';
+                                                                if(Methratio) ((ARGS *)arg)->Methy_List.NegUnMethylated[pos+g-1]++;
+                                if(genome_CharBac1=='C')
+                                {
+                                        readCG++;
+                                                                                if(onlyM == 1) read_Methyl_Info[r] = 'z';
+                                        non_met_CG++;
+                                }
+                                else if(genome_CharBac1!='C' && genome_CharBac2!='C')
+                                {
+                                        readCHG++;
+                                                                                if(onlyM == 1) read_Methyl_Info[r] = 'h';
+                                        non_met_CHH++;
+                                }
+                                else if(genome_CharBac1!='C' && genome_CharBac2=='C')
+                                {
+                                        readCHH++;
+                                                                                if(onlyM == 1) read_Methyl_Info[r] = 'x';
+                                        non_met_CHG++;
+                                }
+                                }
 							else if (readString[k] != genome_Char) {
 								
 								read_Methyl_Info[r] = genome_Char;  //readString[k]; //genome_Char;
@@ -2134,7 +2200,7 @@ void *Process_read(void *arg)
             }
 			
             if(countreadC){
-               if(processregion != '\0')
+                if(processregion[0] != '\0')
                  fprintf(stdout ,"%s\t%u\t%s\t%u\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s\n",Dummy,Flag,Chrom,pos,readmCG, readCG,readmCHG, readCHG,readmCHH, readCHH, readmC, readC, processregion);
                else if(strcmp(((ARGS *)arg)->processChr, "NAN-mm") != 0)
                  fprintf(stdout ,"%s\t%u\t%s\t%u\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s\n",Dummy,Flag,Chrom,pos,readmCG, readCG,readmCHG, readCHG,readmCHH, readCHH, readmC, readC, ((ARGS *)arg)->processChr);
@@ -2178,7 +2244,7 @@ void *Process_read(void *arg)
   }
 	free(s2t);
 	fclose(fIS);
-    free(fPH);
+    fclose(fPH);
 }
 
 void Print_Mismatch_Quality(FILE* OUTFILE_MM, int L) {

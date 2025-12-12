@@ -92,6 +92,21 @@ int bmCreateHdr(binaMethFile_t *fp, int32_t maxZooms) {
     if(!hdr) return 2;
 
     hdr->version = 4;
+    /*
+     * fieldCount/definedFieldCount describe the on-disk record layout and
+     * should include optional fields flagged in fp->type (BM_* bitmask).
+     * chrom/start are always present; end/value are included depending on
+     * BM_END; other optional fields follow in fixed order.
+     */
+    hdr->fieldCount = 2; // chrom, start
+    if(fp->type & BM_END) hdr->fieldCount += 1; // end
+    hdr->fieldCount += 1; // value
+    if(fp->type & BM_COVER) hdr->fieldCount += 1;
+    if(fp->type & BM_STRAND) hdr->fieldCount += 1;
+    if(fp->type & BM_CONTEXT) hdr->fieldCount += 1;
+    if(fp->type & BM_ID) hdr->fieldCount += 1;
+    hdr->definedFieldCount = hdr->fieldCount;
+
     if(maxZooms < 0 || maxZooms > 65535) {
         hdr->nLevels = 10;
     } else {
@@ -236,6 +251,10 @@ int bmWriteHdr(binaMethFile_t *bm) {
     if(fwrite(&magic, sizeof(uint32_t), 1, fp) != 1) return 4;
     if(fwrite(&two, sizeof(uint16_t), 1, fp) != 1) return 5;
     if(fwrite(p, sizeof(uint8_t), 58, fp) != 58) return 6;
+
+    // fieldCount and definedFieldCount describe which columns exist
+    if(writeAtPos(&(bm->hdr->fieldCount), sizeof(uint16_t), 1, 0x20, fp)) return 7;
+    if(writeAtPos(&(bm->hdr->definedFieldCount), sizeof(uint16_t), 1, 0x22, fp)) return 7;
 
     //Empty zoom headers
     if(bm->hdr->nLevels) {
@@ -426,7 +445,18 @@ int bmAddIntervals(binaMethFile_t *fp, char **chrom, uint32_t *start, uint32_t *
     if(wb->ltype != 1) if(flushBuffer(fp)) return 3;
     if(DEBUG>1) fprintf(stderr, "fp->hdr->bufSize %d %d\n", wb->l, fp->hdr->bufSize);
 
-    if(wb->l+36 > fp->hdr->bufSize) if(flushBuffer(fp)) return 4;
+    const char *id0 = (entryid && entryid[0]) ? entryid[0] : "";
+    size_t slen = (fp->type & BM_ID) ? strlen(id0) + 1 : 0;
+    size_t needed = 4; // start
+    if(fp->type & BM_END) needed += 4;
+    needed += 4; // value
+    if(fp->type & BM_COVER) needed += 2;
+    if(fp->type & BM_STRAND) needed += 1;
+    if(fp->type & BM_CONTEXT) needed += 1;
+    needed += slen;
+
+    if(needed > fp->hdr->bufSize) return 4;
+    if(wb->l + needed > fp->hdr->bufSize) if(flushBuffer(fp)) return 4;
     lastChrom = chrom[0];
     tid = bmGetTid(fp, chrom[0]);
     if(tid == (uint32_t) -1) return 5;
@@ -446,7 +476,7 @@ int bmAddIntervals(binaMethFile_t *fp, char **chrom, uint32_t *start, uint32_t *
     }
     if(!memcpy(wb->p+wb->l, start, sizeof(uint32_t))) return 7;
     if(DEBUG>1) fprintf(stderr, "type %d\n", fp->type);
-    int slen =0, elen = 4;
+    size_t elen = 4;
     if(fp->type & BM_END){
         if(!memcpy(wb->p+wb->l+elen, end, sizeof(uint32_t))) return 8;
         elen += 4;
@@ -466,9 +496,8 @@ int bmAddIntervals(binaMethFile_t *fp, char **chrom, uint32_t *start, uint32_t *
         elen += 1;
     }
     if(fp->type & BM_ID){
-        slen = strlen(entryid[0]) + 1;
-        if(!memcpy(wb->p+wb->l+elen, entryid[0], sizeof(char*))) return 9;
-        wb->l += slen;
+        if(!memcpy(wb->p+wb->l+elen, id0, slen)) return 9;
+        elen += slen;
     }
     wb->l += elen;
     wb->nItems += 1;
@@ -634,10 +663,21 @@ int bmAppendIntervals(binaMethFile_t *fp, uint32_t *start, uint32_t *end, float 
         fprintf(stderr, "wb->ltype %d\n", wb->ltype);
         return 3;
     }
-    int slen =0, elen = 0;
+    size_t slen =0; size_t elen = 0;
 
     for(i=0; i<n; i++) {
-        if(wb->l+50 > fp->hdr->bufSize) { //12, but now maybe have ID
+        const char *id = (entryid && entryid[i]) ? entryid[i] : "";
+        slen = (fp->type & BM_ID) ? strlen(id) + 1 : 0;
+        size_t needed = 4; //start
+        if(fp->type & BM_END) needed += 4;
+        needed += 4; //value
+        if(fp->type & BM_COVER) needed += 2;
+        if(fp->type & BM_STRAND) needed += 1;
+        if(fp->type & BM_CONTEXT) needed += 1;
+        needed += slen;
+
+        if(needed > fp->hdr->bufSize) return 4;
+        if(wb->l+needed > fp->hdr->bufSize) { //12, but now maybe have ID
             if(DEBUG>1) fprintf(stderr, "Big buffer!!! %d %d %d %d\n", wb->l, fp->hdr->bufSize, i, end[i-1]);
             if(i>0) { //otherwise it's already set
                 wb->end = end[i-1];
@@ -667,9 +707,8 @@ int bmAppendIntervals(binaMethFile_t *fp, uint32_t *start, uint32_t *end, float 
             elen += 1;
         }
         if(fp->type & BM_ID){
-            slen = strlen(entryid[i]) + 1;
-            if(!memcpy(wb->p+wb->l+elen, entryid[i], sizeof(char*))) return 9;
-            wb->l += slen;
+            if(!memcpy(wb->p+wb->l+elen, id, slen)) return 9;
+            elen += slen;
         }
         wb->l += elen;
         wb->nItems += 1;

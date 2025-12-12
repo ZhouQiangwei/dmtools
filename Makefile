@@ -7,11 +7,24 @@ SOURCES = $(wildcard *.cpp)
 OBJECTS = $(patsubst %.cpp,%.o,$(SOURCES))
 PROGS = dmtools bam2dm dmDMR dmalign bam2motif
 
-CXX = g++
-CC = gcc
+CXX ?= g++
+CC ?= gcc
 AR = ar
 RANLIB = ranlib
-CFLAGS = -g -w -O3 -Wsign-compare
+CFLAGS ?= -g -w -O3 -Wsign-compare
+# Ensure C++ builds inherit the same baseline optimisation/warning set.
+CXXFLAGS ?= $(CFLAGS)
+# Detect an appropriate C++ standard flag that is available on a wide range of
+# GCC releases (4.x through 8.x and newer). GCC 5+ understands -std=gnu++11,
+# while very old releases only accept the earlier -std=gnu++0x spelling. We
+# compute the compiler major version and pick the most suitable flag.
+CXX_VERSION_MAJOR := $(shell $(CXX) -dumpversion | cut -d. -f1)
+ifeq ($(shell expr $(CXX_VERSION_MAJOR) \>= 5),1)
+    CXXSTD ?= -std=gnu++11
+else
+    CXXSTD ?= -std=gnu++0x
+endif
+CXXFLAGS += $(CXXSTD)
 #-fopenmp
 #-Wall
 ## changed: = instaed of ?= above 4 lines
@@ -24,7 +37,11 @@ INCLUDES =
 
 # Create a simple test-program to check if gcc can compile with curl
 #tmpfile:=$(shell mktemp --suffix=.c)
-tmpfile:=$(shell mktemp -t temphaoqiaoXXXXX.c)
+# mktemp with -t is not portable across all platforms; provide a fallback to a
+# predictable temporary directory when the first form fails. The fallback is
+# only evaluated when the initial invocation fails to avoid emitting multiple
+# paths.
+tmpfile:=$(shell mktemp -t temphaoqiaoXXXXX.c 2>/dev/null || (TMPDIR=$${TMPDIR:-/tmp}; mktemp $$TMPDIR/temphaoqiaoXXXXX.c))
 $(file >$(tmpfile),#include <curl/curl.h>)
 $(file >>$(tmpfile),int main() { return 0; })
 #HAVE_CURL:=$(shell $(CC) $(CFLAGS) $(EXTRA_CFLAGS_PIC) $(LIBS) -lcurl $(tmpfile) -o /dev/null >/dev/null 2>&1 && echo "YES")
@@ -106,25 +123,28 @@ test/testWrite: libBinaMeth.a
 	$(CC) -o $@ -I. $(CFLAGS) test/testWrite.c libBinaMeth.a $(LIBS)
 
 dmtools: libBinaMeth.so
-	$(CC) -o $@ -I. -L. $(CFLAGS) dmtools.c -lBinaMeth $(LIBS) -Wl,-rpath $(RPATH) -lpthread
+	$(CC) -o $@ -I. -L. $(CFLAGS) dmtools.c dmSingleCell.c -lBinaMeth $(LIBS) -Wl,-rpath $(RPATH) -lpthread
 
 #bam2dm: libBinaMeth.so
 #	$(CXX) -o $@ -I. -L. $(CFLAGS) bam2dm.cpp -lBinaMeth -Wl,-rpath $(RPATH) htslib/libhts.a -llzma -lbz2 -lz
 
 dmDMR:
-	$(CXX) $(CFLAGS) -c -o regression.o regression.cpp -lgsl -lgslcblas -lm -lz
-	$(CXX) $(CFLAGS) -o dmDMR dmDMR.cpp regression.o -I. -L. -lBinaMeth -Wl,-rpath $(RPATH) -lgsl -lgslcblas -lm -lz
+	$(CXX) $(CXXFLAGS) -c -o regression.o regression.cpp -lgsl -lgslcblas -lm -lz
+	$(CXX) $(CXXFLAGS) -o dmDMR dmDMR.cpp regression.o -I. -L. -lBinaMeth -Wl,-rpath $(RPATH) -lgsl -lgslcblas -lm -lz
 
 dmalign:
-	$(CXX) $(CFLAGS) -o genome2cg genome2cg.cpp
-	$(CXX) $(CFLAGS) -o genomebinLen genomebinLen.cpp
-	$(CXX) $(CFLAGS) dmalign.cpp -o dmalign -lz
+	$(CXX) $(CXXFLAGS) -o genome2cg genome2cg.cpp
+	$(CXX) $(CXXFLAGS) -o genomebinLen genomebinLen.cpp
+	$(CXX) $(CXXFLAGS) dmalign.cpp -o dmalign -lz
 
-bam2dm:
-	$(CXX) -std=c++11 $(CFLAGS) bam2dm.cpp -o bam2dm -m64 -I. -L. -lz -lBinaMeth -Wl,-rpath $(RPATH) $(LDFLAGS_SUB)
+htslib/libhts.a:
+	$(MAKE) -C htslib libhts.a
 
-bam2motif:
-	$(CXX) -std=c++11 $(CFLAGS) bam2motif.cpp -o bam2motif -m64 -I. -L. -lz -lBinaMeth -Wl,-rpath $(RPATH) $(LDFLAGS_SUB)
+bam2dm: libBinaMeth.a htslib/libhts.a
+	$(CXX) $(CXXFLAGS) -no-pie bam2dm.cpp -o bam2dm -m64 -I. libBinaMeth.a -Wl,-rpath $(RPATH) htslib/libhts.a $(LDFLAGS_SUB)
+
+bam2motif: libBinaMeth.a htslib/libhts.a
+	$(CXX) $(CXXFLAGS) -no-pie bam2motif.cpp -o bam2motif -m64 -I. libBinaMeth.a -Wl,-rpath $(RPATH) htslib/libhts.a $(LDFLAGS_SUB)
 
 test/exampleWrite: libBinaMeth.so
 	$(CC) -o $@ -I. -L. $(CFLAGS) test/exampleWrite.c -lBinaMeth $(LIBS) -Wl,-rpath .

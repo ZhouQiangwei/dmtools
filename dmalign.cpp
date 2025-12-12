@@ -469,21 +469,19 @@ void processalign(){
 
 void executeCMD(const char *cmd, string outputdir, string output_prefix)
 {
-    char ps[1024]={0};
     FILE *ptr;
-    strcpy(ps, cmd);
     fprintf(stderr, "%s\n", cmd);
     if(output_prefix != "None" && output_prefix != ""){
-	    string filelogname = outputdir + output_prefix + ".run.log";
-	    FILE* flog = File_Open(filelogname.c_str(), "aw");
-	    fprintf(flog, "%s\n", cmd);
-	    fclose(flog);
-	}
-    ptr=popen(ps, "w");
+            string filelogname = outputdir + output_prefix + ".run.log";
+            FILE* flog = File_Open(filelogname.c_str(), "a");
+            fprintf(flog, "%s\n", cmd);
+            fclose(flog);
+        }
+    ptr=popen(cmd, "w");
 
     if(ptr==NULL)
     {
-        fprintf(stderr, "\nRun program %s error, you can run this step alone.\n", ps);
+        fprintf(stderr, "\nRun program %s error, you can run this step alone.\n", cmd);
         exit(0);
     }
     pclose(ptr);
@@ -492,16 +490,14 @@ void executeCMD(const char *cmd, string outputdir, string output_prefix)
 
 void executeCMDdir(const char *cmd, string outputdir, string output_prefix)
 {
-    char ps[1024]={0};
     FILE *ptr;
-    strcpy(ps, cmd);
     fprintf(stderr, "%s\n", cmd);
 
-    ptr=popen(ps, "w");
+    ptr=popen(cmd, "w");
 
     if(ptr==NULL)
     {
-        fprintf(stderr, "\nRun program %s error, you can run this step alone.\n", ps);
+        fprintf(stderr, "\nRun program %s error, you can run this step alone.\n", cmd);
         exit(0);
     }
     pclose(ptr);
@@ -812,35 +808,48 @@ bool printbigwig = false;
 string mode = "";
 int main(int argc, char* argv[])
 {
-	string outputdir="./";
-	bool pairedend=false;
-	string output_prefix = "None";
+        string outputdir="./";
+        bool pairedend=false;
+        string output_prefix = "None";
 	string input_prefix = "";
 	string input_prefix1 = "";
 	string input_prefix2 = "";
 	string mkpath;
 	int NTHREAD=4;
-	int allthreads =24;
-	bool deletelog=false;
+        int allthreads =24;
+        bool deletelog=false;
     string genomeprefix="";
 
-	for(int i=2;i<argc;i++)
+    auto require_next_arg = [&](int idx, const char *flag) {
+        if (idx + 1 >= argc) {
+            fprintf(stderr, "Missing value after %s\n", flag);
+            usage();
+            exit(1);
+        }
+    };
+
+        for(int i=2;i<argc;i++)
     {
         if(!strcmp(argv[i], "-i")){
-        	input_prefix= argv[++i];
+                require_next_arg(i, "-i");
+                input_prefix= argv[++i];
         }else if(!strcmp(argv[i], "-1")){
-        	input_prefix1= argv[++i];
+                require_next_arg(i, "-1");
+                input_prefix1= argv[++i];
         }else if(!strcmp(argv[i], "-2")){
-        	input_prefix2= argv[++i];
+                require_next_arg(i, "-2");
+                input_prefix2= argv[++i];
             pairedend=true;
         }else if(!strcmp(argv[i], "-o")){
+            require_next_arg(i, "-o");
             output_prefix= argv[++i];
         }else if(!strcmp(argv[i], "--taps")){
             taps=1;
         }else if(!strcmp(argv[i], "-O")){
+            require_next_arg(i, "-O");
             outputdir= argv[++i];
             if(outputdir[outputdir.length()-1] != '/')
-            	outputdir+="/";
+                outputdir+="/";
             string cmd = "mkdir -p " + outputdir;
             if(output_prefix != "None" && output_prefix != ""){
             	string rmfile = outputdir + output_prefix + ".run.log";
@@ -851,16 +860,29 @@ int main(int argc, char* argv[])
                 executeCMDdir(cmd.c_str(), outputdir, output_prefix);
         }
         else if(!strcmp(argv[i], "-g"))
-        	genome_index= argv[++i];
+                {
+                    require_next_arg(i, "-g");
+                genome_index= argv[++i];
+                }
         else if(!strcmp(argv[i], "--gp"))
-        	genomeprefix= argv[++i];
+                {
+                    require_next_arg(i, "--gp");
+                genomeprefix= argv[++i];
+                }
         else if(!strcmp(argv[i], "-a"))
-        	ALLMAP= true;
+                ALLMAP= true;
         else if(!strcmp(argv[i], "-of"))
+            {
+                require_next_arg(i, "-of");
             outformat = argv[++i];
+            }
         else if(!strcmp(argv[i], "-p"))
+            {
+                require_next_arg(i, "-p");
             threads = atoi(argv[++i]);
+            }
         else if(!strcmp(argv[i], "--fastp")){
+            require_next_arg(i, "--fastp");
             fastp = argv[++i];
             cleanreads=false;
         }else if(!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help") || !strcmp(argv[i], "-help")){
@@ -889,8 +911,12 @@ int main(int argc, char* argv[])
     //fprintf(stderr, "%s %s\n", abspath.c_str(), programname.c_str());
 
     if(mode == "align" && aligner == "bwame"){
-        if(argc < 4){ 
+        if(argc < 4){
             fprintf(stderr, "%s\n", AlignHelp.c_str());
+        }
+        if(genome_index == ""){
+            fprintf(stderr, "Unvalid genome\n");
+            exit(1);
         }
     }
 

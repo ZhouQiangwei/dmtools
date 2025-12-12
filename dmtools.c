@@ -77,6 +77,9 @@ int bm_merge_all_mul(char *inbmFs, char *outfile, uint8_t pstrand, int m_method,
 int bm_merge_mul(binaMethFile_t **ifp1s, int sizeifp, int m_method, char *chrom, int start, int end, uint8_t strand,
     char **chromsUse, uint32_t *starts, uint32_t *ends, float *values, uint16_t *coverages, uint8_t *strands, uint8_t *contexts, char **entryid, uint16_t *coverC, FILE *output_txt, char *outformat);
 void *multithread_cmd(void *arg);
+int dm_sc_qc_main(int argc, char **argv);
+int dm_sc_matrix_main(int argc, char **argv);
+int dm_sc_aggregate_main(int argc, char **argv);
 
 struct ARGS{
     char* runCMD;
@@ -100,8 +103,8 @@ struct Threading
 #define MAX_LINE_PRINT 1000100
 #define MAX_BUFF_PRINT 20000000
 const char* Help_String_main="Command Format :  dmtools <mode> [opnions]\n"
-		"\nUsage:\n"
-        "\t  [mode]         index align bam2dm mr2dm view ebsrate viewheader overlap regionstats bodystats profile chromstats\n\n"
+                "\nUsage:\n"
+        "\t  [mode]         index align bam2dm mr2dm view ebsrate viewheader overlap regionstats bodystats profile chromstats sc-qc sc-matrix sc-aggregate\n\n"
         "\t  index          build index for genome\n"
         "\t  align          alignment fastq\n"
         "\t  bam2dm         calculate DNA methylation (DM format) with BAM file\n"
@@ -119,7 +122,52 @@ const char* Help_String_main="Command Format :  dmtools <mode> [opnions]\n"
         "\t  addzm          add or change zoom levels for dm format, need for browser visulization\n"
         "\t  stats          coverage and methylation level distribution of data\n"
         "\t  dmDMR          differential DNA methylation analysis\n"
-        "\t  bw             convert dm file to bigwig file\n";
+        "\t  bw             convert dm file to bigwig file\n"
+        "\t  sc-qc          per-cell QC summary for single-cell dm files (ID as cell_id)\n"
+        "\t  sc-matrix      build a cell x region methylation matrix from single-cell dm files (ID as cell_id)\n"
+        "\t  sc-aggregate   aggregate single-cell methylation into group-level profiles (ID as cell_id)\n";
+
+const char* Help_String_scqc="Command Format :  dmtools sc-qc [options] -i <dm> -o <out.tsv>\n"
+        "\nUsage: dmtools sc-qc -i input.dm -o sc_qc.tsv [--context CG] [--min-coverage 1]\n"
+        "\t [sc-qc] mode paramaters, required\n"
+        "\t-i|--input           input DM file with ID (repeatable)\n"
+        "\t-o|--output          output TSV path\n"
+        "\t [sc-qc] mode paramaters, options\n"
+        "\t--context            context filter: C, CG, CHG, CHH (default: no filter)\n"
+        "\t--min-coverage       minimum coverage per site (default: 1)\n"
+        "\t-h|--help";
+
+const char* Help_String_scmatrix="Command Format :  dmtools sc-matrix [options] -i <dm> -o <out prefix> --bed <regions.bed> | --binsize <N>\n"
+        "\nUsage: dmtools sc-matrix -i input.dm -o matrix_prefix --bed regions.bed [--context CG] [--min-coverage 1] [--sparse|--dense]\n"
+        "\t [sc-matrix] mode parameters, required\n"
+        "\t-i|--input           input DM file with ID (repeatable)\n"
+        "\t-o|--output          output prefix for matrix files\n"
+        "\t    --bed            BED file of regions (chrom start end [name])\n"
+        "\t    --binsize        fixed window size for genome-wide bins\n"
+        "\t [sc-matrix] mode parameters, options\n"
+        "\t--context            context filter: C, CG, CHG, CHH (default: no filter)\n"
+        "\t--min-coverage       minimum coverage per site (default: 1)\n"
+        "\t--value              value to report: mean-meth (default) or coverage\n"
+        "\t--agg                aggregation for coverage: mean (default) or sum\n"
+        "\t--sparse             write sparse Matrix Market output (default)\n"
+        "\t--dense              write dense TSV matrix\n"
+        "\t-h|--help";
+
+const char* Help_String_scaggregate="Command Format :  dmtools sc-aggregate [options] -i <dm> --groups <mapping.tsv> -o <out prefix> --bed <regions.bed> | --binsize <N>\n"
+        "\nUsage: dmtools sc-aggregate -i input.dm -o agg_prefix --groups cell_to_group.tsv --bed regions.bed [--context CG] [--min-coverage 1] [--dense]\n"
+        "\t [sc-aggregate] mode parameters, required\n"
+        "\t-i|--input           input DM file with ID (repeatable)\n"
+        "\t-o|--output          output prefix for aggregation files\n"
+        "\t    --groups         TSV mapping of cell_id to group label\n"
+        "\t    --bed            BED file of regions (chrom start end [name])\n"
+        "\t    --binsize        fixed window size for genome-wide bins\n"
+        "\t [sc-aggregate] mode parameters, options\n"
+        "\t--context            context filter: C, CG, CHG, CHH (default: no filter)\n"
+        "\t--min-coverage       minimum coverage per site (default: 1)\n"
+        "\t--value              value to report: mean-meth (default) or coverage\n"
+        "\t--agg                aggregation for coverage: mean (default) or sum\n"
+        "\t--dense              write dense TSV matrix output in addition to summary\n"
+        "\t-h|--help";
 
 const char* Help_String_bw="Command Format :  dmtools bw [options] -i <dm> -o <out bigwig file>\n"
         "\nUsage: dmtools bw -i input.dm -o meth.bw\n"
@@ -202,12 +250,13 @@ const char* Help_String_mr2dm="Command Format :  dmtools mr2dm [opnions] -g geno
         "\t--CF                  coverage filter, >=[int], default 4.\n"
         "\t--sort Y/N            make chromsize file and meth file in same coordinate, default Y\n"
         "\t--zl                  The maximum number of zoom levels. [0-10]\n"
-        "\t-f                    file format. methratio, bedmethyl, bismark or bedsimple [default methratio]\n"
+        "\t-f                    file format. methratio, bedmethyl, bismark, bedsimple, simpleme or modkit_pileup [default methratio]\n"
         "\t  methratio           chrom start strand context meth_reads cover\n"
         "\t  bedmethyl           chrom start end name * strand * * * coverage meth_reads\n"
         "\t  bismark             chrom start strand coverC coverT context\n"
         "\t  bedsimple           chrom start end id strand context meth_reads coverage\n"
         "\t  simpleme            chrom start value coverage strand context\n"
+        "\t  modkit_pileup       chrom start end name score strand thickStart thickEnd itemRgb N_valid_cov fraction_modified N_mod ...\n"
         "\t--pcontext            CG/CHG/CHH/C, needed when bedmethyl format, default C\n"
 //        "\t--context             [0/1/2/3] context for show, 0 represent 'C/ALL' context, 1 'CG' context, 2 'CHG' context, 3 'CHH' context.\n"
         "\t--fcontext            CG/CHG/CHH/ALL, only convert provide context in methratio file or bedsimple, default ALL\n"
@@ -430,6 +479,14 @@ int printbed = 0;
 int printwarning = 0;
 
 int main(int argc, char *argv[]) {
+    if(argc>1 && strcmp(argv[1], "sc-qc") == 0){
+        return dm_sc_qc_main(argc-1, argv+1);
+    } else if(argc>1 && strcmp(argv[1], "sc-matrix") == 0){
+        return dm_sc_matrix_main(argc-1, argv+1);
+    } else if(argc>1 && strcmp(argv[1], "sc-aggregate") == 0){
+        return dm_sc_aggregate_main(argc-1, argv+1);
+    }
+
     binaMethFile_t *fp = NULL;
     char *filterchrom = NULL;
     char **chroms = (char**)malloc(sizeof(char*)*MAX_LINE_PRINT);
@@ -445,6 +502,7 @@ int main(int argc, char *argv[]) {
     uint8_t *contexts = malloc(sizeof(uint8_t) * MAX_LINE_PRINT);
 
     char* chromlenf = malloc(1000*sizeof(char));
+    chromlenf[0] = '\0';
     int chromlenf_yes = 0;
     char* outformat = malloc(100); strcpy(outformat, "txt");
     Fcover = malloc(sizeof(int)*16);
@@ -469,6 +527,7 @@ int main(int argc, char *argv[]) {
 
     char *mrformat = malloc(100);
     strcpy(mrformat, "methratio");
+    const char *modkit_mod_code = "m"; // default modification code to keep for modkit pileup
     char *pcontext = malloc(10);
     strcpy(pcontext, "C");
     char *filtercontext = malloc(10);
@@ -524,11 +583,17 @@ int main(int argc, char *argv[]) {
            fprintf(stderr, "%s\n", Help_String_align);
         }else if(strcmp(mode, "index") == 0){
            fprintf(stderr, "%s\n", Help_String_index);
-        }else if(strcmp(mode, "dmDMR") == 0){
-           fprintf(stderr, "%s\n", Help_String_dmDMR);
-        }else if(strcmp(mode, "addzm") == 0){
-           fprintf(stderr, "%s\n", Help_String_addzm); 
-        }else{
+         }else if(strcmp(mode, "dmDMR") == 0){
+            fprintf(stderr, "%s\n", Help_String_dmDMR);
+         }else if(strcmp(mode, "sc-qc") == 0){
+            fprintf(stderr, "%s\n", Help_String_scqc);
+        }else if(strcmp(mode, "sc-matrix") == 0){
+           fprintf(stderr, "%s\n", Help_String_scmatrix);
+        }else if(strcmp(mode, "sc-aggregate") == 0){
+           fprintf(stderr, "%s\n", Help_String_scaggregate);
+         }else if(strcmp(mode, "addzm") == 0){
+             fprintf(stderr, "%s\n", Help_String_addzm);
+         }else{
             fprintf(stderr, "Please define correct mode!!!\n");
             fprintf(stderr, "%s\n", Help_String_main);
         }
@@ -746,7 +811,7 @@ int main(int argc, char *argv[]) {
         char processname[1024];
         char abspathtmp[1024];
         get_executable_path(abspathtmp, processname, sizeof(abspathtmp));
-        char cmd[3000]; char seqfq[500]; char seqfq1[500]; char seqfq2[500]; char pthread[10];  strcpy(pthread, "6"); char fastp[100];
+        char cmd[3000]; char seqfq[500] = {0}; char seqfq1[500] = {0}; char seqfq2[500] = {0}; char pthread[10];  strcpy(pthread, "6"); char fastp[100] = {0};
         int singleE=0,pairedE=0;
         for(i=2; i< argc; i++){
             if(strcmp(argv[i], "-g") == 0){
@@ -791,6 +856,16 @@ int main(int argc, char *argv[]) {
             }
         }
 
+        if(!chromlenf_yes){
+            fprintf(stderr, "unvalid genome file\n");
+            exit(0);
+        }
+
+        if(!outfile){
+            fprintf(stderr, "please provide output alignment file with -o/--out\n");
+            exit(0);
+        }
+
         if(taps==1) {
             if(!fileExists(chromlenf)){
                 fprintf(stderr, "\nUnvalid chromosome file %s, please run 'dmtools index -g %s --taps' first\n", chromlenf);
@@ -821,10 +896,6 @@ int main(int argc, char *argv[]) {
             strcat(cmd, seqfq2);
         }else{
             fprintf(stderr, "unvalid input fastq ..");
-            exit(0);
-        }
-        if(!chromlenf_yes) {
-            fprintf(stderr, "unvalid genome file");
             exit(0);
         }
         strcat(cmd, " | bwa mem -t ");
@@ -1021,7 +1092,7 @@ int main(int argc, char *argv[]) {
             while(fgets(PerLine,2000,methF)!=0){
                 if(PerLine[0] == '#') continue; // remove header #
                 //fprintf(stderr, "%s\n", PerLine);
-                if(strcmp(mrformat, "methratio") == 0 || strcmp(mrformat, "bedmethyl") == 0 || strcmp(mrformat, "bedsimple") == 0 || strcmp(mrformat, "bismark") == 0 || strcmp(mrformat, "simpleme") == 0){
+                if(strcmp(mrformat, "methratio") == 0 || strcmp(mrformat, "bedmethyl") == 0 || strcmp(mrformat, "bedsimple") == 0 || strcmp(mrformat, "bismark") == 0 || strcmp(mrformat, "simpleme") == 0 || strcmp(mrformat, "modkit_pileup") == 0){
                     sscanf(PerLine, "%s", chrom);
                 }else{
                     fprintf(stderr, "Unexpected mr file format!!!\n");
@@ -1137,6 +1208,22 @@ int main(int argc, char *argv[]) {
                 //chrom start value coverage strand context
                 //chr1  10471   0.833333    6   +   CG
                 int result = sscanf(PerLine, "%s\t%u\t%f\t%u\t%s\t%s", chrom, &start, &value, &coverage, strand, context);
+            }else if(strcmp(mrformat, "modkit_pileup") == 0){
+                //chrom start end name score strand thickStart thickEnd itemRgb N_valid_cov fraction_modified N_mod N_canonical N_other_mod N_delete N_fail N_diff N_nocall
+                unsigned int start0 = 0, end0 = 0;
+                char namebuf[100];
+                int parsed = sscanf(PerLine, "%s\t%u\t%u\t%99s\t%*s\t%s\t%*s\t%*s\t%*s\t%u\t%*f\t%u", chrom, &start0, &end0, namebuf, strand, &coverage, &coverC);
+                if(parsed != 7) continue;
+                char *mod_code = strtok(namebuf, ",");
+                char *motif_part = strtok(NULL, ",");
+                if(mod_code == NULL || motif_part == NULL) continue;
+                if(strcmp(mod_code, modkit_mod_code) != 0) continue;
+                strcpy(context, motif_part);
+                start = start0 + 1;
+                end = end0 + 1;
+                if(strand[0] == '.') strcpy(strand, "+");
+                if(coverage == 0) continue;
+                value = ((double) coverC/ coverage);
             }else{
                 fprintf(stderr, "Unexpected mr file format!!!\n");
                 exit(0);
@@ -3860,8 +3947,9 @@ int main_view_all(binaMethFile_t *ifp, FILE* outfileF, char *outformat, binaMeth
 //    fprintf(stderr, "\nWWW0W\n");
 
     free(region);
-    for(i =0; i < 1; i++){ //usingLine
-        free(chromsUse[i]); free(entryid[i]);
+    for(i =0; i < usingLine; i++){
+        if(chromsUse[i]) free(chromsUse[i]);
+        if(entryid[i]) free(entryid[i]);
     }
     free(chromsUse); free(entryid); free(starts);
     free(ends); free(values); free(coverages); free(strands); free(contexts);
@@ -4148,9 +4236,9 @@ int main_view(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outformat
             usingLine = write_dm(ifp, regions[i], outfileF, outformat, ofp, chromsUse, starts, ends, values, coverages, strands, contexts, entryid, newchr);
         }
         //free mem
-        for(i =0; i < 1; i++){ //usingLine
-//            if(chromsUse[i]) free(chromsUse[i]); 
-//            if(entryid[i]) free(entryid[i]);
+        for(i =0; i < usingLine; i++){
+            if(chromsUse[i]) free(chromsUse[i]);
+            if(entryid[i]) free(entryid[i]);
         }
         free(chromsUse); free(entryid); free(starts);
         free(ends); free(values); free(coverages); free(strands); free(contexts);
@@ -5116,6 +5204,15 @@ FILE* File_Open(const char* File_Name,const char* Mode)
 void bmPrintHdr(binaMethFile_t *bm) {
     uint64_t i;
     int64_t i64;
+    uint16_t computedFields = 2; // chrom, start
+    if(bm->hdr->version & BM_END) computedFields += 1; // end
+    computedFields += 1; // value
+    if(bm->hdr->version & BM_COVER) computedFields += 1;
+    if(bm->hdr->version & BM_STRAND) computedFields += 1;
+    if(bm->hdr->version & BM_CONTEXT) computedFields += 1;
+    if(bm->hdr->version & BM_ID) computedFields += 1;
+    uint16_t fieldCount = bm->hdr->fieldCount ? bm->hdr->fieldCount : computedFields;
+    uint16_t definedFieldCount = bm->hdr->definedFieldCount ? bm->hdr->definedFieldCount : fieldCount;
     fprintf(stderr, "Ver code:    %"PRIu16"\n", bm->hdr->version);
     if(bm->hdr->version & BM_END) fprintf(stderr, "BM_END:    yes\n");
     else fprintf(stderr, "BM_END:    no\n");
@@ -5127,6 +5224,16 @@ void bmPrintHdr(binaMethFile_t *bm) {
     else fprintf(stderr, "BM_STRAND:    no\n");
     if(bm->hdr->version & BM_ID) fprintf(stderr, "BM_ID:    yes\n");
     else fprintf(stderr, "BM_ID:    no\n");
+    fprintf(stderr, "fieldCount: %"PRIu16"\n", fieldCount);
+    fprintf(stderr, "definedFieldCount: %"PRIu16"\n", definedFieldCount);
+    fprintf(stderr, "Fields (order): chrom start");
+    if(bm->hdr->version & BM_END) fprintf(stderr, " end");
+    fprintf(stderr, " value");
+    if(bm->hdr->version & BM_COVER) fprintf(stderr, " coverage");
+    if(bm->hdr->version & BM_STRAND) fprintf(stderr, " strand");
+    if(bm->hdr->version & BM_CONTEXT) fprintf(stderr, " context");
+    if(bm->hdr->version & BM_ID) fprintf(stderr, " id");
+    fprintf(stderr, "\n");
     fprintf(stderr, "Levels:     %"PRIu16"\n", bm->hdr->nLevels);
     //fprintf(stderr, "ctOffset:   0x%"PRIx64"\n", bm->hdr->ctOffset);
     //fprintf(stderr, "dataOffset: 0x%"PRIx64"\n", bm->hdr->dataOffset);
@@ -5218,11 +5325,9 @@ char *fastStrcat(char *s, char *t)
 void onlyexecuteCMD(const char *cmd, const char *errorinfor)
 {
     //char ps[1024]={0};
-    char* ps = malloc(sizeof(char)*10000);
     FILE *ptr;
-    strcpy(ps, cmd);
     //fprintf(stderr, "[MM] %s\n", cmd);
-    ptr=popen(ps, "w");
+    ptr=popen(cmd, "w");
 
     if(ptr==NULL)
     {

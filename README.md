@@ -60,12 +60,42 @@ And calmeth in batmeth2-dm can convert align bs bam file to dm file, https://dmt
 | --FDR               | adjust pvalue cutoff default : 1.0                                       |
 | --methdiff          | the cutoff of methylation differention. default: 0.25 [CpG]              |
 | --context           | Context for DM. CG/CHG/CHH/C, [C]                                        |
-| -h|--help                                                                                      | 
+| -h|--help                                                                                      |
 
 
 This is a BS-Seq results dm format file view and process tool based on htslib and libBigWig.
 
-For more information, please see https://dmtools-docs.rtfd.io/ 
+### Single-cell QC (sc-qc)
+
+dmtools supports an ID field in dm files for per-cell tagging. You can summarize basic QC metrics per cell with:
+
+```
+dmtools sc-qc -i singlecell.dm -o sc_qc.tsv --context CG --min-coverage 3
+```
+
+The output table reports `cell_id`, `n_sites`, `total_coverage`, `mean_coverage`, and coverage-weighted `mean_meth` for each cell ID.
+
+### Single-cell matrix (sc-matrix)
+
+Build a cell × region matrix using the ID field as `cell_id`:
+
+```
+dmtools sc-matrix -i singlecell.dm --bed regions.bed -o sc_matrix --context CG --min-coverage 3 --sparse
+```
+
+Provide regions via `--bed` (chrom start end [name]) or define fixed windows with `--binsize N`. Sparse Matrix Market output is written by default along with `barcodes.tsv` and `features.tsv`; pass `--dense` to write a dense TSV matrix instead.
+
+### Single-cell aggregation (sc-aggregate)
+
+Aggregate single-cell methylation into group-level profiles using a cell → group mapping:
+
+```
+dmtools sc-aggregate -i singlecell.dm --groups cell_to_group.tsv --bed regions.bed -o sc_agg --context CG --min-coverage 3 --dense
+```
+
+This writes per-group region summaries and, with `--dense`, a group × region matrix alongside optional feature and group listings.
+
+For more information, please see https://dmtools-docs.rtfd.io/
 
 And calmeth in batmeth2-dm can convert align bs bam file to dm file, https://dmtools-docs.readthedocs.io/en/latest/function/bam2dm.html
 
