@@ -137,11 +137,14 @@ dmalign:
 	$(CXX) $(CXXFLAGS) -o genomebinLen genomebinLen.cpp
 	$(CXX) $(CXXFLAGS) dmalign.cpp -o dmalign -lz
 
-bam2dm:
-	$(CXX) $(CXXFLAGS) bam2dm.cpp -o bam2dm -m64 -I. -L. -lz -lBinaMeth -Wl,-rpath $(RPATH) $(LDFLAGS_SUB)
+htslib/libhts.a:
+	$(MAKE) -C htslib libhts.a
 
-bam2motif:
-	$(CXX) $(CXXFLAGS) bam2motif.cpp -o bam2motif -m64 -I. -L. -lz -lBinaMeth -Wl,-rpath $(RPATH) $(LDFLAGS_SUB)
+bam2dm: htslib/libhts.a
+	$(CXX) $(CXXFLAGS) -no-pie bam2dm.cpp -o bam2dm -m64 -I. -L. -lz -lBinaMeth -Wl,-rpath $(RPATH) $(LDFLAGS_SUB)
+
+bam2motif: htslib/libhts.a
+	$(CXX) $(CXXFLAGS) -no-pie bam2motif.cpp -o bam2motif -m64 -I. -L. -lz -lBinaMeth -Wl,-rpath $(RPATH) $(LDFLAGS_SUB)
 
 test/exampleWrite: libBinaMeth.so
 	$(CC) -o $@ -I. -L. $(CFLAGS) test/exampleWrite.c -lBinaMeth $(LIBS) -Wl,-rpath .
