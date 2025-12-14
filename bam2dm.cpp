@@ -552,19 +552,27 @@ int main(int argc, char* argv[])
 			if(Methratio)
 			{
 				try{
-				args.Methy_List.plusG = new int[longestChr];
-				args.Methy_List.plusA = new int[longestChr];
-				args.Methy_List.NegG = new int[longestChr];
-				args.Methy_List.NegA = new int[longestChr];
-				args.Methy_List.plusMethylated = new int[longestChr];
-				args.Methy_List.plusUnMethylated = new int[longestChr];
-				args.Methy_List.NegMethylated = new int[longestChr];
-				args.Methy_List.NegUnMethylated = new int[longestChr];
-				//=========Genome_List[i].Genome;
-				}catch(std::bad_alloc){
-					fprintf(stderr, "\nbad alloc in main array!\n");
-				}
-			}
+                                args.Methy_List.plusG = new int[longestChr];
+                                args.Methy_List.plusA = new int[longestChr];
+                                args.Methy_List.NegG = new int[longestChr];
+                                args.Methy_List.NegA = new int[longestChr];
+                                args.Methy_List.plusMethylated = new int[longestChr];
+                                args.Methy_List.plusUnMethylated = new int[longestChr];
+                                args.Methy_List.NegMethylated = new int[longestChr];
+                                args.Methy_List.NegUnMethylated = new int[longestChr];
+                                std::fill_n(args.Methy_List.plusG, longestChr, 0);
+                                std::fill_n(args.Methy_List.plusA, longestChr, 0);
+                                std::fill_n(args.Methy_List.NegG, longestChr, 0);
+                                std::fill_n(args.Methy_List.NegA, longestChr, 0);
+                                std::fill_n(args.Methy_List.plusMethylated, longestChr, 0);
+                                std::fill_n(args.Methy_List.plusUnMethylated, longestChr, 0);
+                                std::fill_n(args.Methy_List.NegMethylated, longestChr, 0);
+                                std::fill_n(args.Methy_List.NegUnMethylated, longestChr, 0);
+                                //=========Genome_List[i].Genome;
+                                }catch(std::bad_alloc){
+                                        fprintf(stderr, "\nbad alloc in main array!\n");
+                                }
+                        }
 			
 			fclose(GenomeFILE);
 			//fclose(Location_File);
