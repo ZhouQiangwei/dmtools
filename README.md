@@ -28,6 +28,34 @@ For more information, please see https://dmtools-docs.rtfd.io
 And calmeth in batmeth2-dm can convert align bs bam file to dm file, https://dmtools-docs.readthedocs.io/en/latest/function/bam2dm.html
 
 
+## Installation and build dependencies
+
+The native binaries are built with GNU make and require the following system packages:
+
+- A C/C++ toolchain (GCC 5+), `make`, and standard build tools
+- Compression and network dependencies: `zlib`/`libz-dev`, `libbz2-dev`, `liblzma-dev`, `libcurl4-openssl-dev`
+- Optional: GSL (`libgsl-dev`). When present, `dmDMR` is built; otherwise it is skipped automatically and the build prints a short notice.
+
+On Debian/Ubuntu, install prerequisites and build everything except the optional `dmDMR` binary:
+
+```
+sudo apt-get update
+sudo apt-get install -y build-essential zlib1g-dev libbz2-dev liblzma-dev libcurl4-openssl-dev
+make libs
+make
+```
+
+To include `dmDMR`, install GSL and rerun make (the default build will still work if GSL is missing, but will omit `dmDMR`):
+
+```
+sudo apt-get install -y libgsl-dev
+make WITH_GSL=1 libs
+make WITH_GSL=1
+```
+
+The build outputs the `bam2dm` executable from `bam2dm.cpp`; `dmtools bam2dm` dispatches to that binary.
+
+
 | [ dmtools ]         | process with dm file                                                    |
 |---------------------|--------------------------------------------------------------------------|
 |                     | dmtools <mode> [opnions]                                                 |
