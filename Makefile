@@ -7,6 +7,11 @@ SOURCES = $(wildcard *.cpp)
 OBJECTS = $(patsubst %.cpp,%.o,$(SOURCES))
 PROGS = dmtools bam2dm dmDMR dmalign bam2motif
 
+# Canonical bam2dm implementation. Alternative sources like bam2dm-mp.cpp are
+# not compiled by default; dmtools invokes the bam2dm binary produced from this
+# source.
+BAM2DM_SRC := bam2dm.cpp
+
 CXX ?= g++
 CC ?= gcc
 AR = ar
@@ -141,7 +146,7 @@ htslib/libhts.a:
 	$(MAKE) -C htslib libhts.a
 
 bam2dm: libBinaMeth.a htslib/libhts.a
-	$(CXX) $(CXXFLAGS) -no-pie bam2dm.cpp -o bam2dm -m64 -I. libBinaMeth.a -Wl,-rpath $(RPATH) htslib/libhts.a $(LDFLAGS_SUB)
+	$(CXX) $(CXXFLAGS) -no-pie $(BAM2DM_SRC) -o bam2dm -m64 -I. libBinaMeth.a -Wl,-rpath $(RPATH) htslib/libhts.a $(LDFLAGS_SUB)
 
 bam2motif: libBinaMeth.a htslib/libhts.a
 	$(CXX) $(CXXFLAGS) -no-pie bam2motif.cpp -o bam2motif -m64 -I. libBinaMeth.a -Wl,-rpath $(RPATH) htslib/libhts.a $(LDFLAGS_SUB)

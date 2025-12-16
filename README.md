@@ -108,6 +108,8 @@ make clean
 CXXFLAGS="-O0 -g -fsanitize=address,undefined -fno-omit-frame-pointer" make bam2dm
 ```
 
+The `bam2dm` binary built by `make bam2dm` comes from `bam2dm.cpp`; `dmtools bam2dm` shells out to that executable. The alternate source `bam2dm-mp.cpp` is retained for reference but is **not** compiled or invoked by `dmtools`.
+
 Run the converter with verbose diagnostics and on-disk validation enabled to surface silent failures early:
 
 ```
