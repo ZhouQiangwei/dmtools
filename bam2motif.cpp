@@ -2119,7 +2119,7 @@ void *Process_read(void *arg)
             }
 			
             if(countreadC){
-               if(processregion != '\0')
+               if(processregion[0] != '\0')
                  fprintf(stdout ,"%s\t%u\t%s\t%u\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s\n",Dummy,Flag,Chrom,pos,readmCG, readCG,readmCHG, readCHG,readmCHH, readCHH, readmC, readC, processregion);
                else if(strcmp(((ARGS *)arg)->processChr, "NAN-mm") != 0)
                  fprintf(stdout ,"%s\t%u\t%s\t%u\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s\n",Dummy,Flag,Chrom,pos,readmCG, readCG,readmCHG, readCHG,readmCHH, readCHH, readmC, readC, ((ARGS *)arg)->processChr);
