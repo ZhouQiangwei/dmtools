@@ -24,6 +24,8 @@
 #include <mutex>
 #include <atomic>
 #include <unistd.h>
+#include <fstream>
+#include <sstream>
 extern "C" {
 #include "dmCommon.h"
 }
@@ -139,10 +141,10 @@ struct BinTaskStats {
     int status = 0;
 };
 
-static int runBinChunkDebug(const std::string &bamPath, const std::string &genomePath, const std::string &targetChrom,
-                             int binSize, int threads, bool debugMode);
+static int runBinChunkDebug(const std::string &bamPath, const std::vector<BinTask> &tasks, int threads, bool debugMode);
 static int materializeBinTasksToBed(const std::string &genomePath, const std::string &targetChrom, int binSize,
                                     std::string &bedOut, size_t &taskCount, bool debugMode);
+static int loadBinTasksFromBed(const std::string &bedPath, std::vector<BinTask> &tasks, bool debugMode);
 
 unsigned Total_Reads_all;
 unsigned long Total_Reads=0, Total_mapped = 0, forward_mapped = 0, reverse_mapped = 0;
@@ -222,57 +224,19 @@ static void destroyOverlapBlock(bmOverlapBlock_t *block) {
     free(block);
 }
 
-static int runBinChunkDebug(const std::string &bamPath, const std::string &genomePath, const std::string &targetChrom,
-                             int binSize, int threads, bool debugMode) {
-    if(genomePath.empty()) {
-        fprintf(stderr, "[bin] --genome is required for --chunk-by bin mode\n");
-        return 1;
-    }
+static int runBinChunkDebug(const std::string &bamPath, const std::vector<BinTask> &tasks, int threads, bool debugMode) {
     if(bamPath.empty()) {
         fprintf(stderr, "[bin] input BAM/SAM is required for --chunk-by bin mode\n");
         return 1;
     }
-    if(binSize <= 0) {
-        fprintf(stderr, "[bin] bin-size must be positive\n");
-        return 1;
-    }
-    faidx_t *fai = fai_load(genomePath.c_str());
-    if(!fai) {
-        fprintf(stderr, "[bin] failed to load genome index: %s\n", genomePath.c_str());
-        return 1;
-    }
-
-    std::vector<BinTask> tasks;
-    const int nseq = faidx_nseq(fai);
-    for(int i = 0; i < nseq; ++i) {
-        const char *name = faidx_iseq(fai, i);
-        if(!name) continue;
-        if(strcmp(targetChrom.c_str(), "NAN-mm") != 0 && targetChrom != name) {
-            continue;
-        }
-        const int64_t len = faidx_seq_len(fai, name);
-        if(len <= 0) continue;
-        for(int64_t start = 0; start < len; start += binSize) {
-            int64_t end = start + binSize;
-            if(end > len) end = len;
-            BinTask task;
-            task.chrom = name;
-            task.start = start;
-            task.end = end;
-            task.index = tasks.size();
-            tasks.push_back(task);
-        }
-    }
-
     if(tasks.empty()) {
-        fprintf(stderr, "[bin] no tasks generated; check genome (%s) and --chrom selection\n", genomePath.c_str());
-        fai_destroy(fai);
+        fprintf(stderr, "[bin] no bin tasks to process\n");
         return 1;
     }
 
     if(threads < 1) threads = 1;
     if(debugMode) {
-        fprintf(stderr, "[bin] initializing %zu tasks across %d thread(s) with bin-size=%d\n", tasks.size(), threads, binSize);
+        fprintf(stderr, "[bin] initializing %zu tasks across %d thread(s)\n", tasks.size(), threads);
     }
 
     std::atomic<size_t> nextTask(0);
@@ -380,8 +344,6 @@ static int runBinChunkDebug(const std::string &bamPath, const std::string &genom
         th.join();
     }
 
-    fai_destroy(fai);
-
     if(workerError.load() != 0) {
         fprintf(stderr, "[bin] worker error detected; aborting\n");
         return 1;
@@ -465,6 +427,41 @@ static int materializeBinTasksToBed(const std::string &genomePath, const std::st
 
     fclose(out);
     return 0;
+}
+
+static int loadBinTasksFromBed(const std::string &bedPath, std::vector<BinTask> &tasks, bool debugMode) {
+    tasks.clear();
+    std::ifstream in(bedPath.c_str());
+    if(!in.is_open()) {
+        fprintf(stderr, "[bin] failed to open bed task file %s\n", bedPath.c_str());
+        return 1;
+    }
+    std::string line;
+    size_t idx = 0;
+    while(std::getline(in, line)) {
+        if(line.empty()) continue;
+        std::istringstream iss(line);
+        std::string chrom;
+        int64_t start = 0, end = 0;
+        if(!(iss >> chrom >> start >> end)) {
+            fprintf(stderr, "[bin] malformed bed line: %s\n", line.c_str());
+            return 1;
+        }
+        if(start < 0 || end < 0 || end < start) {
+            fprintf(stderr, "[bin] invalid interval in bed: %s\n", line.c_str());
+            return 1;
+        }
+        BinTask task;
+        task.chrom = chrom;
+        task.start = start;
+        task.end = end;
+        task.index = idx++;
+        tasks.push_back(task);
+    }
+    if(debugMode) {
+        fprintf(stderr, "[bin] loaded %zu tasks from %s\n", tasks.size(), bedPath.c_str());
+    }
+    return tasks.empty() ? 1 : 0;
 }
 
 static int validateDmFile(const std::string &dmPath, bool verbose) {
@@ -878,6 +875,19 @@ int main(int argc, char* argv[])
         if(binBedGenerated) {
             fprintf(stderr, "[bam2dm] bin tasks materialized to %s (%zu tasks)\n", binTempBed.c_str(), binTaskCount);
         }
+    }
+
+    if(chunkBy == "bin") {
+        std::vector<BinTask> tasks;
+        int rc = loadBinTasksFromBed(binTempBed, tasks, debugMode);
+        if(rc != 0) {
+            if(binBedGenerated && !binTempBed.empty()) unlink(binTempBed.c_str());
+            return rc;
+        }
+        std::string bamPath = argv[InFileStart];
+        rc = runBinChunkDebug(bamPath, tasks, NTHREADS, debugMode);
+        if(binBedGenerated && !binTempBed.empty()) unlink(binTempBed.c_str());
+        return rc;
     }
 
         if(argc<=3) printf("%s \n",Help_String);
