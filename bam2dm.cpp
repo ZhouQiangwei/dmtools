@@ -20,6 +20,9 @@
 #include <stdint.h>
 #include <inttypes.h>
 #include <cerrno>
+#include <thread>
+#include <mutex>
+#include <atomic>
 extern "C" {
 #include "dmCommon.h"
 }
@@ -121,6 +124,23 @@ void ReverseC_Context(char* Dest,const char* seq,int & stringlength);
 void Reverse_Comp(char* Dest, char* seq);
 void onlyComp(char* Dest, char* seq);
 //---------------------------------------------------------------------------------------------------------------
+struct BinTask {
+    std::string chrom;
+    int64_t start;
+    int64_t end;
+    size_t index;
+};
+
+struct BinTaskStats {
+    BinTask task;
+    uint64_t reads = 0;
+    uint64_t records = 0;
+    int status = 0;
+};
+
+static int runBinChunkDebug(const std::string &bamPath, const std::string &genomePath, const std::string &targetChrom,
+                             int binSize, int threads, bool debugMode);
+
 unsigned Total_Reads_all;
 unsigned long Total_Reads=0, Total_mapped = 0, forward_mapped = 0, reverse_mapped = 0;
 //----mapping count
@@ -197,6 +217,188 @@ static void destroyOverlapBlock(bmOverlapBlock_t *block) {
     if(block->size) free(block->size);
     if(block->offset) free(block->offset);
     free(block);
+}
+
+static int runBinChunkDebug(const std::string &bamPath, const std::string &genomePath, const std::string &targetChrom,
+                             int binSize, int threads, bool debugMode) {
+    if(genomePath.empty()) {
+        fprintf(stderr, "[bin] --genome is required for --chunk-by bin mode\n");
+        return 1;
+    }
+    if(bamPath.empty()) {
+        fprintf(stderr, "[bin] input BAM/SAM is required for --chunk-by bin mode\n");
+        return 1;
+    }
+    if(binSize <= 0) {
+        fprintf(stderr, "[bin] bin-size must be positive\n");
+        return 1;
+    }
+    faidx_t *fai = fai_load(genomePath.c_str());
+    if(!fai) {
+        fprintf(stderr, "[bin] failed to load genome index: %s\n", genomePath.c_str());
+        return 1;
+    }
+
+    std::vector<BinTask> tasks;
+    const int nseq = faidx_nseq(fai);
+    for(int i = 0; i < nseq; ++i) {
+        const char *name = faidx_iseq(fai, i);
+        if(!name) continue;
+        if(strcmp(targetChrom.c_str(), "NAN-mm") != 0 && targetChrom != name) {
+            continue;
+        }
+        const int64_t len = faidx_seq_len(fai, name);
+        if(len <= 0) continue;
+        for(int64_t start = 0; start < len; start += binSize) {
+            int64_t end = start + binSize;
+            if(end > len) end = len;
+            BinTask task;
+            task.chrom = name;
+            task.start = start;
+            task.end = end;
+            task.index = tasks.size();
+            tasks.push_back(task);
+        }
+    }
+
+    if(tasks.empty()) {
+        fprintf(stderr, "[bin] no tasks generated; check genome (%s) and --chrom selection\n", genomePath.c_str());
+        fai_destroy(fai);
+        return 1;
+    }
+
+    if(threads < 1) threads = 1;
+    if(debugMode) {
+        fprintf(stderr, "[bin] initializing %zu tasks across %d thread(s) with bin-size=%d\n", tasks.size(), threads, binSize);
+    }
+
+    std::atomic<size_t> nextTask(0);
+    std::vector<BinTaskStats> stats(tasks.size());
+    std::mutex logMutex;
+    std::atomic<int> workerError(0);
+
+    auto worker = [&](int workerId) {
+        samFile *bam = sam_open(bamPath.c_str(), "rb");
+        if(!bam) {
+            fprintf(stderr, "[bin-worker-%d] failed to open %s\n", workerId, bamPath.c_str());
+            workerError.store(1);
+            return;
+        }
+        bam_hdr_t *header = sam_hdr_read(bam);
+        if(!header) {
+            fprintf(stderr, "[bin-worker-%d] failed to read BAM header from %s\n", workerId, bamPath.c_str());
+            sam_close(bam);
+            workerError.store(1);
+            return;
+        }
+        hts_idx_t *idx = sam_index_load(bam, bamPath.c_str());
+        if(!idx) {
+            fprintf(stderr, "[bin-worker-%d] failed to load BAM index for %s\n", workerId, bamPath.c_str());
+            bam_hdr_destroy(header);
+            sam_close(bam);
+            workerError.store(1);
+            return;
+        }
+
+        bam1_t *b = bam_init1();
+        if(!b) {
+            fprintf(stderr, "[bin-worker-%d] failed to allocate bam1_t\n", workerId);
+            hts_idx_destroy(idx);
+            bam_hdr_destroy(header);
+            sam_close(bam);
+            workerError.store(1);
+            return;
+        }
+
+        while(true) {
+            size_t taskId = nextTask.fetch_add(1);
+            if(taskId >= tasks.size()) break;
+            const BinTask &task = tasks[taskId];
+            BinTaskStats result;
+            result.task = task;
+
+            int tid = bam_name2id(header, task.chrom.c_str());
+            if(tid < 0) {
+                result.status = 1;
+                std::lock_guard<std::mutex> lock(logMutex);
+                fprintf(stderr, "[bin-worker-%d] chrom %s not found in BAM header\n", workerId, task.chrom.c_str());
+                stats[taskId] = result;
+                continue;
+            }
+
+            hts_itr_t *iter = sam_itr_queryi(idx, tid, task.start, task.end);
+            if(!iter) {
+                result.status = 1;
+                std::lock_guard<std::mutex> lock(logMutex);
+                fprintf(stderr, "[bin-worker-%d] failed to create iterator for %s:%" PRId64 "-%" PRId64 "\n", workerId,
+                        task.chrom.c_str(), task.start, task.end);
+                stats[taskId] = result;
+                continue;
+            }
+
+            {
+                std::lock_guard<std::mutex> lock(logMutex);
+                if(debugMode) {
+                    fprintf(stderr, "[bin-worker-%d] start task %zu %s:%" PRId64 "-%" PRId64 "\n", workerId, task.index,
+                            task.chrom.c_str(), task.start, task.end);
+                }
+            }
+
+            while(sam_itr_next(bam, iter, b) >= 0) {
+                result.reads++;
+                result.records++;
+            }
+
+            hts_itr_destroy(iter);
+
+            {
+                std::lock_guard<std::mutex> lock(logMutex);
+                if(debugMode) {
+                    fprintf(stderr, "[bin-worker-%d] done task %zu %s:%" PRId64 "-%" PRId64 " reads=%" PRIu64 "\n", workerId,
+                            task.index, task.chrom.c_str(), task.start, task.end, result.reads);
+                }
+            }
+
+            stats[taskId] = result;
+        }
+
+        bam_destroy1(b);
+        hts_idx_destroy(idx);
+        bam_hdr_destroy(header);
+        sam_close(bam);
+    };
+
+    std::vector<std::thread> pool;
+    pool.reserve(threads);
+    for(int t = 0; t < threads; ++t) {
+        pool.emplace_back(worker, t);
+    }
+    for(auto &th : pool) {
+        th.join();
+    }
+
+    fai_destroy(fai);
+
+    if(workerError.load() != 0) {
+        fprintf(stderr, "[bin] worker error detected; aborting\n");
+        return 1;
+    }
+
+    for(size_t i = 0; i < stats.size(); ++i) {
+        if(stats[i].status != 0) {
+            fprintf(stderr, "[bin] task %zu (%s:%" PRId64 "-%" PRId64 ") failed\n", i, stats[i].task.chrom.c_str(),
+                    stats[i].task.start, stats[i].task.end);
+            return 1;
+        }
+    }
+
+    if(debugMode) {
+        uint64_t totalReads = 0;
+        for(const auto &s : stats) totalReads += s.reads;
+        fprintf(stderr, "[bin] completed %zu tasks; total reads scanned=%" PRIu64 "\n", stats.size(), totalReads);
+    }
+
+    return 0;
 }
 
 static int validateDmFile(const std::string &dmPath, bool verbose) {
@@ -581,8 +783,21 @@ int main(int argc, char* argv[])
     }
 
     if(chunkBy == "bin") {
-        fprintf(stderr, "--chunk-by bin is not implemented yet; please use --chunk-by chrom\n");
-        return 1;
+        if(!bamformat) {
+            fprintf(stderr, "--chunk-by bin currently requires BAM input via -b/--binput\n");
+            return 1;
+        }
+        if(InFileStart == 0 || InFileEnd < InFileStart) {
+            fprintf(stderr, "[bin] no input BAM provided\n");
+            return 1;
+        }
+        if(debugMode) {
+            fprintf(stderr, "[bam2dm] entering bin task scheduler (no DM writing in this mode)\n");
+        }
+        std::string bamPath = argv[InFileStart];
+        std::string targetChrom = processChr;
+        int rc = runBinChunkDebug(bamPath, Geno, targetChrom, binSize, NTHREADS, debugMode);
+        return rc;
     }
 
     if(debugMode) {
