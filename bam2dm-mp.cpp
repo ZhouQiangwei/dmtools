@@ -1,3 +1,5 @@
+// Deprecated: historical multi-threaded prototype. The authoritative
+// implementation is bam2dm.cpp; this file is kept only for reference.
 #include <iostream>
 #include <string.h>
 #include <cstdio>

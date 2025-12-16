@@ -212,6 +212,8 @@ const char* Help_String_bam2dm="Command Format :  dmtools bam2dm [options] -g ge
         "\t--Cx                  print context in DM file\n"
         "\t-E                    print end in DM file\n"
         "\t--Id                  print ID in DM file\n"
+        "\t--check <dm>          validate an existing dm file and exit\n"
+        "\t--validate-output     validate dm after writing (structural check)\n"
         "\t-h|--help";
 
 const char* Help_String_index="Command Format :  dmtools index [options] -g genome.fa\n"
