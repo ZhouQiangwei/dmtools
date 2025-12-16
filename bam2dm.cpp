@@ -23,6 +23,7 @@
 #include <thread>
 #include <mutex>
 #include <atomic>
+#include <unistd.h>
 extern "C" {
 #include "dmCommon.h"
 }
@@ -140,6 +141,8 @@ struct BinTaskStats {
 
 static int runBinChunkDebug(const std::string &bamPath, const std::string &genomePath, const std::string &targetChrom,
                              int binSize, int threads, bool debugMode);
+static int materializeBinTasksToBed(const std::string &genomePath, const std::string &targetChrom, int binSize,
+                                    std::string &bedOut, size_t &taskCount, bool debugMode);
 
 unsigned Total_Reads_all;
 unsigned long Total_Reads=0, Total_mapped = 0, forward_mapped = 0, reverse_mapped = 0;
@@ -401,6 +404,69 @@ static int runBinChunkDebug(const std::string &bamPath, const std::string &genom
     return 0;
 }
 
+static int materializeBinTasksToBed(const std::string &genomePath, const std::string &targetChrom, int binSize,
+                                    std::string &bedOut, size_t &taskCount, bool debugMode) {
+    taskCount = 0;
+    if(genomePath.empty()) {
+        fprintf(stderr, "[bin] --genome is required for --chunk-by bin mode\n");
+        return 1;
+    }
+    if(binSize <= 0) {
+        fprintf(stderr, "[bin] bin-size must be positive\n");
+        return 1;
+    }
+
+    char tmpl[] = "/tmp/bam2dm_binsXXXXXX";
+    int fd = mkstemp(tmpl);
+    if(fd == -1) {
+        fprintf(stderr, "[bin] failed to create temporary bed for bin tasks: %s\n", strerror(errno));
+        return 1;
+    }
+    FILE *out = fdopen(fd, "w+");
+    if(!out) {
+        fprintf(stderr, "[bin] failed to open temp bed stream: %s\n", strerror(errno));
+        close(fd);
+        return 1;
+    }
+
+    faidx_t *fai = fai_load(genomePath.c_str());
+    if(!fai) {
+        fprintf(stderr, "[bin] failed to load genome index: %s\n", genomePath.c_str());
+        fclose(out);
+        unlink(tmpl);
+        return 1;
+    }
+
+    const int nseq = faidx_nseq(fai);
+    for(int i = 0; i < nseq; ++i) {
+        const char *name = faidx_iseq(fai, i);
+        if(!name) continue;
+        if(strcmp(targetChrom.c_str(), "NAN-mm") != 0 && targetChrom != name) {
+            continue;
+        }
+        const int64_t len = faidx_seq_len(fai, name);
+        if(len <= 0) continue;
+        for(int64_t start = 0; start < len; start += binSize) {
+            int64_t end = start + binSize;
+            if(end > len) end = len;
+            fprintf(out, "%s\t%" PRId64 "\t%" PRId64 "\n", name, start, end);
+            ++taskCount;
+        }
+    }
+
+    fai_destroy(fai);
+    fflush(out);
+    fseek(out, 0, SEEK_SET);
+    bedOut.assign(tmpl);
+
+    if(debugMode) {
+        fprintf(stderr, "[bin] materialized %zu bin task(s) to %s\n", taskCount, bedOut.c_str());
+    }
+
+    fclose(out);
+    return 0;
+}
+
 static int validateDmFile(const std::string &dmPath, bool verbose) {
     struct stat st{};
     if(stat(dmPath.c_str(), &st) != 0) {
@@ -572,6 +638,9 @@ int main(int argc, char* argv[])
     strcpy(processRegion, "NAN-mm");
     char bedfilename[1000];
     strcpy(bedfilename, "");
+    std::string binTempBed;
+    size_t binTaskCount = 0;
+    bool binBedGenerated = false;
     int NTHREADS = 1;
     bool checkOnly = false;
     bool validateOutput = false;
@@ -791,19 +860,24 @@ int main(int argc, char* argv[])
             fprintf(stderr, "[bin] no input BAM provided\n");
             return 1;
         }
-        if(debugMode) {
-            fprintf(stderr, "[bam2dm] entering bin task scheduler (no DM writing in this mode)\n");
-        }
-        std::string bamPath = argv[InFileStart];
         std::string targetChrom = processChr;
-        int rc = runBinChunkDebug(bamPath, Geno, targetChrom, binSize, NTHREADS, debugMode);
-        return rc;
+        int rc = materializeBinTasksToBed(Geno, targetChrom, binSize, binTempBed, binTaskCount, debugMode);
+        if(rc != 0) {
+            return rc;
+        }
+        strncpy(bedfilename, binTempBed.c_str(), sizeof(bedfilename) - 1);
+        bedfilename[sizeof(bedfilename) - 1] = '\0';
+        binBedGenerated = true;
+        strcpy(processChr, "NAN-mm");
     }
 
     if(debugMode) {
         fprintf(stderr, "[bam2dm] debug on\n");
         fprintf(stderr, "[bam2dm] threads=%d chunk-by=%s bin-size=%d input-format=%s\n", NTHREADS, chunkBy.c_str(), binSize, bamformat ? "bam" : "sam");
         fprintf(stderr, "[bam2dm] genome=%s methratio=%s\n", Geno.empty() ? "(none)" : Geno.c_str(), Prefix.c_str());
+        if(binBedGenerated) {
+            fprintf(stderr, "[bam2dm] bin tasks materialized to %s (%zu tasks)\n", binTempBed.c_str(), binTaskCount);
+        }
     }
 
         if(argc<=3) printf("%s \n",Help_String);
@@ -1151,6 +1225,7 @@ int main(int argc, char* argv[])
 			}
 
             if(countreadC && strcmp(bedfilename, "")!=0) fclose(args.bedFILE);
+            if(binBedGenerated && !binTempBed.empty()) unlink(binTempBed.c_str());
             if(Sam && strcmp(Output_Name,"None") ) fclose(args.OUTFILE);
             if(printmethstate == 1) fclose(args.OUTFILEMS);
 
