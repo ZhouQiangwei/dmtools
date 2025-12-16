@@ -176,7 +176,17 @@ Run the converter with verbose diagnostics and on-disk validation enabled to sur
   --chunk-by chrom --bin-size 2000 --threads 1
 ```
 
-`--chunk-by bin` is currently reserved; the binary exits with an error to avoid producing unsupported output. Use the default `--chunk-by chrom` pathway for all runs.
+Bin mode uses fixed-size bins (default 2000 bp) to distribute work across threads while keeping a single, deterministic writer. Each worker opens its own BAM+index handle, writes a per-bin part file under `<methratio>.parts/`, and the main thread merges those parts in `(chrom,start)` order into the final dm before running `--validate-output` if requested. A BAM index (`.bai`/`.csi`) is required; missing indexes cause the command to fail fast.
+
+Example bin-mode invocation with validation:
+
+```
+./dmtools bam2dm --debug --validate-output \
+  -g test/test.chr1.f \
+  -b /tmp/minimal.bam \
+  -m /tmp/minimal.dm \
+  --chunk-by bin --bin-size 2000 --threads 4
+```
 
 To compare deterministic output across thread counts, rerun the same input with `--threads 2` (or higher) and ensure the `--validate-output` check succeeds for each run.
 
