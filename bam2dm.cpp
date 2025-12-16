@@ -314,7 +314,7 @@ int main(int argc, char* argv[])
         "\t--mrtxt               print prefix.methratio.txt file\n"
         "\t--cf                  context filter for print results, C, CG, CHG, CHH, default: C\n"
         "\t--pe_overlap          skip paired end overlap region, 0 or 1, default 1\n"
-        "\t-p                    [int] threads\n"
+        "\t-p|--threads          [int] threads (default: 1)\n"
         "\t--NoMe                data type for NoMe-seq\n"
         "\t [DM format] paramaters\n"
         "\t-C                    print coverage\n"
@@ -323,6 +323,9 @@ int main(int argc, char* argv[])
         "\t-E                    print end\n"
         "\t--Id                  print ID\n"
         "\t--zl                  The maximum number of zoom levels. [1-10], default: 2\n"
+        "\t--chunk-by <chrom|bin>  process by chromosome (default) or fixed-size bins\n"
+        "\t--bin-size <INT>      bin size in bases when using --chunk-by bin (default: 2000)\n"
+        "\t--debug               verbose logging of parsed options and progress\n"
         "\t--check <dm>          validate an existing dm file and exit\n"
         "\t--validate-output     validate dm after writing (structural check)\n"
         "\t-i|--input            Sam format file, sorted by chrom.\n"
@@ -367,10 +370,13 @@ int main(int argc, char* argv[])
     strcpy(processRegion, "NAN-mm");
     char bedfilename[1000];
     strcpy(bedfilename, "");
-    int NTHREADS = 0;
+    int NTHREADS = 1;
     bool checkOnly = false;
     bool validateOutput = false;
     std::string checkDmFile;
+    bool debugMode = false;
+    std::string chunkBy = "chrom";
+    int binSize = 2000;
 
 	for(int i=1;i<argc;i++)
 	{
@@ -401,11 +407,40 @@ int main(int argc, char* argv[])
             strcpy(bedfilename, argv[++i]);
         }
         else if(!strcmp(argv[i], "-Q"))
-		{
-			QualCut=atoi(argv[++i]);
-        }else if(!strcmp(argv[i], "-p"))
+                {
+                        QualCut=atoi(argv[++i]);
+        }else if(!strcmp(argv[i], "-p") || !strcmp(argv[i], "--threads"))
         {
             NTHREADS=atoi(argv[++i]);
+            if(NTHREADS < 1) NTHREADS = 1;
+        }
+        else if(!strcmp(argv[i], "--debug"))
+        {
+            debugMode = true;
+        }
+        else if(!strcmp(argv[i], "--chunk-by"))
+        {
+            if(i + 1 >= argc) {
+                fprintf(stderr, "--chunk-by requires chrom or bin\n");
+                return 1;
+            }
+            chunkBy = argv[++i];
+            if(chunkBy != "chrom" && chunkBy != "bin") {
+                fprintf(stderr, "--chunk-by must be chrom or bin\n");
+                return 1;
+            }
+        }
+        else if(!strcmp(argv[i], "--bin-size"))
+        {
+            if(i + 1 >= argc) {
+                fprintf(stderr, "--bin-size requires an integer\n");
+                return 1;
+            }
+            binSize = atoi(argv[++i]);
+            if(binSize <= 0) {
+                fprintf(stderr, "--bin-size must be positive\n");
+                return 1;
+            }
         }
         else if(!strcmp(argv[i],"--cf")){
             contextfilter = argv[++i];
@@ -543,6 +578,17 @@ int main(int argc, char* argv[])
     if(validateOutput && !Methratio) {
         fprintf(stderr, "[dmcheck] --validate-output requires --methratio output path\n");
         return 1;
+    }
+
+    if(chunkBy == "bin") {
+        fprintf(stderr, "--chunk-by bin is not implemented yet; please use --chunk-by chrom\n");
+        return 1;
+    }
+
+    if(debugMode) {
+        fprintf(stderr, "[bam2dm] debug on\n");
+        fprintf(stderr, "[bam2dm] threads=%d chunk-by=%s bin-size=%d input-format=%s\n", NTHREADS, chunkBy.c_str(), binSize, bamformat ? "bam" : "sam");
+        fprintf(stderr, "[bam2dm] genome=%s methratio=%s\n", Geno.empty() ? "(none)" : Geno.c_str(), Prefix.c_str());
     }
 
         if(argc<=3) printf("%s \n",Help_String);

@@ -8,9 +8,8 @@ OBJECTS = $(patsubst %.cpp,%.o,$(SOURCES))
 # Programs built by default; dmDMR is gated on the presence of GSL.
 PROGS = dmtools bam2dm dmalign bam2motif
 
-# Canonical bam2dm implementation. Alternative sources like bam2dm-mp.cpp are
-# not compiled by default; dmtools invokes the bam2dm binary produced from this
-# source.
+# Canonical bam2dm implementation. dmtools invokes the bam2dm binary produced
+# from this source.
 BAM2DM_SRC := bam2dm.cpp
 
 CXX ?= g++
