@@ -9,12 +9,18 @@
 #include <map>
 #include <algorithm>
 #include <stdarg.h>
+#include <stdint.h>
+#include <inttypes.h>
 #include <time.h>
 #include <sys/time.h>
 #include <errno.h>
 #include "binaMeth.h"
+#include "dmCommon.h"
 #include <stdlib.h>
 #include <unordered_map>
+#include <vector>
+#include <sys/stat.h>
+#include <cerrno>
 
 #include "htslib/htslib/sam.h"
 #include "htslib/htslib/hts.h"
@@ -183,6 +189,108 @@ int PHead = 0;
 int rrbs=0;
 int printmethstate = 0;
 int onlyM = 0;
+
+static void destroyOverlapBlock(bmOverlapBlock_t *block) {
+    if(!block) return;
+    if(block->size) free(block->size);
+    if(block->offset) free(block->offset);
+    free(block);
+}
+
+static int validateDmFile(const std::string &dmPath, bool verbose) {
+    struct stat st{};
+    if(stat(dmPath.c_str(), &st) != 0) {
+        fprintf(stderr, "[dmcheck] failed to stat %s: %s\n", dmPath.c_str(), strerror(errno));
+        return 1;
+    }
+    const uint64_t fileSize = static_cast<uint64_t>(st.st_size);
+    binaMethFile_t *fp = bmOpen((char*)dmPath.c_str(), NULL, "r");
+    if(!fp || !fp->hdr) {
+        fprintf(stderr, "[dmcheck] unable to open %s as dm\n", dmPath.c_str());
+        if(fp) bmClose(fp);
+        return 2;
+    }
+
+    uint32_t magic = 0;
+    if(bmSetPos(fp, 0) || bmRead(&magic, sizeof(uint32_t), 1, fp) != 1) {
+        fprintf(stderr, "[dmcheck] failed to read magic from %s\n", dmPath.c_str());
+        bmClose(fp);
+        return 3;
+    }
+    if(magic != BIGWIG_MAGIC) {
+        fprintf(stderr, "[dmcheck] magic mismatch in %s (got 0x%x)\n", dmPath.c_str(), magic);
+        bmClose(fp);
+        return 4;
+    }
+    if(!(fp->hdr->version & BM_MAGIC)) {
+        fprintf(stderr, "[dmcheck] version/type missing BM_MAGIC bit in %s\n", dmPath.c_str());
+        bmClose(fp);
+        return 5;
+    }
+    if(fp->hdr->dataOffset >= fileSize || fp->hdr->indexOffset >= fileSize) {
+        fprintf(stderr, "[dmcheck] header offsets exceed file size (%s)\n", dmPath.c_str());
+        bmClose(fp);
+        return 6;
+    }
+    if(fp->hdr->ctOffset >= fileSize || (fp->hdr->summaryOffset && fp->hdr->summaryOffset + sizeof(uint64_t) * 2 > fileSize)) {
+        fprintf(stderr, "[dmcheck] chromosome or summary offset outside file for %s\n", dmPath.c_str());
+        bmClose(fp);
+        return 7;
+    }
+    if(!fp->idx || !fp->idx->root) {
+        fprintf(stderr, "[dmcheck] index missing or unreadable for %s\n", dmPath.c_str());
+        bmClose(fp);
+        return 8;
+    }
+    std::vector<std::pair<uint64_t, uint64_t>> blocks;
+    blocks.reserve(fp->idx->nItems);
+    for(uint32_t tid = 0; tid < fp->cl->nKeys; ++tid) {
+        bmOverlapBlock_t *overlaps = walkRTreeNodes(fp, fp->idx->root, tid, 0, fp->cl->len[tid]);
+        if(!overlaps) {
+            fprintf(stderr, "[dmcheck] failed to walk index for contig %u in %s\n", tid, dmPath.c_str());
+            bmClose(fp);
+            return 9;
+        }
+        for(uint64_t i = 0; i < overlaps->n; ++i) {
+            blocks.emplace_back(overlaps->offset[i], overlaps->size[i]);
+        }
+        destroyOverlapBlock(overlaps);
+    }
+    for(size_t i = 0; i < blocks.size(); ++i) {
+        const uint64_t start = blocks[i].first;
+        const uint64_t span = blocks[i].second;
+        if(span == 0 || start > fileSize || start + span > fileSize) {
+            fprintf(stderr, "[dmcheck] index entry %zu out of bounds in %s (offset=%" PRIu64 ", size=%" PRIu64 ")\n", i, dmPath.c_str(), start, span);
+            bmClose(fp);
+            return 10;
+        }
+        if(i && start < blocks[i-1].first) {
+            fprintf(stderr, "[dmcheck] index offsets not monotonic at entry %zu in %s\n", i, dmPath.c_str());
+            bmClose(fp);
+            return 11;
+        }
+    }
+    if(!blocks.empty()) {
+        uint8_t headerBuf[32];
+        if(bmSetPos(fp, blocks.front().first) || bmRead(headerBuf, 1, sizeof(headerBuf), fp) != sizeof(headerBuf)) {
+            fprintf(stderr, "[dmcheck] failed to read first data block header in %s\n", dmPath.c_str());
+            bmClose(fp);
+            return 12;
+        }
+        const uint32_t tid = ((uint32_t*)headerBuf)[0];
+        const uint32_t start = ((uint32_t*)headerBuf)[1];
+        const uint32_t end = ((uint32_t*)headerBuf)[2];
+        const uint16_t nItems = ((uint16_t*)headerBuf)[11];
+        if(tid >= fp->cl->nKeys || start > end || nItems == 0) {
+            fprintf(stderr, "[dmcheck] invalid first data block metadata in %s (tid=%u start=%u end=%u nItems=%u)\n", dmPath.c_str(), tid, start, end, nItems);
+            bmClose(fp);
+            return 13;
+        }
+    }
+    bmClose(fp);
+    if(verbose) fprintf(stderr, "[dmcheck] %s: ok (%zu indexed blocks)\n", dmPath.c_str(), blocks.size());
+    return 0;
+}
 int main(int argc, char* argv[])
 {
 	time_t Start_Time,End_Time;
@@ -218,6 +326,8 @@ int main(int argc, char* argv[])
         "\t--chrom               chr/chr:s-e only process this region\n"
         "\t--bedfile             bedfile for process countreadC\n"
         "\t--pms                 file name for print methstate\n"
+        "\t--check <dm>          validate an existing dm file and exit\n"
+        "\t--validate-output     validate dm after writing (structural check)\n"
 //        "\t--rrbs                RRBS mode\n"
         "\t-h|--help";
 
@@ -256,6 +366,9 @@ int main(int argc, char* argv[])
     char bedfilename[1000];
     strcpy(bedfilename, "");
     int NTHREADS = 0;
+    bool checkOnly = false;
+    bool validateOutput = false;
+    std::string checkDmFile;
 
 	for(int i=1;i<argc;i++)
 	{
@@ -377,22 +490,35 @@ int main(int argc, char* argv[])
 				continue;
 			}
 			if(argv[i][0]=='-') {InFileEnd=--i;}else {InFileEnd=i ;}
-		}else if(!strcmp(argv[i], "-b") || !strcmp(argv[i], "--binput"))
-		{
-			InFileStart=++i;
-			//while(i!=(argc-1) && argv[i][0]!='-')
-			//{
+                }else if(!strcmp(argv[i], "-b") || !strcmp(argv[i], "--binput"))
+                {
+                        InFileStart=++i;
+                        //while(i!=(argc-1) && argv[i][0]!='-')
+                        //{
 			//	i++;
 			//	continue;
 			//}
-			//if(argv[i][0]=='-') {InFileEnd=--i;}else {InFileEnd=i ;}
+                        //if(argv[i][0]=='-') {InFileEnd=--i;}else {InFileEnd=i ;}
             InFileEnd=InFileStart;
-			bamformat=true;
-		}
-		else if(!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")){
-			printf("\n%s\n",Help_String);
+                        bamformat=true;
+                }
+                else if(!strcmp(argv[i], "--check"))
+                {
+                        checkOnly = true;
+                        if(i + 1 >= argc) {
+                                fprintf(stderr, "--check requires a dm filepath\n");
+                                exit(1);
+                        }
+                        checkDmFile = argv[++i];
+                }
+                else if(!strcmp(argv[i], "--validate-output"))
+                {
+                        validateOutput = true;
+                }
+                else if(!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")){
+                        printf("\n%s\n",Help_String);
                         exit(0);
-		}
+                }
 		else
 		{
 			printf("\nError: %s\n\n%s \n",argv[i],Help_String);
@@ -401,13 +527,25 @@ int main(int argc, char* argv[])
 		
 	}
     if(DEBUG>1) fprintf(stderr, "\nXXX111\n");
-	for(int i = 0; i < argc; i++) {CMD.append(argv[i]); CMD.append(" ");}
+        for(int i = 0; i < argc; i++) {CMD.append(argv[i]); CMD.append(" ");}
     if(strcmp(Prefix.c_str(),"None")==0) Prefix = Prefix2;
     if(!Methratio) onlyPHead = 1;
-	
-	if(argc<=3) printf("%s \n",Help_String);
-	if (argc >3  && InFileStart) 
-	{
+
+    if(checkOnly) {
+        if(checkDmFile.empty()) {
+            fprintf(stderr, "[dmcheck] no dm file provided to --check\n");
+            return 1;
+        }
+        return validateDmFile(checkDmFile, true);
+    }
+    if(validateOutput && !Methratio) {
+        fprintf(stderr, "[dmcheck] --validate-output requires --methratio output path\n");
+        return 1;
+    }
+
+        if(argc<=3) printf("%s \n",Help_String);
+        if (argc >3  && InFileStart)
+        {
 		string log;
                 log=Prefix;
                 log+=".methlog.txt";
@@ -549,22 +687,31 @@ int main(int argc, char* argv[])
 				//meth ini
 			}
 
-			if(Methratio)
-			{
-				try{
-				args.Methy_List.plusG = new int[longestChr];
-				args.Methy_List.plusA = new int[longestChr];
-				args.Methy_List.NegG = new int[longestChr];
-				args.Methy_List.NegA = new int[longestChr];
-				args.Methy_List.plusMethylated = new int[longestChr];
-				args.Methy_List.plusUnMethylated = new int[longestChr];
-				args.Methy_List.NegMethylated = new int[longestChr];
-				args.Methy_List.NegUnMethylated = new int[longestChr];
-				//=========Genome_List[i].Genome;
-				}catch(std::bad_alloc){
-					fprintf(stderr, "\nbad alloc in main array!\n");
-				}
-			}
+        if(Methratio)
+        {
+                try{
+                args.Methy_List.plusG = new int[longestChr];
+                args.Methy_List.plusA = new int[longestChr];
+                args.Methy_List.NegG = new int[longestChr];
+                args.Methy_List.NegA = new int[longestChr];
+                args.Methy_List.plusMethylated = new int[longestChr];
+                args.Methy_List.plusUnMethylated = new int[longestChr];
+                args.Methy_List.NegMethylated = new int[longestChr];
+                args.Methy_List.NegUnMethylated = new int[longestChr];
+                //=========Genome_List[i].Genome;
+                }catch(std::bad_alloc){
+                        fprintf(stderr, "\nbad alloc in main array!\n");
+                }
+
+                std::fill_n(args.Methy_List.plusG, longestChr, 0);
+                std::fill_n(args.Methy_List.plusA, longestChr, 0);
+                std::fill_n(args.Methy_List.NegG, longestChr, 0);
+                std::fill_n(args.Methy_List.NegA, longestChr, 0);
+                std::fill_n(args.Methy_List.plusMethylated, longestChr, 0);
+                std::fill_n(args.Methy_List.plusUnMethylated, longestChr, 0);
+                std::fill_n(args.Methy_List.NegMethylated, longestChr, 0);
+                std::fill_n(args.Methy_List.NegUnMethylated, longestChr, 0);
+        }
 			
 			fclose(GenomeFILE);
 			//fclose(Location_File);
@@ -761,13 +908,20 @@ int main(int argc, char* argv[])
 				fclose(ALIGNLOG);
 			}
             myMap.clear();
-			fprintf(stderr, "[DM::calmeth] dm closing\n");
-        	bmClose(fp);
+                        fprintf(stderr, "[DM::calmeth] dm closing\n");
+                bmClose(fp);
             if(tech=="NoMe"){
                 bmClose(fp_gch);
             }
-    	    fprintf(stderr, "[DM::calmeth] dm closed\n");
-	        bmCleanup();
+            fprintf(stderr, "[DM::calmeth] dm closed\n");
+            if(validateOutput && Methratio){
+                int validationStatus = validateDmFile(methOutfileName, true);
+                if(validationStatus == 0 && tech=="NoMe" && fp_gch){
+                    validationStatus = validateDmFile(GCHOutfileName, true);
+                }
+                if(validationStatus != 0) return validationStatus;
+            }
+                bmCleanup();
 //delete
 			fprintf(stderr, "[DM::calmeth] Done and release memory!\n");
 			for(int i =0; i < MAX_CHROM; i++){
@@ -946,21 +1100,28 @@ float *values_gch;
 uint16_t *coverages_gch;
 uint8_t *strands_gch;
 uint8_t *contexts_gch;
+
+static inline char safe_genome_base(const ARGS *args, int genome_index, int64_t pos) {
+        if(pos < 0 || pos >= args->Genome_Offsets[genome_index].Offset) {
+                return 'N';
+        }
+        return toupper(args->Genome_List[genome_index].Genome[pos]);
+}
 void print_meth_tofile(int genome_id, ARGS* args){
-	if(Methratio)
-	{
-		fprintf(stderr, "[DM::calmeth] Start process chrom %d\n", genome_id);
-		chromsUse = (char **)malloc(sizeof(char*)*MAX_LINE_PRINT);
-		//entryid = (char **)malloc(sizeof(char*)*MAX_LINE_PRINT);
-		//starts = (uint32_t *)malloc(sizeof(uint32_t) * MAX_LINE_PRINT);
-		starts = (uint32_t *)calloc(MAX_LINE_PRINT, sizeof(uint32_t));
-		pends = (uint32_t *)malloc(sizeof(uint32_t) * MAX_LINE_PRINT);
-		values = (float *)malloc(sizeof(float) * MAX_LINE_PRINT);
-		coverages = (uint16_t *)malloc(sizeof(uint16_t) * MAX_LINE_PRINT);
-		strands = (uint8_t *)malloc(sizeof(uint8_t) * MAX_LINE_PRINT);
-		contexts = (uint8_t *)malloc(sizeof(uint8_t) * MAX_LINE_PRINT);
-        //for GCH chromatin accessibility
+        if(Methratio)
+        {
+                fprintf(stderr, "[DM::calmeth] Start process chrom %d\n", genome_id);
+                chromsUse = (char **)malloc(sizeof(char*)*MAX_LINE_PRINT);
+                entryid = (char **)calloc(MAX_LINE_PRINT, sizeof(char*));
+                starts = (uint32_t *)calloc(MAX_LINE_PRINT, sizeof(uint32_t));
+                pends = (uint32_t *)malloc(sizeof(uint32_t) * MAX_LINE_PRINT);
+                values = (float *)malloc(sizeof(float) * MAX_LINE_PRINT);
+                coverages = (uint16_t *)malloc(sizeof(uint16_t) * MAX_LINE_PRINT);
+                strands = (uint8_t *)malloc(sizeof(uint8_t) * MAX_LINE_PRINT);
+                contexts = (uint8_t *)malloc(sizeof(uint8_t) * MAX_LINE_PRINT);
+//for GCH chromatin accessibility
         chromsUse_gch = (char **)malloc(sizeof(char*)*MAX_LINE_PRINT);
+        entryid_gch = (char **)calloc(MAX_LINE_PRINT, sizeof(char*));
         starts_gch = (uint32_t *)calloc(MAX_LINE_PRINT, sizeof(uint32_t));
         pends_gch = (uint32_t *)malloc(sizeof(uint32_t) * MAX_LINE_PRINT);
         values_gch = (float *)malloc(sizeof(float) * MAX_LINE_PRINT);
@@ -1459,6 +1620,7 @@ void print_meth_tofile(int genome_id, ARGS* args){
         }
 		fprintf(stderr, "[DM::calmeth] Free mem in all others\n\n");
         free(chromsUse); //free(entryid);
+        free(entryid);
 
         free(starts);
         free(pends); free(values); free(coverages); free(strands); free(contexts);
@@ -1469,6 +1631,7 @@ void print_meth_tofile(int genome_id, ARGS* args){
             }
             fprintf(stderr, "[DM::calmeth] Free mem in all others2\n\n");
             free(chromsUse_gch); //free(entryid);
+            free(entryid_gch);
             free(starts_gch);
             free(pends_gch); free(values_gch); free(coverages_gch); free(strands_gch); free(contexts_gch);
         }
@@ -1921,15 +2084,15 @@ void *Process_read(void *arg)
 //                            if(hitType==2 || hitType == 3) {if(k<2) continue;}
 //                        }
 
-						char genome_Char = toupper(((ARGS *)arg)->Genome_List[H].Genome[pos+g-1]);//
-						char genome_CharFor1 = toupper(((ARGS *)arg)->Genome_List[H].Genome[pos+g+1-1]);
-						char genome_CharFor2 = toupper(((ARGS *)arg)->Genome_List[H].Genome[pos+g+2-1]);
-						char genome_CharBac1,genome_CharBac2;
-						if(pos+g-1 > 2)
-						{
-							genome_CharBac1 = toupper(((ARGS *)arg)->Genome_List[H].Genome[pos+g-1-1]);
-							genome_CharBac2 = toupper(((ARGS *)arg)->Genome_List[H].Genome[pos+g-2-1]);
-						}
+                                                char genome_Char = safe_genome_base((ARGS *)arg, H, pos+g-1);
+                                                char genome_CharFor1 = safe_genome_base((ARGS *)arg, H, pos+g);
+                                                char genome_CharFor2 = safe_genome_base((ARGS *)arg, H, pos+g+1);
+                                                char genome_CharBac1 = 'N',genome_CharBac2 = 'N';
+                                                if(pos+g-1 > 2)
+                                                {
+                                                        genome_CharBac1 = safe_genome_base((ARGS *)arg, H, pos+g-2);
+                                                        genome_CharBac2 = safe_genome_base((ARGS *)arg, H, pos+g-3);
+                                                }
 						if (hitType==1 || hitType==3) {
                             if(hitType==1) {
                               if(k-lens<4){

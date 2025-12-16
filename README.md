@@ -99,6 +99,33 @@ For more information, please see https://dmtools-docs.rtfd.io/
 
 And calmeth in batmeth2-dm can convert align bs bam file to dm file, https://dmtools-docs.readthedocs.io/en/latest/function/bam2dm.html
 
+## Debugging and validation
+
+The `bam2dm` converter benefits from running with the address/undefined behaviour sanitizers enabled when investigating platform-specific crashes or corrupted DM output:
+
+```
+make clean
+CXXFLAGS="-O0 -g -fsanitize=address,undefined -fno-omit-frame-pointer" make bam2dm
+```
+
+Run the converter with verbose diagnostics and on-disk validation enabled to surface silent failures early:
+
+```
+./dmtools bam2dm --debug --validate-output \
+  -g test/test.chr1.f \
+  -b /tmp/minimal.bam \
+  -m /tmp/minimal.dm \
+  --chunk-by bin --bin-size 2000 --threads 1
+```
+
+To compare deterministic output across thread counts, rerun the same input with `--threads 2` (or higher) and ensure the `--validate-output` check succeeds for each run.
+
+To validate an existing DM without rewriting it, use the structural check mode, which returns a non-zero exit code on corruption and prints a short success message otherwise:
+
+```
+./dmtools bam2dm --check /tmp/minimal.dm
+```
+
 ### next steps
 - [x] add support for NOMe-seq
 - [x] add quality contorl and alignment (with fastp/bwa)
