@@ -933,6 +933,8 @@ int main(int argc, char *argv[]) {
         strcpy(cmd, abspathtmp);
         strcat(cmd, "bam2dm ");
         strcat(cmd, bam2bm_paras);
+        fprintf(stderr, "[dmtools] exec path for bam2dm: %sbam2dm\n", abspathtmp);
+        fprintf(stderr, "[dmtools] base command: %s\n", cmd);
         //char mergecmd[10000];
         char* mergecmd = (char*) malloc(10000 * sizeof(char));
         sprintf(mergecmd, "%s/dmtools merge --pr --outformat dm -o %s -i ", abspathtmp, outfile);
