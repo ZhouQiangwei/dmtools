@@ -142,6 +142,10 @@ struct BinTaskStats {
     int status = 0;
 };
 
+static bool gDebugMode = false;
+static uint64_t gDmRecordsWritten = 0;
+static uint64_t gDmRecordsWrittenGch = 0;
+
 struct BinPartFileHeader {
     uint32_t tid;
     uint64_t start;
@@ -862,6 +866,11 @@ static int validateDmFile(const std::string &dmPath, bool verbose) {
         }
         destroyOverlapBlock(overlaps);
     }
+    if(fp->idx->nItems == 0 || blocks.empty()) {
+        fprintf(stderr, "[dmcheck] no indexed data blocks found in %s (records=%" PRIu64 ")\n", dmPath.c_str(), gDmRecordsWritten);
+        bmClose(fp);
+        return 9;
+    }
     for(size_t i = 0; i < blocks.size(); ++i) {
         const uint64_t start = blocks[i].first;
         const uint64_t span = blocks[i].second;
@@ -1187,6 +1196,10 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    gDebugMode = debugMode;
+    gDmRecordsWritten = 0;
+    gDmRecordsWrittenGch = 0;
+
     if(chunkBy == "bin") {
         if(!bamformat) {
             fprintf(stderr, "--chunk-by bin currently requires BAM input via -b/--binput\n");
@@ -1417,17 +1430,19 @@ int main(int argc, char* argv[])
 
 			////read file
 			
-			if(Methratio){
-				if(printtxt == 1){
-					methOutfileName=Prefix;
-                    methOutfileName+=".methratio.txt";
-					METHOUTFILE=File_Open(methOutfileName.c_str(),"w");
-					fprintf(METHOUTFILE,"#chromsome\tloci\tstrand\tcontext\tC_count\tCT_count\tmethRatio\teff_CT_count\trev_G_count\trev_GA_count\tMethContext\t5context\n");
-				}
+                if(Methratio){
+                        if(printtxt == 1){
+                                methOutfileName=Prefix;
+                methOutfileName+=".methratio.txt";
+                                METHOUTFILE=File_Open(methOutfileName.c_str(),"w");
+                                fprintf(METHOUTFILE,"#chromsome\tloci\tstrand\tcontext\tC_count\tCT_count\tmethRatio\teff_CT_count\trev_G_count\trev_GA_count\tMethContext\t5context\n");
+                if(gDebugMode) fprintf(stderr, "[dm-writer] mrtxt path: %s\n", methOutfileName.c_str());
+                        }
 
-				fp = NULL;
-				methOutfileName=Prefix;
+                        fp = NULL;
+                        methOutfileName=Prefix;
 //                methOutfileName+=".methratio.dm";
+                        if(gDebugMode) fprintf(stderr, "[dm-writer] dm output path: %s\n", methOutfileName.c_str());
 
                                 if(bmInit(1<<17) != 0) {
                                         fprintf(stderr, "Received an error in dmInit\n");
@@ -1624,19 +1639,38 @@ int main(int argc, char* argv[])
 				fprintf(ALIGNLOG, "Mapped_forword\t%u\n", forward_mapped);
 				fprintf(ALIGNLOG, "Mapped_reverse\t%u\n", reverse_mapped);
 				fclose(ALIGNLOG);
-			}
-            myMap.clear();
-            fprintf(stderr, "[DM::calmeth] dm closing\n");
-            if(Methratio && fp){
-                bmClose(fp);
+        }
+    myMap.clear();
+    bool dmEmpty = Methratio && (gDmRecordsWritten == 0);
+    fprintf(stderr, "[DM::calmeth] dm closing\n");
+    if(Methratio && fp){
+        bmClose(fp);
+    }
+    if(Methratio && tech=="NoMe" && fp_gch){
+        bmClose(fp_gch);
+    }
+    fprintf(stderr, "[DM::calmeth] dm closed\n");
+    if(Methratio && gDebugMode) {
+        struct stat dmStat{};
+        if(stat(methOutfileName.c_str(), &dmStat) == 0) {
+            fprintf(stderr, "[dm-writer] %s size=%lld bytes records=%" PRIu64 "\n", methOutfileName.c_str(),
+                    static_cast<long long>(dmStat.st_size), gDmRecordsWritten);
+        }
+        if(tech=="NoMe") {
+            struct stat dmStatGch{};
+            if(stat(GCHOutfileName.c_str(), &dmStatGch) == 0) {
+                fprintf(stderr, "[dm-writer] %s size=%lld bytes records=%" PRIu64 "\n", GCHOutfileName.c_str(),
+                        static_cast<long long>(dmStatGch.st_size), gDmRecordsWrittenGch);
             }
-            if(Methratio && tech=="NoMe" && fp_gch){
-                bmClose(fp_gch);
-            }
-            fprintf(stderr, "[DM::calmeth] dm closed\n");
-            if(validateOutput && Methratio){
-                int validationStatus = validateDmFile(methOutfileName, true);
-                if(validationStatus == 0 && tech=="NoMe" && fp_gch){
+        }
+    }
+    if(dmEmpty) {
+        fprintf(stderr, "[dm-writer] no dm records were written to %s; mark as failure\n", methOutfileName.c_str());
+        return 1;
+    }
+    if(validateOutput && Methratio){
+        int validationStatus = validateDmFile(methOutfileName, true);
+        if(validationStatus == 0 && tech=="NoMe" && fp_gch){
                     validationStatus = validateDmFile(GCHOutfileName, true);
                 }
                 if(validationStatus != 0) return validationStatus;
@@ -1816,31 +1850,44 @@ uint16_t *coverages_gch;
 uint8_t *strands_gch;
 uint8_t *contexts_gch;
 void print_meth_tofile(int genome_id, ARGS* args){
-	if(Methratio)
-	{
-		fprintf(stderr, "[DM::calmeth] Start process chrom %d\n", genome_id);
-                chromsUse = (char **)calloc(MAX_LINE_PRINT, sizeof(char*));
-		//entryid = (char **)malloc(sizeof(char*)*MAX_LINE_PRINT);
-		//starts = (uint32_t *)malloc(sizeof(uint32_t) * MAX_LINE_PRINT);
-		starts = (uint32_t *)calloc(MAX_LINE_PRINT, sizeof(uint32_t));
-		pends = (uint32_t *)malloc(sizeof(uint32_t) * MAX_LINE_PRINT);
-		values = (float *)malloc(sizeof(float) * MAX_LINE_PRINT);
-		coverages = (uint16_t *)malloc(sizeof(uint16_t) * MAX_LINE_PRINT);
-		strands = (uint8_t *)malloc(sizeof(uint8_t) * MAX_LINE_PRINT);
-		contexts = (uint8_t *)malloc(sizeof(uint8_t) * MAX_LINE_PRINT);
-        //for GCH chromatin accessibility
-        chromsUse_gch = (char **)calloc(MAX_LINE_PRINT, sizeof(char*));
-        starts_gch = (uint32_t *)calloc(MAX_LINE_PRINT, sizeof(uint32_t));
-        pends_gch = (uint32_t *)malloc(sizeof(uint32_t) * MAX_LINE_PRINT);
-        values_gch = (float *)malloc(sizeof(float) * MAX_LINE_PRINT);
-        coverages_gch = (uint16_t *)malloc(sizeof(uint16_t) * MAX_LINE_PRINT);
-        strands_gch = (uint8_t *)malloc(sizeof(uint8_t) * MAX_LINE_PRINT);
-        contexts_gch = (uint8_t *)malloc(sizeof(uint8_t) * MAX_LINE_PRINT);
+        if(Methratio)
+        {
+            fprintf(stderr, "[DM::calmeth] Start process chrom %d\n", genome_id);
+            chromsUse = (char **)calloc(MAX_LINE_PRINT, sizeof(char*));
+            entryid = (char **)calloc(MAX_LINE_PRINT, sizeof(char*));
+            if(!chromsUse || !entryid) {
+                fprintf(stderr, "[dm-writer] failed to allocate output buffers\n");
+                return;
+            }
+            //starts = (uint32_t *)malloc(sizeof(uint32_t) * MAX_LINE_PRINT);
+            starts = (uint32_t *)calloc(MAX_LINE_PRINT, sizeof(uint32_t));
+            pends = (uint32_t *)malloc(sizeof(uint32_t) * MAX_LINE_PRINT);
+            values = (float *)malloc(sizeof(float) * MAX_LINE_PRINT);
+            coverages = (uint16_t *)malloc(sizeof(uint16_t) * MAX_LINE_PRINT);
+            strands = (uint8_t *)malloc(sizeof(uint8_t) * MAX_LINE_PRINT);
+            contexts = (uint8_t *)malloc(sizeof(uint8_t) * MAX_LINE_PRINT);
+    //for GCH chromatin accessibility
+    chromsUse_gch = (char **)calloc(MAX_LINE_PRINT, sizeof(char*));
+    entryid_gch = (char **)calloc(MAX_LINE_PRINT, sizeof(char*));
+    starts_gch = (uint32_t *)calloc(MAX_LINE_PRINT, sizeof(uint32_t));
+    pends_gch = (uint32_t *)malloc(sizeof(uint32_t) * MAX_LINE_PRINT);
+    values_gch = (float *)malloc(sizeof(float) * MAX_LINE_PRINT);
+    coverages_gch = (uint16_t *)malloc(sizeof(uint16_t) * MAX_LINE_PRINT);
+    strands_gch = (uint8_t *)malloc(sizeof(uint8_t) * MAX_LINE_PRINT);
+    contexts_gch = (uint8_t *)malloc(sizeof(uint8_t) * MAX_LINE_PRINT);
 
-		int printL = 0, chrprinHdr = 0, printL_gch = 0, chrprinHdr_gch = 0;
-		fprintf(stderr, "[DM::calmeth] Processing chrom %d %d %d\n", genome_id, totalC, totalG);
-		//--------DMC---------------//
-		//
+    if((tech=="NoMe" && (!chromsUse_gch || !entryid_gch)) || !starts || !pends || !values || !coverages || !strands || !contexts
+       || !starts_gch || !pends_gch || !values_gch || !coverages_gch || !strands_gch || !contexts_gch) {
+        fprintf(stderr, "[dm-writer] failed to allocate output buffers for dm writing\n");
+        return;
+    }
+
+        int printL = 0, chrprinHdr = 0, printL_gch = 0, chrprinHdr_gch = 0;
+        uint64_t chromRecords = 0;
+        uint64_t chromRecordsGch = 0;
+        fprintf(stderr, "[DM::calmeth] Processing chrom %d %d %d\n", genome_id, totalC, totalG);
+            //--------DMC---------------//
+            //
 		int plus_mCG=0,plus_mCHG=0,plus_mCHH=0;
 		int plusCG=0,plusCHG=0,plusCHH=0;
 		int count_plus_CG=0,count_plus_CHG=0,count_plus_CHH=0;
@@ -2012,14 +2059,19 @@ void print_meth_tofile(int genome_id, ARGS* args){
                                 fprintf(stderr, "bmAddIntervals failed for %s (code %d)\n", chromsUse[0], response);
                                 goto error;
                             }
+                            chromRecords++;
+                            gDmRecordsWritten++;
                         }
                         else if(printL>MAX_LINE_PRINT){
                             //We can continue appending similarly formatted entries
                             //N.B. you can't append a different chromosome (those always go into different
-                            if(bmAppendIntervals(fp, starts+1, pends+1, values+1, coverages+1, strands+1, contexts+1, entryid, printL-1)) {
+                            uint32_t appended = printL-1;
+                            if(bmAppendIntervals(fp, starts+1, pends+1, values+1, coverages+1, strands+1, contexts+1, entryid, appended)) {
                                 fprintf(stderr, "bmAppendIntervals failed while processing %s\n", chromsUse[0]);
                                 goto error;
                             }
+                            chromRecords += appended;
+                            gDmRecordsWritten += appended;
                             printL = 0;
                         }
                         chrprinHdr = 1;
@@ -2047,14 +2099,19 @@ void print_meth_tofile(int genome_id, ARGS* args){
                                     fprintf(stderr, "bmAddIntervals failed for %s (code %d)\n", chromsUse[0], response);
                                     goto error;
                                 }
+                                chromRecords++;
+                                gDmRecordsWritten++;
                             }
                             else if(printL>MAX_LINE_PRINT){
                                 //We can continue appending similarly formatted entries
                                 //N.B. you can't append a different chromosome (those always go into different
-                                if(bmAppendIntervals(fp, starts+1, pends+1, values+1, coverages+1, strands+1, contexts+1, entryid, printL-1)) {
+                                uint32_t appended = printL-1;
+                                if(bmAppendIntervals(fp, starts+1, pends+1, values+1, coverages+1, strands+1, contexts+1, entryid, appended)) {
                                     fprintf(stderr, "bmAppendIntervals failed while processing %s\n", chromsUse[0]);
                                     goto error;
                                 }
+                                chromRecords += appended;
+                                gDmRecordsWritten += appended;
                                 printL = 0;
                             }
                             chrprinHdr = 1;
@@ -2075,14 +2132,19 @@ void print_meth_tofile(int genome_id, ARGS* args){
                                     fprintf(stderr, "bmAddIntervals failed for %s (code %d)\n", chromsUse_gch[0], response);
                                     goto error;
                                 }
+                                chromRecordsGch++;
+                                gDmRecordsWrittenGch++;
                             }
                             else if(printL_gch>MAX_LINE_PRINT){
                                 //We can continue appending similarly formatted entries
                                 //N.B. you can't append a different chromosome (those always go into different
-                                if(bmAppendIntervals(fp_gch, starts_gch+1, pends_gch+1, values_gch+1, coverages_gch+1, strands_gch+1, contexts_gch+1, entryid_gch, printL_gch-1)) {
+                                uint32_t appended = printL_gch-1;
+                                if(bmAppendIntervals(fp_gch, starts_gch+1, pends_gch+1, values_gch+1, coverages_gch+1, strands_gch+1, contexts_gch+1, entryid_gch, appended)) {
                                     fprintf(stderr, "bmAppendIntervals failed while processing %s GCH output\n", chromsUse_gch[0]);
                                     goto error;
                                 }
+                                chromRecordsGch += appended;
+                                gDmRecordsWrittenGch += appended;
                                 printL_gch = 0;
                             }
                             chrprinHdr_gch = 1;
@@ -2229,25 +2291,30 @@ void print_meth_tofile(int genome_id, ARGS* args){
 					    }else{ // if(strcmp(context.c_str(), "CHH") == 0){
 					    	contexts[printL] = 3;
 					    }
-                                            printL++;
-                                            if(chrprinHdr==0){
-                                                int response = bmAddIntervals(fp, chromsUse, starts, pends, values, coverages, strands, contexts,
-                                    entryid, 1);
-                                    if(response) {
-                                        fprintf(stderr, "bmAddIntervals failed for %s (code %d)\n", chromsUse[0], response);
-                                        goto error;
-                                    }
-                                            }
-                                            else if(printL>MAX_LINE_PRINT){
-                                                //We can continue appending similarly formatted entries
-                                                //N.B. you can't append a different chromosome (those always go into different
-                                                if(bmAppendIntervals(fp, starts+1, pends+1, values+1, coverages+1, strands+1, contexts+1, entryid, printL-1)) {
-                                                    fprintf(stderr, "bmAppendIntervals failed while processing %s\n", chromsUse[0]);
-                                                    goto error;
-                                                }
-                                                printL = 0;
-                                            }
-					    chrprinHdr = 1;
+                        printL++;
+                        if(chrprinHdr==0){
+                            int response = bmAddIntervals(fp, chromsUse, starts, pends, values, coverages, strands, contexts,
+                            entryid, 1);
+                            if(response) {
+                                fprintf(stderr, "bmAddIntervals failed for %s (code %d)\n", chromsUse[0], response);
+                                goto error;
+                            }
+                            chromRecords++;
+                            gDmRecordsWritten++;
+                        }
+                        else if(printL>MAX_LINE_PRINT){
+                            //We can continue appending similarly formatted entries
+                            //N.B. you can't append a different chromosome (those always go into different
+                            uint32_t appended = printL-1;
+                            if(bmAppendIntervals(fp, starts+1, pends+1, values+1, coverages+1, strands+1, contexts+1, entryid, appended)) {
+                                fprintf(stderr, "bmAppendIntervals failed while processing %s\n", chromsUse[0]);
+                                goto error;
+                            }
+                            chromRecords += appended;
+                            gDmRecordsWritten += appended;
+                            printL = 0;
+                        }
+                        chrprinHdr = 1;
                         if(printtxt == 1){
                             if(revGA>0) fprintf(METHOUTFILE,"%s\t%d\t-\t%s\t%d\t%d\t%f\t%0.001f\t%d\t%d\t%s\t%s\n",args->Genome_Offsets[i].Genome,l+1,context.c_str(),C_count,(C_count+T_count),NegMethratio,float(C_count+T_count)*revGA,rev_G,(rev_G+rev_A),category.c_str(),Fcontext);
                             else fprintf(METHOUTFILE,"%s\t%d\t-\t%s\t%d\t%d\t%f\tnull\t%d\t%d\t%s\t%s\n",args->Genome_Offsets[i].Genome,l+1,context.c_str(),C_count,(C_count+T_count),NegMethratio,rev_G,(rev_G+rev_A),category.c_str(),Fcontext);
@@ -2273,14 +2340,19 @@ void print_meth_tofile(int genome_id, ARGS* args){
                                     fprintf(stderr, "bmAddIntervals failed for %s (code %d)\n", chromsUse[0], response);
                                     goto error;
                                 }
+                                chromRecords++;
+                                gDmRecordsWritten++;
                             }
                             else if(printL>MAX_LINE_PRINT){
                                 //We can continue appending similarly formatted entries
                                 //N.B. you can't append a different chromosome (those always go into different
-                                if(bmAppendIntervals(fp, starts+1, pends+1, values+1, coverages+1, strands+1, contexts+1, entryid, printL-1)) {
+                                uint32_t appended = printL-1;
+                                if(bmAppendIntervals(fp, starts+1, pends+1, values+1, coverages+1, strands+1, contexts+1, entryid, appended)) {
                                     fprintf(stderr, "bmAppendIntervals failed while processing %s\n", chromsUse[0]);
                                     goto error;
                                 }
+                                chromRecords += appended;
+                                gDmRecordsWritten += appended;
                                 printL = 0;
                             }
                             chrprinHdr = 1;
@@ -2300,14 +2372,19 @@ void print_meth_tofile(int genome_id, ARGS* args){
                                     fprintf(stderr, "bmAddIntervals failed for %s (code %d)\n", chromsUse_gch[0], response);
                                     goto error;
                                 }
+                                chromRecordsGch++;
+                                gDmRecordsWrittenGch++;
                             }
                             else if(printL_gch>MAX_LINE_PRINT){
                                 //We can continue appending similarly formatted entries
                                 //N.B. you can't append a different chromosome (those always go into different
-                                if(bmAppendIntervals(fp_gch, starts_gch+1, pends_gch+1, values_gch+1, coverages_gch+1, strands_gch+1, contexts_gch+1, entryid_gch, printL_gch-1)) {
+                                uint32_t appended = printL_gch-1;
+                                if(bmAppendIntervals(fp_gch, starts_gch+1, pends_gch+1, values_gch+1, coverages_gch+1, strands_gch+1, contexts_gch+1, entryid_gch, appended)) {
                                     fprintf(stderr, "bmAppendIntervals failed while processing %s GCH output\n", chromsUse_gch[0]);
                                     goto error;
                                 }
+                                chromRecordsGch += appended;
+                                gDmRecordsWrittenGch += appended;
                                 printL_gch = 0;
                             }
                             chrprinHdr_gch = 1;
@@ -2324,35 +2401,48 @@ void print_meth_tofile(int genome_id, ARGS* args){
 		}
 		//end print
         if(tech=="BS-Seq") {
-                    if(printL > 1) {
+            if(printL > 1) {
                 fprintf(stderr, "[DM::calmeth] print %d %d %d\n", starts[printL-1], pends[printL-1], printL-1);
-                if(bmAppendIntervals(fp, starts+1, pends+1, values+1, coverages+1, strands+1, contexts+1, entryid, printL-1)) {
+                uint32_t appended = printL-1;
+                if(bmAppendIntervals(fp, starts+1, pends+1, values+1, coverages+1, strands+1, contexts+1, entryid, appended)) {
                     fprintf(stderr, "bmAppendIntervals failed while finishing %s\n", chromsUse[0]);
                     goto error;
                 }
+                chromRecords += appended;
+                gDmRecordsWritten += appended;
                 printL = 0;
             }
         }else if(tech=="NoMe") {
             if(printL > 1) {
                 fprintf(stderr, "[DM::calmeth] print %d %d %d\n", starts[printL-1], pends[printL-1], printL-1);
-                if(bmAppendIntervals(fp, starts+1, pends+1, values+1, coverages+1, strands+1, contexts+1, entryid, printL-1)) {
+                uint32_t appended = printL-1;
+                if(bmAppendIntervals(fp, starts+1, pends+1, values+1, coverages+1, strands+1, contexts+1, entryid, appended)) {
                     fprintf(stderr, "bmAppendIntervals failed while finishing %s\n", chromsUse[0]);
                     goto error;
                 }
+                chromRecords += appended;
+                gDmRecordsWritten += appended;
                 printL = 0;
             }
             if(printL_gch > 1) {
                 fprintf(stderr, "[DM::calmeth] print %d %d %d\n", starts_gch[printL_gch-1], pends_gch[printL_gch-1], printL_gch-1);
-                if(bmAppendIntervals(fp_gch, starts_gch+1, pends_gch+1, values_gch+1, coverages_gch+1, strands_gch+1, contexts_gch+1, entryid_gch, printL_gch-1)) {
+                uint32_t appended = printL_gch-1;
+                if(bmAppendIntervals(fp_gch, starts_gch+1, pends_gch+1, values_gch+1, coverages_gch+1, strands_gch+1, contexts_gch+1, entryid_gch, appended)) {
                     fprintf(stderr, "bmAppendIntervals failed while finishing %s GCH output\n", chromsUse_gch[0]);
                     goto error;
                 }
+                chromRecordsGch += appended;
+                gDmRecordsWrittenGch += appended;
                 printL_gch = 0;
             }
         }
-		//
-		fprintf(stderr, "[DM::calmeth] Free mem in Methy_List\n");
-		for(i=0; i< longestChr; i++){
+        if(gDebugMode) {
+            fprintf(stderr, "[dm-writer] chrom %s records=%" PRIu64 " gch_records=%" PRIu64 "\n", args->Genome_Offsets[genome_id].Genome,
+                    chromRecords, chromRecordsGch);
+        }
+        //
+        fprintf(stderr, "[DM::calmeth] Free mem in Methy_List\n");
+        for(i=0; i< longestChr; i++){
 			args->Methy_List.plusG[i] = 0;
 			args->Methy_List.plusA[i] = 0;
 			args->Methy_List.NegG[i] = 0;
@@ -2371,8 +2461,9 @@ void print_meth_tofile(int genome_id, ARGS* args){
 			// //if(entryid[i]) free(entryid[i]);
 			//fprintf(stderr, "Free mem in chromsUse2 %d\n", i);
         }
-		fprintf(stderr, "[DM::calmeth] Free mem in all others\n\n");
-        free(chromsUse); //free(entryid);
+        fprintf(stderr, "[DM::calmeth] Free mem in all others\n\n");
+        free(chromsUse);
+        free(entryid);
 
         free(starts);
         free(pends); free(values); free(coverages); free(strands); free(contexts);
@@ -2382,7 +2473,8 @@ void print_meth_tofile(int genome_id, ARGS* args){
                 if(starts_gch[i]>0 && chromsUse_gch[i]) free(chromsUse_gch[i]);
             }
             fprintf(stderr, "[DM::calmeth] Free mem in all others2\n\n");
-            free(chromsUse_gch); //free(entryid);
+            free(chromsUse_gch);
+            free(entryid_gch);
             free(starts_gch);
             free(pends_gch); free(values_gch); free(coverages_gch); free(strands_gch); free(contexts_gch);
         }
