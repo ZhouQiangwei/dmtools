@@ -1886,6 +1886,52 @@ void print_meth_tofile(int genome_id, ARGS* args){
         uint64_t chromRecords = 0;
         uint64_t chromRecordsGch = 0;
         fprintf(stderr, "[DM::calmeth] Processing chrom %d %d %d\n", genome_id, totalC, totalG);
+        auto flushMethBuffer = [&](int &len) -> bool {
+            if(len == 0) return true;
+            int response = chrprinHdr
+                ? bmAppendIntervals(fp, starts, pends, values, coverages, strands, contexts, entryid, len)
+                : bmAddIntervals(fp, chromsUse, starts, pends, values, coverages, strands, contexts, entryid, len);
+            if(response) {
+                fprintf(stderr, "bm%sIntervals failed while processing %s (code %d)\n",
+                        chrprinHdr ? "Append" : "Add", chromsUse[0], response);
+                return false;
+            }
+            chromRecords += static_cast<uint64_t>(len);
+            gDmRecordsWritten += static_cast<uint64_t>(len);
+            chrprinHdr = 1;
+            for(int i = 0; i < len; ++i) {
+                if(chromsUse[i]) {
+                    free(chromsUse[i]);
+                    chromsUse[i] = NULL;
+                }
+                starts[i] = 0;
+            }
+            len = 0;
+            return true;
+        };
+        auto flushGchBuffer = [&](int &len) -> bool {
+            if(len == 0) return true;
+            int response = chrprinHdr_gch
+                ? bmAppendIntervals(fp_gch, starts_gch, pends_gch, values_gch, coverages_gch, strands_gch, contexts_gch, entryid_gch, len)
+                : bmAddIntervals(fp_gch, chromsUse_gch, starts_gch, pends_gch, values_gch, coverages_gch, strands_gch, contexts_gch, entryid_gch, len);
+            if(response) {
+                fprintf(stderr, "bm%sIntervals failed while processing %s GCH output (code %d)\n",
+                        chrprinHdr_gch ? "Append" : "Add", chromsUse_gch[0], response);
+                return false;
+            }
+            chromRecordsGch += static_cast<uint64_t>(len);
+            gDmRecordsWrittenGch += static_cast<uint64_t>(len);
+            chrprinHdr_gch = 1;
+            for(int i = 0; i < len; ++i) {
+                if(chromsUse_gch[i]) {
+                    free(chromsUse_gch[i]);
+                    chromsUse_gch[i] = NULL;
+                }
+                starts_gch[i] = 0;
+            }
+            len = 0;
+            return true;
+        };
             //--------DMC---------------//
             //
 		int plus_mCG=0,plus_mCHG=0,plus_mCHH=0;
@@ -2036,6 +2082,9 @@ void print_meth_tofile(int genome_id, ARGS* args){
 					    	if(!strcmp(context.c_str(),"CG")) U_CG++;
 					    }
                         //print store
+                        if(printL >= MAX_LINE_PRINT) {
+                            if(!flushMethBuffer(printL)) goto error;
+                        }
                         chromsUse[printL] = strdup(args->Genome_Offsets[i].Genome);
                         starts[printL] = l+1;
                         pends[printL] = l+2;
@@ -2052,29 +2101,6 @@ void print_meth_tofile(int genome_id, ARGS* args){
                             contexts[printL] = 3;
                         }
                         printL++;
-                        if(chrprinHdr==0){
-                            int response = bmAddIntervals(fp, chromsUse, starts, pends, values, coverages, strands, contexts,
-                            entryid, 1);
-                            if(response) {
-                                fprintf(stderr, "bmAddIntervals failed for %s (code %d)\n", chromsUse[0], response);
-                                goto error;
-                            }
-                            chromRecords++;
-                            gDmRecordsWritten++;
-                        }
-                        else if(printL>MAX_LINE_PRINT){
-                            //We can continue appending similarly formatted entries
-                            //N.B. you can't append a different chromosome (those always go into different
-                            uint32_t appended = printL-1;
-                            if(bmAppendIntervals(fp, starts+1, pends+1, values+1, coverages+1, strands+1, contexts+1, entryid, appended)) {
-                                fprintf(stderr, "bmAppendIntervals failed while processing %s\n", chromsUse[0]);
-                                goto error;
-                            }
-                            chromRecords += appended;
-                            gDmRecordsWritten += appended;
-                            printL = 0;
-                        }
-                        chrprinHdr = 1;
                         if(printtxt == 1){
                             if(revGA>0) fprintf(METHOUTFILE,"%s\t%d\t+\t%s\t%d\t%d\t%f\t%0.001f\t%d\t%d\t%s\t%s\n",args->Genome_Offsets[i].Genome,l+1,context.c_str(),C_count,(C_count+T_count),PlusMethratio,float(C_count+T_count)*revGA,rev_G,(rev_A+rev_G),category.c_str(),Fivecontext.c_str());
                             else fprintf(METHOUTFILE,"%s\t%d\t+\t%s\t%d\t%d\t%f\tnull\t%d\t%d\t%s\t%s\n",args->Genome_Offsets[i].Genome,l+1,context.c_str(),C_count,(C_count+T_count),PlusMethratio,rev_G,(rev_A+rev_G),category.c_str(),Fivecontext.c_str());
@@ -2083,7 +2109,9 @@ void print_meth_tofile(int genome_id, ARGS* args){
                         // 获取中间三个字符的子串
                         middleThree = Fivecontext.substr(1, 3);
                         if(middleThree=="ACG" || middleThree=="TCG") { //WCG for methylation
-                            //print store
+                            if(printL >= MAX_LINE_PRINT) {
+                                if(!flushMethBuffer(printL)) goto error;
+                            }
                             chromsUse[printL] = strdup(args->Genome_Offsets[i].Genome);
                             starts[printL] = l+1;
                             pends[printL] = l+2;
@@ -2092,30 +2120,10 @@ void print_meth_tofile(int genome_id, ARGS* args){
                             strands[printL] = 0; //0 represent '+'
                             contexts[printL] = 0;
                             printL++;
-                            if(chrprinHdr==0){
-                                int response = bmAddIntervals(fp, chromsUse, starts, pends, values, coverages, strands, contexts,
-                                entryid, 1);
-                                if(response) {
-                                    fprintf(stderr, "bmAddIntervals failed for %s (code %d)\n", chromsUse[0], response);
-                                    goto error;
-                                }
-                                chromRecords++;
-                                gDmRecordsWritten++;
-                            }
-                            else if(printL>MAX_LINE_PRINT){
-                                //We can continue appending similarly formatted entries
-                                //N.B. you can't append a different chromosome (those always go into different
-                                uint32_t appended = printL-1;
-                                if(bmAppendIntervals(fp, starts+1, pends+1, values+1, coverages+1, strands+1, contexts+1, entryid, appended)) {
-                                    fprintf(stderr, "bmAppendIntervals failed while processing %s\n", chromsUse[0]);
-                                    goto error;
-                                }
-                                chromRecords += appended;
-                                gDmRecordsWritten += appended;
-                                printL = 0;
-                            }
-                            chrprinHdr = 1;
                         }else if(middleThree=="GCA" || middleThree=="GCT" || middleThree=="GCC") { //GCH for chromatin accessibility
+                            if(printL_gch >= MAX_LINE_PRINT) {
+                                if(!flushGchBuffer(printL_gch)) goto error;
+                            }
                             chromsUse_gch[printL_gch] = strdup(args->Genome_Offsets[i].Genome);
                             starts_gch[printL_gch] = l+1;
                             pends_gch[printL_gch] = l+2;
@@ -2123,31 +2131,7 @@ void print_meth_tofile(int genome_id, ARGS* args){
                             values_gch[printL_gch] = PlusMethratio;
                             strands_gch[printL_gch] = 0; //0 represent '+'
                             contexts_gch[printL_gch] = 0;
-                            //fprintf(stderr, "\n%s %d %d %f\n", strdup(args->Genome_Offsets[i].Genome), l+1, C_count+T_count, PlusMethratio);
                             printL_gch++;
-                            if(chrprinHdr_gch==0){
-                                int response = bmAddIntervals(fp_gch, chromsUse_gch, starts_gch, pends_gch, values_gch, coverages_gch, strands_gch, contexts_gch,
-                                entryid_gch, 1);
-                                if(response) {
-                                    fprintf(stderr, "bmAddIntervals failed for %s (code %d)\n", chromsUse_gch[0], response);
-                                    goto error;
-                                }
-                                chromRecordsGch++;
-                                gDmRecordsWrittenGch++;
-                            }
-                            else if(printL_gch>MAX_LINE_PRINT){
-                                //We can continue appending similarly formatted entries
-                                //N.B. you can't append a different chromosome (those always go into different
-                                uint32_t appended = printL_gch-1;
-                                if(bmAppendIntervals(fp_gch, starts_gch+1, pends_gch+1, values_gch+1, coverages_gch+1, strands_gch+1, contexts_gch+1, entryid_gch, appended)) {
-                                    fprintf(stderr, "bmAppendIntervals failed while processing %s GCH output\n", chromsUse_gch[0]);
-                                    goto error;
-                                }
-                                chromRecordsGch += appended;
-                                gDmRecordsWrittenGch += appended;
-                                printL_gch = 0;
-                            }
-                            chrprinHdr_gch = 1;
                         }
                     }
 
@@ -2275,46 +2259,26 @@ void print_meth_tofile(int genome_id, ARGS* args){
 			                category="U";
 			                if(!strcmp(context.c_str(),"CG")) U_CG++;
 			            }
-					    //print store
-					    chromsUse[printL] = strdup(args->Genome_Offsets[i].Genome);
-					    starts[printL] = l+1;
-					    pends[printL] = l+2;
-					    coverages[printL] = (C_count+T_count);
-                	    values[printL] = NegMethratio;
-					    strands[printL] = 1; //1 represent '-'
-					    if(strcmp(context.c_str(), "C") == 0){
-					    	contexts[printL] = 0;
-					    }else if(strcmp(context.c_str(), "CG") == 0){
-					    	contexts[printL] = 1;
-					    }else if(strcmp(context.c_str(), "CHG") == 0){
-					    	contexts[printL] = 2;
-					    }else{ // if(strcmp(context.c_str(), "CHH") == 0){
-					    	contexts[printL] = 3;
-					    }
+                        if(printL >= MAX_LINE_PRINT) {
+                            if(!flushMethBuffer(printL)) goto error;
+                        }
+                        //print store
+                        chromsUse[printL] = strdup(args->Genome_Offsets[i].Genome);
+                        starts[printL] = l+1;
+                        pends[printL] = l+2;
+                        coverages[printL] = (C_count+T_count);
+                            values[printL] = NegMethratio;
+                        strands[printL] = 1; //1 represent '-'
+                        if(strcmp(context.c_str(), "C") == 0){
+                            contexts[printL] = 0;
+                        }else if(strcmp(context.c_str(), "CG") == 0){
+                            contexts[printL] = 1;
+                        }else if(strcmp(context.c_str(), "CHG") == 0){
+                            contexts[printL] = 2;
+                        }else{ // if(strcmp(context.c_str(), "CHH") == 0){
+                            contexts[printL] = 3;
+                        }
                         printL++;
-                        if(chrprinHdr==0){
-                            int response = bmAddIntervals(fp, chromsUse, starts, pends, values, coverages, strands, contexts,
-                            entryid, 1);
-                            if(response) {
-                                fprintf(stderr, "bmAddIntervals failed for %s (code %d)\n", chromsUse[0], response);
-                                goto error;
-                            }
-                            chromRecords++;
-                            gDmRecordsWritten++;
-                        }
-                        else if(printL>MAX_LINE_PRINT){
-                            //We can continue appending similarly formatted entries
-                            //N.B. you can't append a different chromosome (those always go into different
-                            uint32_t appended = printL-1;
-                            if(bmAppendIntervals(fp, starts+1, pends+1, values+1, coverages+1, strands+1, contexts+1, entryid, appended)) {
-                                fprintf(stderr, "bmAppendIntervals failed while processing %s\n", chromsUse[0]);
-                                goto error;
-                            }
-                            chromRecords += appended;
-                            gDmRecordsWritten += appended;
-                            printL = 0;
-                        }
-                        chrprinHdr = 1;
                         if(printtxt == 1){
                             if(revGA>0) fprintf(METHOUTFILE,"%s\t%d\t-\t%s\t%d\t%d\t%f\t%0.001f\t%d\t%d\t%s\t%s\n",args->Genome_Offsets[i].Genome,l+1,context.c_str(),C_count,(C_count+T_count),NegMethratio,float(C_count+T_count)*revGA,rev_G,(rev_G+rev_A),category.c_str(),Fcontext);
                             else fprintf(METHOUTFILE,"%s\t%d\t-\t%s\t%d\t%d\t%f\tnull\t%d\t%d\t%s\t%s\n",args->Genome_Offsets[i].Genome,l+1,context.c_str(),C_count,(C_count+T_count),NegMethratio,rev_G,(rev_G+rev_A),category.c_str(),Fcontext);
@@ -2324,7 +2288,9 @@ void print_meth_tofile(int genome_id, ARGS* args){
                         string fivestring = Fcontext;
                         middleThree = fivestring.substr(1, 3);
                         if(middleThree=="ACG" || middleThree=="TCG") { //WCG for methylation
-                            //print store
+                            if(printL >= MAX_LINE_PRINT) {
+                                if(!flushMethBuffer(printL)) goto error;
+                            }
                             chromsUse[printL] = strdup(args->Genome_Offsets[i].Genome);
                             starts[printL] = l+1;
                             pends[printL] = l+2;
@@ -2333,30 +2299,10 @@ void print_meth_tofile(int genome_id, ARGS* args){
                             strands[printL] = 1;
                             contexts[printL] = 0;
                             printL++;
-                            if(chrprinHdr==0){
-                                int response = bmAddIntervals(fp, chromsUse, starts, pends, values, coverages, strands, contexts,
-                                entryid, 1);
-                                if(response) {
-                                    fprintf(stderr, "bmAddIntervals failed for %s (code %d)\n", chromsUse[0], response);
-                                    goto error;
-                                }
-                                chromRecords++;
-                                gDmRecordsWritten++;
-                            }
-                            else if(printL>MAX_LINE_PRINT){
-                                //We can continue appending similarly formatted entries
-                                //N.B. you can't append a different chromosome (those always go into different
-                                uint32_t appended = printL-1;
-                                if(bmAppendIntervals(fp, starts+1, pends+1, values+1, coverages+1, strands+1, contexts+1, entryid, appended)) {
-                                    fprintf(stderr, "bmAppendIntervals failed while processing %s\n", chromsUse[0]);
-                                    goto error;
-                                }
-                                chromRecords += appended;
-                                gDmRecordsWritten += appended;
-                                printL = 0;
-                            }
-                            chrprinHdr = 1;
                         }else if(middleThree=="GCA" || middleThree=="GCT" || middleThree=="GCC") { //GCH for chromatin accessibility
+                            if(printL_gch >= MAX_LINE_PRINT) {
+                                if(!flushGchBuffer(printL_gch)) goto error;
+                            }
                             chromsUse_gch[printL_gch] = strdup(args->Genome_Offsets[i].Genome);
                             starts_gch[printL_gch] = l+1;
                             pends_gch[printL_gch] = l+2;
@@ -2365,29 +2311,6 @@ void print_meth_tofile(int genome_id, ARGS* args){
                             strands_gch[printL_gch] = 1;
                             contexts_gch[printL_gch] = 0;
                             printL_gch++;
-                            if(chrprinHdr_gch==0){
-                                int response = bmAddIntervals(fp_gch, chromsUse_gch, starts_gch, pends_gch, values_gch, coverages_gch, strands_gch, contexts_gch,
-                                entryid_gch, 1);
-                                if(response) {
-                                    fprintf(stderr, "bmAddIntervals failed for %s (code %d)\n", chromsUse_gch[0], response);
-                                    goto error;
-                                }
-                                chromRecordsGch++;
-                                gDmRecordsWrittenGch++;
-                            }
-                            else if(printL_gch>MAX_LINE_PRINT){
-                                //We can continue appending similarly formatted entries
-                                //N.B. you can't append a different chromosome (those always go into different
-                                uint32_t appended = printL_gch-1;
-                                if(bmAppendIntervals(fp_gch, starts_gch+1, pends_gch+1, values_gch+1, coverages_gch+1, strands_gch+1, contexts_gch+1, entryid_gch, appended)) {
-                                    fprintf(stderr, "bmAppendIntervals failed while processing %s GCH output\n", chromsUse_gch[0]);
-                                    goto error;
-                                }
-                                chromRecordsGch += appended;
-                                gDmRecordsWrittenGch += appended;
-                                printL_gch = 0;
-                            }
-                            chrprinHdr_gch = 1;
                         }
                     }
 
@@ -2400,41 +2323,9 @@ void print_meth_tofile(int genome_id, ARGS* args){
 			}
 		}
 		//end print
-        if(tech=="BS-Seq") {
-            if(printL > 1) {
-                fprintf(stderr, "[DM::calmeth] print %d %d %d\n", starts[printL-1], pends[printL-1], printL-1);
-                uint32_t appended = printL-1;
-                if(bmAppendIntervals(fp, starts+1, pends+1, values+1, coverages+1, strands+1, contexts+1, entryid, appended)) {
-                    fprintf(stderr, "bmAppendIntervals failed while finishing %s\n", chromsUse[0]);
-                    goto error;
-                }
-                chromRecords += appended;
-                gDmRecordsWritten += appended;
-                printL = 0;
-            }
-        }else if(tech=="NoMe") {
-            if(printL > 1) {
-                fprintf(stderr, "[DM::calmeth] print %d %d %d\n", starts[printL-1], pends[printL-1], printL-1);
-                uint32_t appended = printL-1;
-                if(bmAppendIntervals(fp, starts+1, pends+1, values+1, coverages+1, strands+1, contexts+1, entryid, appended)) {
-                    fprintf(stderr, "bmAppendIntervals failed while finishing %s\n", chromsUse[0]);
-                    goto error;
-                }
-                chromRecords += appended;
-                gDmRecordsWritten += appended;
-                printL = 0;
-            }
-            if(printL_gch > 1) {
-                fprintf(stderr, "[DM::calmeth] print %d %d %d\n", starts_gch[printL_gch-1], pends_gch[printL_gch-1], printL_gch-1);
-                uint32_t appended = printL_gch-1;
-                if(bmAppendIntervals(fp_gch, starts_gch+1, pends_gch+1, values_gch+1, coverages_gch+1, strands_gch+1, contexts_gch+1, entryid_gch, appended)) {
-                    fprintf(stderr, "bmAppendIntervals failed while finishing %s GCH output\n", chromsUse_gch[0]);
-                    goto error;
-                }
-                chromRecordsGch += appended;
-                gDmRecordsWrittenGch += appended;
-                printL_gch = 0;
-            }
+        if(!flushMethBuffer(printL)) goto error;
+        if(tech=="NoMe") {
+            if(!flushGchBuffer(printL_gch)) goto error;
         }
         if(gDebugMode) {
             fprintf(stderr, "[dm-writer] chrom %s records=%" PRIu64 " gch_records=%" PRIu64 "\n", args->Genome_Offsets[genome_id].Genome,
@@ -2483,7 +2374,16 @@ void print_meth_tofile(int genome_id, ARGS* args){
 	return;
 
 error:
-	fprintf(stderr, "\nEEEEE main Received an error somewhere!\n");
+        if(fp) {
+            bmClose(fp);
+            fp = NULL;
+        }
+        if(fp_gch) {
+            bmClose(fp_gch);
+            fp_gch = NULL;
+        }
+        fprintf(stderr, "\nEEEEE main Received an error somewhere!\n");
+        return;
 }
 
 char *fastStrcat(char *s, char *t)
@@ -2603,15 +2503,22 @@ int processbamread(const bam_hdr_t *header, const bam1_t *b, char* Dummy,int &Fl
 
 	//define
 	if(Flag==4 || (int)pos <= 0 ) return -1;
-	char strtemp[256];int j=0;
+        char strtemp[256];
+        size_t j=0;
         if (c->n_cigar == 0) return -1;
         else {
                 for (i = 0; i < c->n_cigar; ++i) {
-                    	sprintf(strtemp, "%d%c", bam_get_cigar(b)[i]>>BAM_CIGAR_SHIFT, "MIDNSHP=X"[bam_get_cigar(b)[i]&BAM_CIGAR_MASK]);
-			for(int l= 0; l<strlen(strtemp); ++l,j++) CIG[j] = strtemp[l];
+                        int written = snprintf(strtemp, sizeof(strtemp), "%d%c", bam_get_cigar(b)[i]>>BAM_CIGAR_SHIFT, "MIDNSHP=X"[bam_get_cigar(b)[i]&BAM_CIGAR_MASK]);
+                        if(written < 0) return -1;
+                        if(j + static_cast<size_t>(written) >= BATBUF) {
+                                fprintf(stderr, "[bam2dm] CIGAR string too long for buffer on read %s\n", Dummy);
+                                return -1;
+                        }
+                        memcpy(CIG + j, strtemp, static_cast<size_t>(written));
+                        j += static_cast<size_t>(written);
                 }
         }
-	CIG[j] = '\0';
+        CIG[j] = '\0';
         if (c->mtid < 0) Chrom_P[0] =  '*';
         else if (c->mtid == c->tid) sprintf(Chrom_P, "="); 
         else {
