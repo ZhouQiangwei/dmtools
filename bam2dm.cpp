@@ -153,6 +153,15 @@ struct BinPartFileHeader {
     uint32_t nRecords;
 };
 
+struct BinPartLocator {
+    int shard;
+    uint64_t offset;
+    uint32_t nRecords;
+    uint32_t tid;
+    uint64_t start;
+    uint64_t end;
+};
+
 struct BinPartRecord {
     uint32_t pos;
     uint32_t end;
@@ -168,8 +177,9 @@ static int materializeBinTasksToBed(const std::string &genomePath, const std::st
 static int loadBinTasksFromBed(const std::string &bedPath, std::vector<BinTask> &tasks, bool debugMode);
 static int validateDmFile(const std::string &dmPath, bool verbose);
 static int runBinTasksToParts(const std::string &bamPath, const std::vector<BinTask> &tasks, int threads,
-                              const std::string &partDir, bool debugMode);
+                              const std::string &partDir, bool debugMode, std::vector<BinPartLocator> &locators);
 static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<BinTask> &tasks,
+                             const std::vector<BinPartLocator> &locators, int shardCount,
                              const std::string &partDir, const std::string &dmPath, int zoomlevel,
                              bool debugMode, bool validateOutput);
 
@@ -492,7 +502,7 @@ static int loadBinTasksFromBed(const std::string &bedPath, std::vector<BinTask> 
 }
 
 static int runBinTasksToParts(const std::string &bamPath, const std::vector<BinTask> &tasks, int threads,
-                              const std::string &partDir, bool debugMode) {
+                              const std::string &partDir, bool debugMode, std::vector<BinPartLocator> &locators) {
     if(bamPath.empty()) {
         fprintf(stderr, "[bin] input BAM/SAM is required for --chunk-by bin mode\n");
         return 1;
@@ -504,7 +514,8 @@ static int runBinTasksToParts(const std::string &bamPath, const std::vector<BinT
 
     if(threads < 1) threads = 1;
     if(debugMode) {
-        fprintf(stderr, "[bin] initializing %zu tasks across %d thread(s) (parts=%s)\n", tasks.size(), threads, partDir.c_str());
+        fprintf(stderr, "[bin] initializing %zu tasks across %d thread(s) (shards=%d dir=%s)\n", tasks.size(), threads, threads,
+                partDir.c_str());
     }
 
     if(partDir.empty()) {
@@ -519,12 +530,30 @@ static int runBinTasksToParts(const std::string &bamPath, const std::vector<BinT
     std::atomic<size_t> nextTask(0);
     std::atomic<int> workerError(0);
     std::mutex logMutex;
+    locators.assign(tasks.size(), {-1, 0, 0, 0, 0, 0});
+
+    std::vector<std::string> shardPaths;
+    shardPaths.reserve(threads);
+    for(int t = 0; t < threads; ++t) {
+        char tmpPath[PATH_MAX];
+        snprintf(tmpPath, sizeof(tmpPath), "%s/thread_%d.tmp", partDir.c_str(), t);
+        shardPaths.emplace_back(tmpPath);
+    }
 
     auto worker = [&](int workerId) {
+        FILE *shard = fopen(shardPaths[workerId].c_str(), "wb+");
+        if(!shard) {
+            std::lock_guard<std::mutex> lock(logMutex);
+            fprintf(stderr, "[bin-worker-%d] failed to open shard %s: %s\n", workerId, shardPaths[workerId].c_str(),
+                    strerror(errno));
+            workerError.store(1);
+            return;
+        }
         samFile *bam = sam_open(bamPath.c_str(), "rb");
         if(!bam) {
             fprintf(stderr, "[bin-worker-%d] failed to open %s\n", workerId, bamPath.c_str());
             workerError.store(1);
+            fclose(shard);
             return;
         }
         bam_hdr_t *header = sam_hdr_read(bam);
@@ -532,6 +561,7 @@ static int runBinTasksToParts(const std::string &bamPath, const std::vector<BinT
             fprintf(stderr, "[bin-worker-%d] failed to read BAM header from %s\n", workerId, bamPath.c_str());
             sam_close(bam);
             workerError.store(1);
+            fclose(shard);
             return;
         }
         hts_idx_t *idx = sam_index_load(bam, bamPath.c_str());
@@ -540,6 +570,7 @@ static int runBinTasksToParts(const std::string &bamPath, const std::vector<BinT
             bam_hdr_destroy(header);
             sam_close(bam);
             workerError.store(1);
+            fclose(shard);
             return;
         }
 
@@ -549,6 +580,7 @@ static int runBinTasksToParts(const std::string &bamPath, const std::vector<BinT
             hts_idx_destroy(idx);
             bam_hdr_destroy(header);
             sam_close(bam);
+            fclose(shard);
             workerError.store(1);
             return;
         }
@@ -594,33 +626,39 @@ static int runBinTasksToParts(const std::string &bamPath, const std::vector<BinT
                 return a.pos < b.pos;
             });
 
-            char partPath[PATH_MAX];
-            snprintf(partPath, sizeof(partPath), "%s/task_%zu.tmp", partDir.c_str(), task.index);
-            FILE *out = fopen(partPath, "wb");
-            if(!out) {
+            BinPartLocator loc{};
+            loc.shard = workerId;
+            loc.tid = static_cast<uint32_t>(tid);
+            loc.start = static_cast<uint64_t>(task.start);
+            loc.end = static_cast<uint64_t>(task.end);
+            loc.nRecords = static_cast<uint32_t>(records.size());
+
+            off64_t off = ftello64(shard);
+            if(off < 0) {
                 std::lock_guard<std::mutex> lock(logMutex);
-                fprintf(stderr, "[bin-worker-%d] failed to open part %s: %s\n", workerId, partPath, strerror(errno));
+                fprintf(stderr, "[bin-worker-%d] failed to get offset for shard %s\n", workerId, shardPaths[workerId].c_str());
                 workerError.store(1);
             } else {
+                loc.offset = static_cast<uint64_t>(off);
                 BinPartFileHeader hdr{};
-                hdr.tid = static_cast<uint32_t>(tid);
-                hdr.start = static_cast<uint64_t>(task.start);
-                hdr.end = static_cast<uint64_t>(task.end);
-                hdr.nRecords = static_cast<uint32_t>(records.size());
-                size_t wrote = fwrite(&hdr, sizeof(BinPartFileHeader), 1, out);
+                hdr.tid = loc.tid;
+                hdr.start = loc.start;
+                hdr.end = loc.end;
+                hdr.nRecords = loc.nRecords;
+                size_t wrote = fwrite(&hdr, sizeof(BinPartFileHeader), 1, shard);
                 if(wrote != 1) {
                     std::lock_guard<std::mutex> lock(logMutex);
-                    fprintf(stderr, "[bin-worker-%d] failed to write header for %s\n", workerId, partPath);
+                    fprintf(stderr, "[bin-worker-%d] failed to write header for shard %s\n", workerId, shardPaths[workerId].c_str());
                     workerError.store(1);
                 } else if(!records.empty()) {
-                    wrote = fwrite(records.data(), sizeof(BinPartRecord), records.size(), out);
+                    wrote = fwrite(records.data(), sizeof(BinPartRecord), records.size(), shard);
                     if(wrote != records.size()) {
                         std::lock_guard<std::mutex> lock(logMutex);
-                        fprintf(stderr, "[bin-worker-%d] failed to write records for %s\n", workerId, partPath);
+                        fprintf(stderr, "[bin-worker-%d] failed to write records for shard %s\n", workerId, shardPaths[workerId].c_str());
                         workerError.store(1);
                     }
                 }
-                fclose(out);
+                locators[task.index] = loc;
             }
 
             if(debugMode) {
@@ -634,6 +672,7 @@ static int runBinTasksToParts(const std::string &bamPath, const std::vector<BinT
         hts_idx_destroy(idx);
         bam_hdr_destroy(header);
         sam_close(bam);
+        fclose(shard);
     };
 
     std::vector<std::thread> pool;
@@ -647,10 +686,16 @@ static int runBinTasksToParts(const std::string &bamPath, const std::vector<BinT
 }
 
 static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<BinTask> &tasks,
+                             const std::vector<BinPartLocator> &locators, int shardCount,
                              const std::string &partDir, const std::string &dmPath, int zoomlevel,
                              bool debugMode, bool validateOutput) {
     if(tasks.empty()) {
         fprintf(stderr, "[bin] no tasks to merge\n");
+        return 1;
+    }
+
+    if(locators.size() != tasks.size()) {
+        fprintf(stderr, "[bin] locator map does not match task list\n");
         return 1;
     }
 
@@ -720,6 +765,21 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
         return a.chrom < b.chrom;
     });
 
+    std::vector<FILE*> shardReaders(shardCount, NULL);
+    for(int s = 0; s < shardCount; ++s) {
+        char shardPath[PATH_MAX];
+        snprintf(shardPath, sizeof(shardPath), "%s/thread_%d.tmp", partDir.c_str(), s);
+        shardReaders[s] = fopen(shardPath, "rb");
+        if(!shardReaders[s]) {
+            fprintf(stderr, "[bin] failed to open shard %s\n", shardPath);
+            for(int i = 0; i < nseq; ++i) if(chroms[i]) free(chroms[i]);
+            free(chroms); free(lens);
+            fai_destroy(fai);
+            bmClose(out);
+            return 1;
+        }
+    }
+
     std::vector<char*> chromBuf(MAX_LINE_PRINT, NULL);
     std::vector<uint32_t> startBuf(MAX_LINE_PRINT, 0);
     std::vector<uint32_t> endBuf(MAX_LINE_PRINT, 0);
@@ -730,12 +790,22 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
     std::vector<char*> entryBuf(MAX_LINE_PRINT, NULL);
 
     for(const auto &task : ordered) {
-        char partPath[PATH_MAX];
-        snprintf(partPath, sizeof(partPath), "%s/task_%zu.tmp", partDir.c_str(), task.index);
-        FILE *in = fopen(partPath, "rb");
-        if(!in) {
-            fprintf(stderr, "[bin] failed to open part %s\n", partPath);
+        const BinPartLocator &loc = locators[task.index];
+        if(loc.shard < 0 || loc.shard >= shardCount) {
+            fprintf(stderr, "[bin] missing shard assignment for task %zu (%s:%" PRId64 "-%" PRId64 ")\n",
+                    task.index, task.chrom.c_str(), task.start, task.end);
             bmClose(out);
+            for(auto fh : shardReaders) if(fh) fclose(fh);
+            for(int i = 0; i < nseq; ++i) if(chroms[i]) free(chroms[i]);
+            free(chroms); free(lens);
+            fai_destroy(fai);
+            return 1;
+        }
+        FILE *in = shardReaders[loc.shard];
+        if(fseeko64(in, static_cast<off64_t>(loc.offset), SEEK_SET) != 0) {
+            fprintf(stderr, "[bin] failed to seek shard %d for task %zu\n", loc.shard, task.index);
+            bmClose(out);
+            for(auto fh : shardReaders) if(fh) fclose(fh);
             for(int i = 0; i < nseq; ++i) if(chroms[i]) free(chroms[i]);
             free(chroms); free(lens);
             fai_destroy(fai);
@@ -743,9 +813,18 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
         }
         BinPartFileHeader hdr{};
         if(fread(&hdr, sizeof(BinPartFileHeader), 1, in) != 1) {
-            fprintf(stderr, "[bin] failed to read header from %s\n", partPath);
-            fclose(in);
+            fprintf(stderr, "[bin] failed to read header for task %zu from shard %d\n", task.index, loc.shard);
             bmClose(out);
+            for(auto fh : shardReaders) if(fh) fclose(fh);
+            for(int i = 0; i < nseq; ++i) if(chroms[i]) free(chroms[i]);
+            free(chroms); free(lens);
+            fai_destroy(fai);
+            return 1;
+        }
+        if(hdr.nRecords != loc.nRecords || hdr.start != loc.start || hdr.end != loc.end || hdr.tid != loc.tid) {
+            fprintf(stderr, "[bin] shard metadata mismatch for task %zu (shard %d)\n", task.index, loc.shard);
+            bmClose(out);
+            for(auto fh : shardReaders) if(fh) fclose(fh);
             for(int i = 0; i < nseq; ++i) if(chroms[i]) free(chroms[i]);
             free(chroms); free(lens);
             fai_destroy(fai);
@@ -756,9 +835,9 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
             std::vector<BinPartRecord> recs(hdr.nRecords);
             size_t rd = fread(recs.data(), sizeof(BinPartRecord), hdr.nRecords, in);
             if(rd != hdr.nRecords) {
-                fprintf(stderr, "[bin] truncated part file %s\n", partPath);
-                fclose(in);
+                fprintf(stderr, "[bin] truncated part file for task %zu on shard %d\n", task.index, loc.shard);
                 bmClose(out);
+                for(auto fh : shardReaders) if(fh) fclose(fh);
                 for(int i = 0; i < nseq; ++i) if(chroms[i]) free(chroms[i]);
                 free(chroms); free(lens);
                 fai_destroy(fai);
@@ -793,9 +872,9 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
                 offset += chunk;
             }
         }
-        fclose(in);
     }
 
+    for(auto fh : shardReaders) if(fh) fclose(fh);
     bmClose(out);
     for(int i = 0; i < nseq; ++i) if(chroms[i]) free(chroms[i]);
     free(chroms); free(lens);
@@ -1242,13 +1321,14 @@ int main(int argc, char* argv[])
         }
         std::string bamPath = argv[InFileStart];
         std::string partDir = Prefix + ".parts";
-        rc = runBinTasksToParts(bamPath, tasks, NTHREADS, partDir, debugMode);
+        std::vector<BinPartLocator> locators;
+        rc = runBinTasksToParts(bamPath, tasks, NTHREADS, partDir, debugMode, locators);
         if(rc == 0) {
-            rc = mergeBinPartsToDm(Geno, tasks, partDir, methOutfileName, zoomlevel, debugMode, validateOutput);
+            rc = mergeBinPartsToDm(Geno, tasks, locators, std::max(1, NTHREADS), partDir, methOutfileName, zoomlevel, debugMode, validateOutput);
         }
-        for(const auto &task : tasks) {
+        for(int t = 0; t < std::max(1, NTHREADS); ++t) {
             char partPath[PATH_MAX];
-            snprintf(partPath, sizeof(partPath), "%s/task_%zu.tmp", partDir.c_str(), task.index);
+            snprintf(partPath, sizeof(partPath), "%s/thread_%d.tmp", partDir.c_str(), t);
             unlink(partPath);
         }
         rmdir(partDir.c_str());

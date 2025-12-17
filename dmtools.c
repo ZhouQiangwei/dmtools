@@ -80,6 +80,7 @@ void *multithread_cmd(void *arg);
 int dm_sc_qc_main(int argc, char **argv);
 int dm_sc_matrix_main(int argc, char **argv);
 int dm_sc_aggregate_main(int argc, char **argv);
+int dm_validate_main(int argc, char **argv);
 
 struct ARGS{
     char* runCMD;
@@ -104,7 +105,7 @@ struct Threading
 #define MAX_BUFF_PRINT 20000000
 const char* Help_String_main="Command Format :  dmtools <mode> [opnions]\n"
                 "\nUsage:\n"
-        "\t  [mode]         index align bam2dm mr2dm view ebsrate viewheader overlap regionstats bodystats profile chromstats sc-qc sc-matrix sc-aggregate\n\n"
+        "\t  [mode]         index align bam2dm mr2dm view ebsrate viewheader overlap regionstats bodystats profile chromstats sc-qc sc-matrix sc-aggregate validate\n\n"
         "\t  index          build index for genome\n"
         "\t  align          alignment fastq\n"
         "\t  bam2dm         calculate DNA methylation (DM format) with BAM file\n"
@@ -168,6 +169,82 @@ const char* Help_String_scaggregate="Command Format :  dmtools sc-aggregate [opt
         "\t--agg                aggregation for coverage: mean (default) or sum\n"
         "\t--dense              write dense TSV matrix output in addition to summary\n"
         "\t-h|--help";
+
+const char* Help_String_validate="Command Format :  dmtools validate -i <dm file> [--verbose]\n"
+        "\nUsage: dmtools validate -i input.dm [--verbose]\n"
+        "\t [validate] required\n"
+        "\t-i|--input           input DM file to check\n"
+        "\t [validate] options\n"
+        "\t--verbose            print additional index block details\n"
+        "\t-h|--help";
+
+int dm_validate_main(int argc, char **argv){
+    char *input = NULL;
+    int verbose = 0;
+    for(int i = 1; i < argc; ++i){
+        if(strcmp(argv[i], "-i") == 0 || strcmp(argv[i], "--input") == 0){
+            if(i + 1 < argc){
+                input = argv[++i];
+            }else{
+                fprintf(stderr, "%s\n", Help_String_validate);
+                return 1;
+            }
+        }else if(strcmp(argv[i], "--verbose") == 0){
+            verbose = 1;
+        }else if(strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0){
+            fprintf(stderr, "%s\n", Help_String_validate);
+            return 0;
+        }
+    }
+
+    if(!input){
+        fprintf(stderr, "%s\n", Help_String_validate);
+        return 1;
+    }
+
+    binaMethFile_t *fp = bmOpen(input, NULL, "r");
+    if(!fp || !fp->hdr){
+        fprintf(stderr, "[dmtools validate] failed to open %s as dm file\n", input);
+        if(fp) bmClose(fp);
+        return 1;
+    }
+    if(!fp->cl || fp->cl->nKeys == 0){
+        fprintf(stderr, "[dmtools validate] chromosome list missing or empty in %s\n", input);
+        bmClose(fp);
+        return 1;
+    }
+    if(!fp->idx || !fp->idx->root || fp->idx->nItems == 0){
+        fprintf(stderr, "[dmtools validate] index missing or empty in %s\n", input);
+        bmClose(fp);
+        return 1;
+    }
+
+    uint32_t tid = 0;
+    uint32_t start = 0;
+    uint32_t end = fp->cl->len[tid];
+    if(end > 100000) end = 100000;
+    bmOverlappingIntervals_t *hits = bmGetOverlappingIntervals(fp, fp->cl->chrom[tid], start, end);
+    if(!hits){
+        fprintf(stderr, "[dmtools validate] failed to read data from %s\n", input);
+        bmClose(fp);
+        return 1;
+    }
+    if(hits->l == 0){
+        fprintf(stderr, "[dmtools validate] no records returned for %s\n", input);
+        bmDestroyOverlappingIntervals(hits);
+        bmClose(fp);
+        return 1;
+    }
+
+    if(verbose){
+        fprintf(stderr, "[dmtools validate] index items=%" PRIu64 " first fetch count=%u\n", fp->idx->nItems, hits->l);
+    }
+
+    bmDestroyOverlappingIntervals(hits);
+    bmClose(fp);
+    fprintf(stderr, "[dmtools validate] OK: %s\n", input);
+    return 0;
+}
 
 const char* Help_String_bw="Command Format :  dmtools bw [options] -i <dm> -o <out bigwig file>\n"
         "\nUsage: dmtools bw -i input.dm -o meth.bw\n"
@@ -490,6 +567,8 @@ int main(int argc, char *argv[]) {
         return dm_sc_matrix_main(argc-1, argv+1);
     } else if(argc>1 && strcmp(argv[1], "sc-aggregate") == 0){
         return dm_sc_aggregate_main(argc-1, argv+1);
+    } else if(argc>1 && strcmp(argv[1], "validate") == 0){
+        return dm_validate_main(argc-1, argv+1);
     }
 
     binaMethFile_t *fp = NULL;
@@ -596,6 +675,8 @@ int main(int argc, char *argv[]) {
            fprintf(stderr, "%s\n", Help_String_scmatrix);
         }else if(strcmp(mode, "sc-aggregate") == 0){
            fprintf(stderr, "%s\n", Help_String_scaggregate);
+        }else if(strcmp(mode, "validate") == 0){
+           fprintf(stderr, "%s\n", Help_String_validate);
          }else if(strcmp(mode, "addzm") == 0){
              fprintf(stderr, "%s\n", Help_String_addzm);
          }else{

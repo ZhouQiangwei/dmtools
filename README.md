@@ -176,7 +176,7 @@ Run the converter with verbose diagnostics and on-disk validation enabled to sur
   --chunk-by chrom --bin-size 2000 --threads 1
 ```
 
-Bin mode uses fixed-size bins (default 2000 bp) to distribute work across threads while keeping a single, deterministic writer. Each worker opens its own BAM+index handle, writes a per-bin part file under `<methratio>.parts/`, and the main thread merges those parts in `(chrom,start)` order into the final dm before running `--validate-output` if requested. A BAM index (`.bai`/`.csi`) is required; missing indexes cause the command to fail fast.
+Bin mode uses fixed-size bins (default 2000 bp) to distribute work across threads while keeping a single, deterministic writer. Each worker opens its own BAM+index handle and appends results to a per-thread shard under `<methratio>.parts/thread_<tid>.tmp`, capping the number of temporary files to the thread count instead of the bin count. The main thread replays each shard in `(chrom,start)` order into the final dm before running `--validate-output` if requested. A BAM index (`.bai`/`.csi`) is required; missing indexes cause the command to fail fast.
 
 Example bin-mode invocation with validation:
 
@@ -194,6 +194,7 @@ To validate an existing DM without rewriting it, use the structural check mode, 
 
 ```
 ./dmtools bam2dm --check /tmp/minimal.dm
+dmtools validate -i /tmp/minimal.dm
 ```
 
 ### next steps
