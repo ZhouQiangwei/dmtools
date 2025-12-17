@@ -191,6 +191,7 @@ struct BinTaskStats {
 static bool gDebugMode = false;
 static uint64_t gDmRecordsWritten = 0;
 static uint64_t gDmRecordsWrittenGch = 0;
+static uint64_t gGenomeSizeBases = 0;
 
 struct FilterStats {
     std::atomic<uint64_t> totalReads{0};
@@ -203,6 +204,7 @@ struct FilterStats {
     std::atomic<uint64_t> refNonACGT{0};
     std::atomic<uint64_t> enterMethyl{0};
     std::atomic<uint64_t> methylCalls{0};
+    std::atomic<uint64_t> iterNull{0};
 };
 
 static FilterStats gFilterStats;
@@ -215,7 +217,7 @@ static void maybeLogFilterStats() {
         fprintf(stderr,
                 "[filter] reads=%" PRIu64 " accepted=%" PRIu64 " bamFiltered=%" PRIu64 " mapq=%" PRIu64
                 " hashMiss=%" PRIu64 " mismatch=%" PRIu64 " refOOB=%" PRIu64 " refNonACGT=%" PRIu64
-                " methylCalls=%" PRIu64 "\n",
+                " enterMethyl=%" PRIu64 " methylCalls=%" PRIu64 " iterNull=%" PRIu64 "\n",
                 cur,
                 gFilterStats.processReadAccepted.load(),
                 gFilterStats.bamFiltered.load(),
@@ -224,7 +226,9 @@ static void maybeLogFilterStats() {
                 gFilterStats.mismatchFiltered.load(),
                 gFilterStats.refOob.load(),
                 gFilterStats.refNonACGT.load(),
-                gFilterStats.methylCalls.load());
+                gFilterStats.enterMethyl.load(),
+                gFilterStats.methylCalls.load(),
+                gFilterStats.iterNull.load());
     }
 }
 
@@ -1360,6 +1364,13 @@ int main(int argc, char* argv[])
     gDebugMode = debugMode;
     gDmRecordsWritten = 0;
     gDmRecordsWrittenGch = 0;
+    fprintf(stderr, "[bam2dm] Methratio=%d Prefix=%s printtxt=%d chunkBy=%s processChr=%s processRegion=%s\n",
+            Methratio ? 1 : 0,
+            Prefix.empty() ? "(none)" : Prefix.c_str(),
+            printtxt,
+            chunkBy.c_str(),
+            processChr,
+            processRegion);
 
     if(chunkBy == "bin") {
         if(!bamformat) {
@@ -1537,12 +1548,24 @@ int main(int argc, char* argv[])
                 exit(0);
             }
 
-			fprintf(stderr, "[DM::calmeth] len count GCcount %lld %d %ld\n", Genome_Size, Genome_Count, totalC+totalG);
+                        fprintf(stderr, "[DM::calmeth] len count GCcount %lld %d %ld\n", Genome_Size, Genome_Count, totalC+totalG);
+            gGenomeSizeBases = static_cast<uint64_t>(Genome_Size);
+            if(gGenomeSizeBases > 0) {
+                double cgFrac = static_cast<double>(totalC + totalG) / static_cast<double>(gGenomeSizeBases);
+                if(cgFrac < 0.01) {
+                    fprintf(stderr, "[bam2dm] genome appears converted (C+G fraction %.6f). Use an unconverted reference FASTA.\n", cgFrac);
+                    return 1;
+                } else if(gDebugMode) {
+                    fprintf(stderr, "[bam2dm] genome C+G fraction=%.6f\n", cgFrac);
+                }
+            }
 			//if(!fread(args.Org_Genome,Genome_Size,1,BINFILE)) throw ("Error reading file..\n");
-			if(REMOVE_DUP){
-				args.Marked_Genome=new char[Genome_Size+1];if(!args.Marked_Genome) throw("Insufficient memory to Mark genome..\n"); 
-				args.Marked_GenomeE=new char[Genome_Size+1];if(!args.Marked_GenomeE) throw("Insufficient memory to Mark genome..\n"); 
-			}
+                        if(REMOVE_DUP){
+                                args.Marked_Genome=new char[Genome_Size+1];if(!args.Marked_Genome) throw("Insufficient memory to Mark genome..\n");
+                                args.Marked_GenomeE=new char[Genome_Size+1];if(!args.Marked_GenomeE) throw("Insufficient memory to Mark genome..\n");
+                memset(args.Marked_Genome, 0, Genome_Size+1);
+                memset(args.Marked_GenomeE, 0, Genome_Size+1);
+                        }
 			
 			args.OUTFILE = NULL;
             args.OUTFILEMS = NULL;
@@ -1871,10 +1894,26 @@ int main(int argc, char* argv[])
 			exit(-1);
 		}
 
-		time(&End_Time);fprintf(stderr, "[DM::calmeth] Time Taken  - %.0lf Seconds ..\n ",difftime(End_Time,Start_Time));
-	    exit(0);
-	    //fclose(OUTLOG);
-	}
+        fprintf(stderr, "[filter-summary] reads=%" PRIu64 " accepted=%" PRIu64 " bamFiltered=%" PRIu64
+                        " mapq=%" PRIu64 " hashMiss=%" PRIu64 " mismatch=%" PRIu64
+                        " refOOB=%" PRIu64 " refNonACGT=%" PRIu64 " enterMethyl=%" PRIu64
+                        " methylCalls=%" PRIu64 " iterNull=%" PRIu64 "\n",
+                gFilterStats.totalReads.load(),
+                gFilterStats.processReadAccepted.load(),
+                gFilterStats.bamFiltered.load(),
+                gFilterStats.mapqFiltered.load(),
+                gFilterStats.hashMiss.load(),
+                gFilterStats.mismatchFiltered.load(),
+                gFilterStats.refOob.load(),
+                gFilterStats.refNonACGT.load(),
+                gFilterStats.enterMethyl.load(),
+                gFilterStats.methylCalls.load(),
+                gFilterStats.iterNull.load());
+
+                time(&End_Time);fprintf(stderr, "[DM::calmeth] Time Taken  - %.0lf Seconds ..\n ",difftime(End_Time,Start_Time));
+            exit(0);
+            //fclose(OUTLOG);
+        }
 	
 }
 
@@ -2839,15 +2878,15 @@ void *Process_read(void *arg)
 		if(bamformat) 
 		{
             if(strcmp(((ARGS *)arg)->processChr, "NAN-mm") == 0 && processregion[0] == '\0'){
-			    //(r = samread(( (ARGS *)arg)->BamInFile, b));
+                            //(r = samread(( (ARGS *)arg)->BamInFile, b));
                 bamr = sam_read1(( (ARGS *)arg)->BamInFile, ((ARGS *)arg)->header, b);
-                if(bamr<=0) break;
-			    //bam_tostring(((ARGS *)arg)->header , b, s2t);
+                if(bamr<=0) { if(bamr < 0) gFilterStats.iterNull.fetch_add(1); break; }
+                            //bam_tostring(((ARGS *)arg)->header , b, s2t);
                             int ct = processbamread(((ARGS *)arg)->header, b, Dummy,Flag,Chrom,pos,mapQuality,CIG,Chrom_P,pos_P,Insert_Size,forReadString,forQuality, hitType);
                             if(ct == -1) { gFilterStats.bamFiltered.fetch_add(1); continue; }
             }else{
                 bamr = sam_itr_next(((ARGS *)arg)->BamInFile, iter, b);
-                if(bamr<=0) break;
+                if(bamr<=0) { if(bamr < 0) gFilterStats.iterNull.fetch_add(1); else gFilterStats.iterNull.fetch_add(1); break; }
                 int ct = processbamread(((ARGS *)arg)->header, b, Dummy,Flag,Chrom,pos,mapQuality,CIG,Chrom_P,pos_P,Insert_Size,forReadString,forQuality, hitType);
                 if(ct == -1) { gFilterStats.bamFiltered.fetch_add(1); continue; }
             }
@@ -2966,8 +3005,20 @@ void *Process_read(void *arg)
 		if(hitType == 1 || hitType == 3 ) Flag_rm=2; else Flag_rm=4;
 		char Mark = '0';char MarkE='0';
 		if(REMOVE_DUP){
-            Mark=((ARGS *)arg)->Marked_Genome[pos+G_Skip];
-            MarkE=((ARGS *)arg)->Marked_GenomeE[pos+G_Skip+readString.size()];
+            uint64_t markIdx = pos + G_Skip;
+            uint64_t markEndIdx = pos + G_Skip + readString.size();
+            if(markIdx < gGenomeSizeBases) {
+                Mark=((ARGS *)arg)->Marked_Genome[markIdx];
+            } else {
+                gFilterStats.refOob.fetch_add(1);
+                continue;
+            }
+            if(markEndIdx < gGenomeSizeBases) {
+                MarkE=((ARGS *)arg)->Marked_GenomeE[markEndIdx];
+            } else {
+                gFilterStats.refOob.fetch_add(1);
+                continue;
+            }
         }
         if( !REMOVE_DUP || (!Mark || !(Mark & Flag_rm)) || (!MarkE || !(MarkE & Flag_rm)) )
 		{
@@ -3273,8 +3324,10 @@ void *Process_read(void *arg)
             }
 		}
 		if(REMOVE_DUP){
-			((ARGS *)arg)->Marked_Genome[pos+G_Skip] |= Flag_rm;
-			((ARGS *)arg)->Marked_GenomeE[pos+G_Skip+readString.size()] |= Flag_rm;
+                   const uint64_t markIdx2 = pos+G_Skip;
+                   const uint64_t markEndIdx2 = pos+G_Skip+readString.size();
+                   if(markIdx2 < gGenomeSizeBases) ((ARGS *)arg)->Marked_Genome[markIdx2] |= Flag_rm; else gFilterStats.refOob.fetch_add(1);
+                   if(markEndIdx2 < gGenomeSizeBases) ((ARGS *)arg)->Marked_GenomeE[markEndIdx2] |= Flag_rm; else gFilterStats.refOob.fetch_add(1);
 		}
 	}
 
