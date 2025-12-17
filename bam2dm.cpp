@@ -1753,7 +1753,7 @@ int Read_Tag(FILE *INFILE,char s2t[],string hits[],int& cntHit)
 
 std::string process_cigar(const char* cig,int Read_Len)
 {
-        char temp[8];
+        char temp[32];
         std::string cigar_rm;
         std::string buffer_cigar;
         unsigned n=0;
@@ -1761,6 +1761,7 @@ std::string process_cigar(const char* cig,int Read_Len)
         {
                 if(*cig>='0' && *cig<='9')
                 {
+                        if(n+1 >= sizeof(temp)) break;
                         temp[n]=*cig;
                         cig++;n++;
                 }else if(*cig=='S')
@@ -2407,19 +2408,20 @@ char *fastStrcat(char *s, char *t)
 
 int conutMismatch(string CIGr, int chrLen, char* Genome_seq, string readString, int pos, int hitType)
 {
-	char temp[5];unsigned lens=0;int Glens=0;int RLens=0;
-	unsigned n=0;
-	int Nmismatch=0;  //chrLen; //((ARGS *)arg)->Genome_Offsets[Hash_Index+1].Offset
-	const char* cigr=CIGr.c_str();
-	while(*cigr!='\0')//RLens--READs Length \\ lens--raw reads length \\ GLens--genome Lens
-	{
-		if(*cigr>='0' && *cigr<='9')
-		{
-			temp[n]=*cigr;
-			cigr++;n++;
-		}else if(*cigr=='S')
-		{
-			int i;temp[n]='\0';int length=atoi(temp);
+        char temp[32];unsigned lens=0;int Glens=0;int RLens=0;
+        unsigned n=0;
+        int Nmismatch=0;  //chrLen; //((ARGS *)arg)->Genome_Offsets[Hash_Index+1].Offset
+        const char* cigr=CIGr.c_str();
+        while(*cigr!='\0')//RLens--READs Length \\ lens--raw reads length \\ GLens--genome Lens
+        {
+                if(*cigr>='0' && *cigr<='9')
+                {
+                        if(n+1 >= sizeof(temp)) return Nmismatch;
+                        temp[n]=*cigr;
+                        cigr++;n++;
+                }else if(*cigr=='S')
+                {
+                        int i;temp[n]='\0';int length=atoi(temp);
 			lens+=length;
 	        	RLens+=length;
         	    	cigr++;n=0;
@@ -2450,12 +2452,12 @@ int conutMismatch(string CIGr, int chrLen, char* Genome_seq, string readString, 
 			lens+=length;
 			RLens+=length;
 			cigr++;n=0;
-		}else if(*cigr=='D')
-		{
-			int i;temp[n]='\0';unsigned int length=atoi(temp);
-			Glens+=length;RLens+=length;
-			cigr++;n=0;
-		}else
+                }else if(*cigr=='D')
+                {
+                        temp[n]='\0';unsigned int length=atoi(temp);
+                        Glens+=length;
+                        cigr++;n=0;
+                }else
 		{
 			break;
 		}
@@ -2598,8 +2600,10 @@ void *Process_read(void *arg)
 	string hits[MAX_HITS_ALLOWED];
 	char Comp_String[MAXTAG];for (int i=1;i<MAXTAG;Comp_String[i++]=0);
 	//start to read batman hit file
-	char *s2t = (char*) malloc(1000);
-	char read_Methyl_Info[600];char rawReadBeforeBS[600];char temp[5];
+        char *s2t = (char*) malloc(1000);
+        std::vector<char> read_Methyl_Info;
+        std::vector<char> rawReadBeforeBS;
+        char temp[32];
     char headseq[4]; unsigned int hs=0, hs_r =3; int printh = 0; char headseq_rc[4]; 
 	char Dummy[BATBUF],forReadString[BATBUF],Chrom[CHROMSIZE];
 	char Chrom_P[CHROMSIZE];int pos_P=0;int Insert_Size=0;int Qsingle=0; //Paired-end reads
@@ -2722,9 +2726,12 @@ void *Process_read(void *arg)
 			}
 		}
 
-		readString=forReadString;
-		int Read_Len=readString.length();
-		CIGr=CIG;
+                readString=forReadString;
+                const size_t read_buffer_cap = readString.size() + 1024;
+                read_Methyl_Info.assign(read_buffer_cap, '\0');
+                rawReadBeforeBS.assign(read_buffer_cap, '\0');
+                int Read_Len=readString.length();
+                CIGr=CIG;
 		//for(;forReadString[Read_Len]!=0 && forReadString[Read_Len]!='\n' && forReadString[Read_Len]!='\r';Read_Len++);
 	    	iter = String_Hash.find(processingchr.c_str());
 		H = -1;
@@ -2793,8 +2800,9 @@ void *Process_read(void *arg)
         }
         if( !REMOVE_DUP || (!Mark || !(Mark & Flag_rm)) || (!MarkE || !(MarkE & Flag_rm)) )
 		{
-			int Hash_Index=((ARGS *)arg)->Genome_List[H].Index;//load current genome..
-			strcpy(rawReadBeforeBS,readString.c_str());
+                        int Hash_Index=((ARGS *)arg)->Genome_List[H].Index;//load current genome..
+                        std::copy(readString.begin(), readString.end(), rawReadBeforeBS.begin());
+                        rawReadBeforeBS[readString.size()] = '\0';
 			unsigned lens=0;int Glens=0;int RLens=0;
 			unsigned n=0;bool CONTINUE=false;
 			const char* cigr=CIGr.c_str();
@@ -2802,19 +2810,21 @@ void *Process_read(void *arg)
             printh = 0;
 			while(*cigr!='\0')//RLens--READs Length \\ lens--raw reads length \\ GLens--genome Lens
 			{
-				if(*cigr>='0' && *cigr<='9')
-				{
-					temp[n]=*cigr;
-					cigr++;n++;
+                                if(*cigr>='0' && *cigr<='9')
+                                {
+                                        if(n+1 >= sizeof(temp)) { CONTINUE = true; break; }
+                                        temp[n]=*cigr;
+                                        cigr++;n++;
 				}else if(*cigr=='S')
 				{
-					int i;temp[n]='\0';int length=atoi(temp);
-					for(i=RLens;i<RLens+length;i++)
-					{
-						read_Methyl_Info[i] = 'S';
-					}
-					lens+=length;
-	                RLens+=length;
+                                        int i;temp[n]='\0';int length=atoi(temp);
+                                        for(i=RLens;i<RLens+length;i++)
+                                        {
+                                                if(static_cast<size_t>(i) >= read_Methyl_Info.size()) { CONTINUE = true; break; }
+                                                read_Methyl_Info[i] = 'S';
+                                        }
+                                        lens+=length;
+                        RLens+=length;
 	                cigr++;n=0;
 				}else if(*cigr=='M')
 				{
@@ -3011,26 +3021,23 @@ void *Process_read(void *arg)
 						}
 					}
 					cigr++;n=0;lens+=length;Glens+=length;RLens+=length;
-				}else if(*cigr=='I')
-				{
-					int i;temp[n]='\0';int length=atoi(temp);
-					for(i=0;i<length;i++)
-					{
-						read_Methyl_Info[i+RLens] = 'I';
-					}
-					lens+=length;
-					RLens+=length;
-					cigr++;n=0;
-				}else if(*cigr=='D')
-				{
-					int i;temp[n]='\0';unsigned int length=atoi(temp);
-					for(i=0;i<length;i++)
-					{
-						read_Methyl_Info[i+RLens] = 'D';
-					}
-					Glens+=length;RLens+=length;
-					cigr++;n=0;
-				}else
+                                }else if(*cigr=='I')
+                                {
+                                        int i;temp[n]='\0';int length=atoi(temp);
+                                        for(i=0;i<length;i++)
+                                        {
+                                                if(static_cast<size_t>(i+RLens) >= read_Methyl_Info.size()) { CONTINUE = true; break; }
+                                                read_Methyl_Info[i+RLens] = 'I';
+                                        }
+                                        lens+=length;
+                                        RLens+=length;
+                                        cigr++;n=0;
+                                }else if(*cigr=='D')
+                                {
+                                        temp[n]='\0';unsigned int length=atoi(temp);
+                                        Glens+=length;
+                                        cigr++;n=0;
+                                }else
 				{
 					CONTINUE=true;
 					break;
@@ -3060,16 +3067,22 @@ void *Process_read(void *arg)
                else fprintf(stdout ,"%s\t%u\t%s\t%u\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n",Dummy,Flag,Chrom,pos,readmCG, readCG,readmCHG, readCHG,readmCHH, readCHH, readmC, readC);
                readmC=0; readC = 0;readmCG=0; readCG = 0;readmCHG=0; readCHG = 0;readmCHH=0; readCHH = 0;
             }
-			read_Methyl_Info[RLens]='\0';
-			rawReadBeforeBS[lens]='\0';
-			string mappingStrand="N";
-			if(hitType==1) mappingStrand="YC:Z:CT\tYD:Z:f";
+                        if(!read_Methyl_Info.empty()) {
+                                if(static_cast<size_t>(RLens) >= read_Methyl_Info.size()) RLens = static_cast<int>(read_Methyl_Info.size() - 1);
+                                read_Methyl_Info[RLens]='\0';
+                        }
+                        if(!rawReadBeforeBS.empty()) {
+                                if(static_cast<size_t>(lens) >= rawReadBeforeBS.size()) lens = static_cast<unsigned>(rawReadBeforeBS.size() - 1);
+                                rawReadBeforeBS[lens]='\0';
+                        }
+                        string mappingStrand="N";
+                        if(hitType==1) mappingStrand="YC:Z:CT\tYD:Z:f";
 			else if(hitType==4) mappingStrand="YC:Z:CT\tYD:Z:r";
 			else if(hitType==3) mappingStrand="YC:Z:GA\tYD:Z:r";
 			else if(hitType==2) mappingStrand="YC:Z:GA\tYD:Z:f";
             if(printmethstate == 1 && ((ARGS *)arg)->OUTFILEMS != NULL) {
                 flockfile(((ARGS *)arg)->OUTFILEMS);
-                fprintf(((ARGS *)arg)->OUTFILEMS, "%s\t%s\t%s\t%s\t%s\t%u\t%d\n", Dummy, read_Methyl_Info, readString.c_str(), CIGr.c_str(), Chrom, pos, hitType);
+                fprintf(((ARGS *)arg)->OUTFILEMS, "%s\t%s\t%s\t%s\t%s\t%u\t%d\n", Dummy, read_Methyl_Info.data(), readString.c_str(), CIGr.c_str(), Chrom, pos, hitType);
                 funlockfile(((ARGS *)arg)->OUTFILEMS);
             }
             if(Sam && ((ARGS *)arg)->OUTFILE != NULL) {
@@ -3078,11 +3091,11 @@ void *Process_read(void *arg)
 			    {
 				if(SamSeqBeforeBS) 
 				{
-					fprintf(((ARGS *)arg)->OUTFILE,"%s\t%u\t%s\t%u\t%d\t%s\t%s\t%d\t%d\t%s\t%s\tNM:i:%d\tMD:Z:%s\t%s\tRA:Z:%s\n",Dummy,Flag,Chrom,pos,mapQuality,CIGr.c_str(),Chrom_P,pos_P,Insert_Size,rawReadBeforeBS,forQuality,Nmismatch,read_Methyl_Info,mappingStrand.c_str(), readString.c_str());
-				}else 
-				{
-					fprintf(((ARGS *)arg)->OUTFILE,"%s\t%u\t%s\t%u\t%d\t%s\t%s\t%d\t%d\t%s\t%s\tNM:i:%d\tMD:Z:%s\t%s\n",Dummy,Flag,Chrom,pos,mapQuality,CIGr.c_str(),Chrom_P,pos_P,Insert_Size,readString.c_str(),forQuality,Nmismatch,read_Methyl_Info,mappingStrand.c_str());
-				}
+                                        fprintf(((ARGS *)arg)->OUTFILE,"%s\t%u\t%s\t%u\t%d\t%s\t%s\t%d\t%d\t%s\t%s\tNM:i:%d\tMD:Z:%s\t%s\tRA:Z:%s\n",Dummy,Flag,Chrom,pos,mapQuality,CIGr.c_str(),Chrom_P,pos_P,Insert_Size,rawReadBeforeBS.data(),forQuality,Nmismatch,read_Methyl_Info.data(),mappingStrand.c_str(), readString.c_str());
+                                }else
+                                {
+                                        fprintf(((ARGS *)arg)->OUTFILE,"%s\t%u\t%s\t%u\t%d\t%s\t%s\t%d\t%d\t%s\t%s\tNM:i:%d\tMD:Z:%s\t%s\n",Dummy,Flag,Chrom,pos,mapQuality,CIGr.c_str(),Chrom_P,pos_P,Insert_Size,readString.c_str(),forQuality,Nmismatch,read_Methyl_Info.data(),mappingStrand.c_str());
+                                }
 			    }
 			    funlockfile(((ARGS *)arg)->OUTFILE);
             }
@@ -3362,7 +3375,7 @@ string remove_soft_split(string & cigar,int & Read_Len,int & pos)
 {
 
 	const char* cig=cigar.c_str();
-	char temp[20];
+        char temp[32];
 	int n=0,lens=0,length=0,RLens=0,Glens=0;
 	int genome_move_size=0; int headClip=0;int moveSize=0;
 	char cigar_rm[1000];*cigar_rm=0;
@@ -3372,8 +3385,9 @@ string remove_soft_split(string & cigar,int & Read_Len,int & pos)
 	{
 		if(*cig>='0' && *cig<='9')
 		{
-			temp[n]=*cig;
-			cig++;n++;
+                        if(n+1 >= sizeof(temp)) break;
+                        temp[n]=*cig;
+                        cig++;n++;
 		}else if(*cig=='S')
 		{
 			int i;temp[n]='\0';int length=atoi(temp);
