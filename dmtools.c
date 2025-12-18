@@ -27,6 +27,8 @@
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>
+#include <errno.h>
+#include <sys/wait.h>
 #include <pthread.h>
 
 #include <glob.h>
@@ -68,6 +70,7 @@ void bmPrintHdr(binaMethFile_t *bm);
 void bmPrintIndexNode(bmRTreeNode_t *node, int level);
 char *fastStrcat(char *s, char *t);
 void onlyexecuteCMD(const char *cmd, const char *errorinfor);
+int executeCMDWithStatus(const char *cmd, const char *errorinfor);
 size_t get_executable_path( char* processdir,char* processname, size_t len);
 unsigned long get_chr_len(binaMethFile_t *bm, char* chrom);
 int main_view_bm(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outformat, binaMethFile_t *ofp, \
@@ -283,6 +286,7 @@ const char* Help_String_bam2dm="Command Format :  dmtools bam2dm [options] -g ge
         "\t--chunk-by <chrom|bin>  process by chromosome (default) or fixed-size bins (bin mode reserved)\n"
         "\t--bin-size <INT>      bin size when using --chunk-by bin (default: 2000)\n"
         "\t--debug               verbose logging of parsed options and progress\n"
+        "\t--no-merge            keep per-chromosome dm files and skip the final merge step\n"
         "\t--NoMe                data type for NoMe-seq\n"
         "\t[DM format] paramaters\n"
         "\t--zl                  The maximum number of zoom levels. [0-10], default: 2\n"
@@ -548,6 +552,7 @@ int mincover = 0;
 int maxcover = 10000;
 int printcoverage = 0; // print countC and countCT instead of methratio
 int NTHREAD = 10;
+int skipMerge = 0;
 int *Fcover;
 unsigned long *mPs;
 unsigned long mPs_0;
@@ -701,6 +706,9 @@ int main(int argc, char *argv[]) {
             }else if(strcmp(argv[i], "-o") == 0 || strcmp(argv[i], "--out") == 0){
                 outfile = malloc(sizeof(char)*200);
                 strcpy(outfile, argv[i+1]);
+            }else if(strcmp(argv[i], "--no-merge") == 0){
+                skipMerge = 1;
+                continue;
             }
             strcat(bam2bm_paras, argv[i]);
             strcat(bam2bm_paras, " ");
@@ -1129,12 +1137,23 @@ int main(int argc, char *argv[]) {
                 free(Thread_Info[i].Arg.prcessChr);
             }
             free(Thread_Info);
-            fprintf(stderr, "CMMd %s", mergecmd);
-            onlyexecuteCMD(mergecmd, Help_String_bam2dm);
-            for(j=0;j<Nchrom;j++){
-                mergecmd[0]='\0';
-                sprintf(mergecmd, "rm %s.%s", outfile, chroms[j]);
-                onlyexecuteCMD(mergecmd, Help_String_bam2dm);
+            int mergeStatus = 0;
+            if(skipMerge){
+                fprintf(stderr, "[dmtools] --no-merge specified; keeping per-chromosome outputs\n");
+            }else{
+                fprintf(stderr, "CMMd %s", mergecmd);
+                mergeStatus = executeCMDWithStatus(mergecmd, Help_String_bam2dm);
+            }
+            if(!skipMerge && mergeStatus == 0){
+                for(j=0;j<Nchrom;j++){
+                    char rmPath[1024];
+                    snprintf(rmPath, sizeof(rmPath), "%s.%s", outfile, chroms[j]);
+                    if(remove(rmPath) != 0){
+                        fprintf(stderr, "[dmtools] warning: failed to remove %s (%s)\n", rmPath, strerror(errno));
+                    }
+                }
+            } else if(mergeStatus != 0) {
+                fprintf(stderr, "[dmtools] merge failed (status %d); temporary chromosome files retained\n", mergeStatus);
             }
             free(mergecmd);
         }else{
@@ -4547,7 +4566,11 @@ int bm_merge_all_mul(char *inbmFs, char *outfile, uint8_t pstrand, int m_method,
         substr = strtok(NULL,",");
     }
 
-    binaMethFile_t **ifps = malloc(sizeof(binaMethFile_t)*sizeifp);
+    binaMethFile_t **ifps = calloc(sizeifp, sizeof(binaMethFile_t*));
+    if(!ifps) {
+        fprintf(stderr, "[dmtools merge] failed to allocate input handles\n");
+        return -1;
+    }
 
     for(i=0;i<sizeifp;i++){
         uint32_t type1 = BMtype(infiles[i], NULL);
@@ -4598,16 +4621,22 @@ int bm_merge_all_mul(char *inbmFs, char *outfile, uint8_t pstrand, int m_method,
     int SEGlen = 1000000;
     int start = 0, end = SEGlen-1;
 
-    char **chromsUse = malloc(sizeof(char*)*MAX_LINE_PRINT);
-    char **entryid = malloc(sizeof(char*)*MAX_LINE_PRINT);
+    char **chromsUse = calloc(MAX_LINE_PRINT, sizeof(char*));
+    char **entryid = calloc(MAX_LINE_PRINT, sizeof(char*));
 //    uint32_t *chrLens = malloc(sizeof(uint32_t) * MAX_LINE_PRINT);
-    uint32_t *starts = malloc(sizeof(uint32_t) * MAX_LINE_PRINT);
-    uint32_t *ends = malloc(sizeof(uint32_t) * MAX_LINE_PRINT);
-    float *values = malloc(sizeof(float) * MAX_LINE_PRINT);
-    uint16_t *coverages = malloc(sizeof(uint16_t) * MAX_LINE_PRINT);
-    uint16_t *coverC = malloc(sizeof(uint16_t) * MAX_LINE_PRINT);
-    uint8_t *strands = malloc(sizeof(uint8_t) * MAX_LINE_PRINT);
-    uint8_t *contexts = malloc(sizeof(uint8_t) * MAX_LINE_PRINT);
+    uint32_t *starts = calloc(MAX_LINE_PRINT, sizeof(uint32_t));
+    uint32_t *ends = calloc(MAX_LINE_PRINT, sizeof(uint32_t));
+    float *values = calloc(MAX_LINE_PRINT, sizeof(float));
+    uint16_t *coverages = calloc(MAX_LINE_PRINT, sizeof(uint16_t));
+    uint16_t *coverC = calloc(MAX_LINE_PRINT, sizeof(uint16_t));
+    uint8_t *strands = calloc(MAX_LINE_PRINT, sizeof(uint8_t));
+    uint8_t *contexts = calloc(MAX_LINE_PRINT, sizeof(uint8_t));
+
+    if(!chromsUse || !entryid || !starts || !ends || !values || !coverages || !strands || !contexts || !coverC) {
+        fprintf(stderr, "[dmtools merge] failed to allocate merge buffers\n");
+        free(chromsUse); free(entryid); free(starts); free(ends); free(values); free(coverages); free(strands); free(contexts); free(coverC);
+        return -1;
+    }
 
     int printL = 0; int printedY = 0;
     for(i=0;i<ifps[0]->cl->nKeys;i++){
@@ -4660,7 +4689,8 @@ int bm_merge_all_mul(char *inbmFs, char *outfile, uint8_t pstrand, int m_method,
     }
 
     for(i =0; i < MAX_LINE_PRINT; i++){
-        free(chromsUse[i]); free(entryid[i]);
+        if(chromsUse[i]) free(chromsUse[i]);
+        if(entryid[i]) free(entryid[i]);
     }
     free(chromsUse); free(entryid); free(starts);
     free(ends); free(values); free(coverages); free(strands); free(contexts); free(coverC);
@@ -5424,6 +5454,24 @@ void onlyexecuteCMD(const char *cmd, const char *errorinfor)
     }
     pclose(ptr);
     ptr = NULL;
+}
+
+int executeCMDWithStatus(const char *cmd, const char *errorinfor)
+{
+    FILE *ptr = popen(cmd, "r");
+    if(ptr == NULL){
+        fprintf(stderr, "\n%s\n", errorinfor);
+        return -1;
+    }
+    int status = pclose(ptr);
+    if(status == -1){
+        fprintf(stderr, "[dmtools] failed to close command pipe for %s (%s)\n", cmd, strerror(errno));
+        return -1;
+    }
+    if(status != 0){
+        fprintf(stderr, "[dmtools] command failed (%d): %s\n", status, cmd);
+    }
+    return status;
 }
 
 size_t get_executable_path( char* processdir,char* processname, size_t len)

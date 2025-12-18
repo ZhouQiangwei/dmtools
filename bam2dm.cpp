@@ -81,6 +81,7 @@ typedef struct {
    Methy_Hash Methy_List;
    FILE* OUTFILE;
    FILE* OUTFILEMS;
+   FILE* methOutFp;
    FILE* samINFILE;
    FILE* bedFILE;
    samFile* BamInFile;
@@ -90,6 +91,8 @@ typedef struct {
    off64_t File_Size;
    char* processChr;
    char* INbamfilename;
+   char methOutPath[PATH_MAX];
+   uint64_t methOutLines;
 } ARGS;
 bool RELESEM = true;// false
 bool printheader = true;
@@ -307,7 +310,6 @@ int RegionBins=1000;
 long longestChr = 0;
 string processingchr = "NULL";
 string newchr = "NULL";
-FILE* METHOUTFILE;
 int printtxt=0;
 int Mcoverage=4;
 int maxcoverage=1000;
@@ -1460,7 +1462,7 @@ int main(int argc, char* argv[])
 			
 			FILE* GenomeFILE=File_Open(Geno.c_str(),"r");
 			fprintf(stderr, "[DM::calmeth] Loading genome sequence : %s\n", Geno.c_str());
-			ARGS args;
+                        ARGS args{};
 			fseek(GenomeFILE, 0L, SEEK_END);off64_t Genome_Size=ftello64(GenomeFILE);rewind(GenomeFILE);//load original genome..
 			args.Org_Genome=new char[Genome_Size];if(!args.Org_Genome) throw("Insufficient memory to load genome..\n"); 
 			char readBuffer[BUFSIZE];
@@ -1615,13 +1617,17 @@ int main(int argc, char* argv[])
 
 			////read file
 			
-                if(Methratio){
+                        if(Methratio){
                         if(printtxt == 1){
                                 methOutfileName=Prefix;
                 methOutfileName+=".methratio.txt";
-                                METHOUTFILE=File_Open(methOutfileName.c_str(),"w");
-                                fprintf(METHOUTFILE,"#chromsome\tloci\tstrand\tcontext\tC_count\tCT_count\tmethRatio\teff_CT_count\trev_G_count\trev_GA_count\tMethContext\t5context\n");
-                if(gDebugMode) fprintf(stderr, "[dm-writer] mrtxt path: %s\n", methOutfileName.c_str());
+                                args.methOutFp=File_Open(methOutfileName.c_str(),"w");
+                strncpy(args.methOutPath, methOutfileName.c_str(), sizeof(args.methOutPath) - 1);
+                args.methOutPath[sizeof(args.methOutPath) - 1] = '\0';
+                args.methOutLines = 0;
+                if(gDebugMode && args.methOutFp) setvbuf(args.methOutFp, NULL, _IONBF, 0);
+                                fprintf(args.methOutFp,"#chromsome\tloci\tstrand\tcontext\tC_count\tCT_count\tmethRatio\teff_CT_count\trev_G_count\trev_GA_count\tMethContext\t5context\n");
+                if(gDebugMode) fprintf(stderr, "[dm-writer] mrtxt path: %s fp=%p\n", methOutfileName.c_str(), (void*)args.methOutFp);
                         }
 
                         fp = NULL;
@@ -1800,12 +1806,14 @@ int main(int argc, char* argv[])
 				H = iter->second;
 				print_meth_tofile(H, &args);
 			}
-			//
-			 if(Methratio){
-				if(printtxt == 1){
-					fclose(METHOUTFILE);
-				}
-			 }
+                        //
+                         if(Methratio){
+                                if(printtxt == 1 && args.methOutFp){
+                    if(gDebugMode) fprintf(stderr, "[dm-writer] closing mrtxt %s fp=%p lines=%" PRIu64 "\n", args.methOutPath, (void*)args.methOutFp, args.methOutLines);
+                                        fclose(args.methOutFp);
+                    args.methOutFp = NULL;
+                                }
+                         }
 			fprintf(stderr, "genome process done!\n");
 			
 			fprintf(stderr, "Raw count of Met_C in CG:\t%lu\n",met_CG);
@@ -2055,6 +2063,10 @@ void print_meth_tofile(int genome_id, ARGS* args){
         if(Methratio)
         {
             fprintf(stderr, "[DM::calmeth] Start process chrom %d\n", genome_id);
+            if(gDebugMode) {
+                fprintf(stderr, "[dm-writer] chrom=%s dm_fp=%p gch_fp=%p mrtxt_fp=%p mrtxt_lines=%" PRIu64 "\n",
+                        args->Genome_Offsets[genome_id].Genome, (void*)fp, (void*)fp_gch, (void*)args->methOutFp, args->methOutLines);
+            }
             chromsUse = (char **)calloc(MAX_LINE_PRINT, sizeof(char*));
             entryid = (char **)calloc(MAX_LINE_PRINT, sizeof(char*));
             if(!chromsUse || !entryid) {
@@ -2303,9 +2315,13 @@ void print_meth_tofile(int genome_id, ARGS* args){
                             contexts[printL] = 3;
                         }
                         printL++;
-                        if(printtxt == 1){
-                            if(revGA>0) fprintf(METHOUTFILE,"%s\t%d\t+\t%s\t%d\t%d\t%f\t%0.001f\t%d\t%d\t%s\t%s\n",args->Genome_Offsets[i].Genome,l+1,context.c_str(),C_count,(C_count+T_count),PlusMethratio,float(C_count+T_count)*revGA,rev_G,(rev_A+rev_G),category.c_str(),Fivecontext.c_str());
-                            else fprintf(METHOUTFILE,"%s\t%d\t+\t%s\t%d\t%d\t%f\tnull\t%d\t%d\t%s\t%s\n",args->Genome_Offsets[i].Genome,l+1,context.c_str(),C_count,(C_count+T_count),PlusMethratio,rev_G,(rev_A+rev_G),category.c_str(),Fivecontext.c_str());
+                        if(printtxt == 1 && args->methOutFp){
+                            if(revGA>0) fprintf(args->methOutFp,"%s\t%d\t+\t%s\t%d\t%d\t%f\t%0.001f\t%d\t%d\t%s\t%s\n",args->Genome_Offsets[i].Genome,l+1,context.c_str(),C_count,(C_count+T_count),PlusMethratio,float(C_count+T_count)*revGA,rev_G,(rev_A+rev_G),category.c_str(),Fivecontext.c_str());
+                            else fprintf(args->methOutFp,"%s\t%d\t+\t%s\t%d\t%d\t%f\tnull\t%d\t%d\t%s\t%s\n",args->Genome_Offsets[i].Genome,l+1,context.c_str(),C_count,(C_count+T_count),PlusMethratio,rev_G,(rev_A+rev_G),category.c_str(),Fivecontext.c_str());
+                            args->methOutLines++;
+                            if(gDebugMode && args->methOutLines % 1000000 == 0) {
+                                fprintf(stderr, "[dm-writer] mrtxt lines=%" PRIu64 " last chrom=%s\n", args->methOutLines, args->Genome_Offsets[i].Genome);
+                            }
                         }
                     } else if(tech=="NoMe") {
                         // 获取中间三个字符的子串
@@ -2481,9 +2497,13 @@ void print_meth_tofile(int genome_id, ARGS* args){
                             contexts[printL] = 3;
                         }
                         printL++;
-                        if(printtxt == 1){
-                            if(revGA>0) fprintf(METHOUTFILE,"%s\t%d\t-\t%s\t%d\t%d\t%f\t%0.001f\t%d\t%d\t%s\t%s\n",args->Genome_Offsets[i].Genome,l+1,context.c_str(),C_count,(C_count+T_count),NegMethratio,float(C_count+T_count)*revGA,rev_G,(rev_G+rev_A),category.c_str(),Fcontext);
-                            else fprintf(METHOUTFILE,"%s\t%d\t-\t%s\t%d\t%d\t%f\tnull\t%d\t%d\t%s\t%s\n",args->Genome_Offsets[i].Genome,l+1,context.c_str(),C_count,(C_count+T_count),NegMethratio,rev_G,(rev_G+rev_A),category.c_str(),Fcontext);
+                        if(printtxt == 1 && args->methOutFp){
+                            if(revGA>0) fprintf(args->methOutFp,"%s\t%d\t-\t%s\t%d\t%d\t%f\t%0.001f\t%d\t%d\t%s\t%s\n",args->Genome_Offsets[i].Genome,l+1,context.c_str(),C_count,(C_count+T_count),NegMethratio,float(C_count+T_count)*revGA,rev_G,(rev_G+rev_A),category.c_str(),Fcontext);
+                            else fprintf(args->methOutFp,"%s\t%d\t-\t%s\t%d\t%d\t%f\tnull\t%d\t%d\t%s\t%s\n",args->Genome_Offsets[i].Genome,l+1,context.c_str(),C_count,(C_count+T_count),NegMethratio,rev_G,(rev_G+rev_A),category.c_str(),Fcontext);
+                            args->methOutLines++;
+                            if(gDebugMode && args->methOutLines % 1000000 == 0) {
+                                fprintf(stderr, "[dm-writer] mrtxt lines=%" PRIu64 " last chrom=%s\n", args->methOutLines, args->Genome_Offsets[i].Genome);
+                            }
                         }
                     }else if(tech=="NoMe") {
                         // 获取中间三个字符的子串
