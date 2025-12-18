@@ -1189,9 +1189,16 @@ error:
             }
         }
         free(fp->writeBuffer->firstZoomBuffer);
+        fp->writeBuffer->firstZoomBuffer = NULL;
     }
-    if(fp->writeBuffer->lastZoomBuffer) free(fp->writeBuffer->lastZoomBuffer);
-    if(fp->writeBuffer->nNodes) free(fp->writeBuffer->nNodes);
+    if(fp->writeBuffer->lastZoomBuffer) {
+        free(fp->writeBuffer->lastZoomBuffer);
+        fp->writeBuffer->lastZoomBuffer = NULL;
+    }
+    if(fp->writeBuffer->nNodes) {
+        free(fp->writeBuffer->nNodes);
+        fp->writeBuffer->nNodes = NULL;
+    }
     return 6;
 }
 
