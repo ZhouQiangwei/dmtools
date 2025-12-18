@@ -81,7 +81,7 @@ sudo apt-get install -y build-essential zlib1g-dev libbz2-dev liblzma-dev libcur
 To include `dmDMR`, add `libgsl-dev` and rebuild with `make WITH_GSL=1`.
 
 The build outputs the `bam2dm` executable from `bam2dm.cpp`; `dmtools bam2dm` dispatches to that binary.
-When you run `dmtools bam2dm`, the driver shells out to the compiled `bam2dm` in the same directory. If you pass `-p N` (threads >1), `dmtools` fans out by chromosome (`--chrom <name>`) and then merges the per-chromosome `-m <outfile>.<chrom>` shards back together with `dmtools merge`, matching the legacy behavior of the chromosome-parallel wrapper.
+When you run `dmtools bam2dm`, the driver shells out to the compiled `bam2dm` in the same directory. Use `-p N` **or** `--threads N` to control how many chromosome-parallel workers the wrapper launches (default is 1). If you pass `-p/--threads N` with `N>1`, `dmtools` fans out by chromosome (`--chrom <name>`) and then merges the per-chromosome `-m <outfile>.<chrom>` shards back together with `dmtools merge`, matching the legacy behavior of the chromosome-parallel wrapper.
 
 
 | [ dmtools ]         | process with dm file                                                    |

@@ -551,7 +551,7 @@ uint8_t filter_strand = 2;
 int mincover = 0;
 int maxcover = 10000;
 int printcoverage = 0; // print countC and countCT instead of methratio
-int NTHREAD = 10;
+int NTHREAD = 1;
 int skipMerge = 0;
 int *Fcover;
 unsigned long *mPs;
@@ -701,7 +701,7 @@ int main(int argc, char *argv[]) {
             if(strcmp(argv[i], "-g") == 0){
                 strcpy(chromlenf, argv[i+1]);
                 chromlenf_yes++;
-            }else if(strcmp(argv[i], "-p") == 0){
+            }else if(strcmp(argv[i], "-p") == 0 || strcmp(argv[i], "--threads") == 0){
                 NTHREAD = atoi(argv[i+1]);
             }else if(strcmp(argv[i], "-o") == 0 || strcmp(argv[i], "--out") == 0){
                 outfile = malloc(sizeof(char)*200);
