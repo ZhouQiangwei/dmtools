@@ -281,12 +281,11 @@ error:
 }
 
 //This is here mostly for convenience
-static void bmDestroyWriteBuffer(bmWriteBuffer_t *wb) {
+static void bmDestroyWriteBuffer(bmWriteBuffer_t *wb, uint16_t nLevels) {
+    if(!wb) return;
+    destroyZoomBuffers(wb, nLevels);
     if(wb->p) free(wb->p);
     if(wb->compressP) free(wb->compressP);
-    if(wb->firstZoomBuffer) free(wb->firstZoomBuffer);
-    if(wb->lastZoomBuffer) free(wb->lastZoomBuffer);
-    if(wb->nNodes) free(wb->nNodes);
     free(wb);
 }
 
@@ -302,7 +301,7 @@ void bmClose(binaMethFile_t *fp) {
     if(fp->hdr) bmHdrDestroy(fp->hdr);
     if(fp->cl) destroyChromList(fp->cl);
     if(fp->idx) bmDestroyIndex(fp->idx);
-    if(fp->writeBuffer) bmDestroyWriteBuffer(fp->writeBuffer);
+    if(fp->writeBuffer) bmDestroyWriteBuffer(fp->writeBuffer, fp->hdr ? fp->hdr->nLevels : 0);
     free(fp);
 }
 

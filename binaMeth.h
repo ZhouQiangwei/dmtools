@@ -239,6 +239,8 @@ typedef struct {
     void *compressP; /**<A compressed buffer of size compressPsz*/
 } bmWriteBuffer_t;
 
+void destroyZoomBuffers(bmWriteBuffer_t *wb, uint16_t nLevels);
+
 /*!
  * @brief A structure that holds everything needed to access a binaMeth file.
  */

@@ -1181,24 +1181,7 @@ int makeZoomLevels(binaMethFile_t *fp) {
     return 0;
 
 error:
-    if(fp->writeBuffer->firstZoomBuffer) {
-        for(i=0; i<fp->hdr->nLevels; i++) {
-            if(fp->writeBuffer->firstZoomBuffer[i]) {
-                if(fp->writeBuffer->firstZoomBuffer[i]->p) free(fp->writeBuffer->firstZoomBuffer[i]->p);
-                free(fp->writeBuffer->firstZoomBuffer[i]);
-            }
-        }
-        free(fp->writeBuffer->firstZoomBuffer);
-        fp->writeBuffer->firstZoomBuffer = NULL;
-    }
-    if(fp->writeBuffer->lastZoomBuffer) {
-        free(fp->writeBuffer->lastZoomBuffer);
-        fp->writeBuffer->lastZoomBuffer = NULL;
-    }
-    if(fp->writeBuffer->nNodes) {
-        free(fp->writeBuffer->nNodes);
-        fp->writeBuffer->nNodes = NULL;
-    }
+    destroyZoomBuffers(fp->writeBuffer, fp->hdr->nLevels);
     return 6;
 }
 
@@ -1516,29 +1499,11 @@ int writeZoomLevels(binaMethFile_t *fp) {
         bmSetPos(fp, offset2);
 
 
-        //Free the linked list
-        zb = fp->writeBuffer->firstZoomBuffer[i];
-        while(zb) {
-            if(zb->p) free(zb->p);
-            zb2 = zb->next;
-            free(zb);
-            zb = zb2;
-        }
-        fp->writeBuffer->firstZoomBuffer[i] = NULL;
     }
 
     if(DEBUG>1) printf("-----2222\n");
-    //Free unused zoom levels
-    for(i=actualNLevels; i<fp->hdr->nLevels; i++) {
-        zb = fp->writeBuffer->firstZoomBuffer[i];
-        while(zb) {
-            if(zb->p) free(zb->p);
-            zb2 = zb->next;
-            free(zb);
-            zb = zb2;
-        }
-        fp->writeBuffer->firstZoomBuffer[i] = NULL;
-    }
+    //Free all zoom buffers now that they have been written
+    destroyZoomBuffers(fp->writeBuffer, fp->hdr->nLevels);
 
     //Write the zoom headers to disk
     offset1 = bmTell(fp);
@@ -1678,3 +1643,29 @@ zoom data block
 uint32_t number of blocks (10519766)
 some data blocks
 */
+void destroyZoomBuffers(bmWriteBuffer_t *wb, uint16_t nLevels) {
+    if(!wb) return;
+    if(wb->firstZoomBuffer) {
+        for(uint16_t i=0; i<nLevels; i++) {
+            bmZoomBuffer_t *zb = wb->firstZoomBuffer[i];
+            while(zb) {
+                bmZoomBuffer_t *next = zb->next;
+                if(zb->p) free(zb->p);
+                free(zb);
+                zb = next;
+            }
+            wb->firstZoomBuffer[i] = NULL;
+        }
+        free(wb->firstZoomBuffer);
+        wb->firstZoomBuffer = NULL;
+    }
+    if(wb->lastZoomBuffer) {
+        free(wb->lastZoomBuffer);
+        wb->lastZoomBuffer = NULL;
+    }
+    if(wb->nNodes) {
+        free(wb->nNodes);
+        wb->nNodes = NULL;
+    }
+}
+
