@@ -1838,9 +1838,11 @@ int main(int argc, char* argv[])
     fprintf(stderr, "[DM::calmeth] dm closing\n");
     if(Methratio && fp){
         bmClose(fp);
+        fp = NULL;
     }
     if(Methratio && tech=="NoMe" && fp_gch){
         bmClose(fp_gch);
+        fp_gch = NULL;
     }
     fprintf(stderr, "[DM::calmeth] dm closed\n");
     if(Methratio && gDebugMode) {

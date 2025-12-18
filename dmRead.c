@@ -293,8 +293,10 @@ void bmClose(binaMethFile_t *fp) {
     if(DEBUG>1) fprintf(stderr, "kkkkxx\n");
     if(!fp) return;
     if(DEBUG>1) fprintf(stderr, "lllllxxxx\n");
-    if(bmFinalize(fp)) {
-        fprintf(stderr, "[bmClose] There was an error while finishing writing a binaMeth file! The output is likely truncated.\n");
+    if(fp->isWrite && fp->writeBuffer) {
+        if(bmFinalize(fp)) {
+            fprintf(stderr, "[bmClose] There was an error while finishing writing a binaMeth file! The output is likely truncated.\n");
+        }
     }
     if(DEBUG>1) fprintf(stderr, "222222222\n");
     if(fp->URL) urlClose(fp->URL);
