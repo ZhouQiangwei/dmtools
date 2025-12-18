@@ -5,7 +5,12 @@
 RPATH = $(shell pwd)
 SOURCES = $(wildcard *.cpp)
 OBJECTS = $(patsubst %.cpp,%.o,$(SOURCES))
-PROGS = dmtools bam2dm dmDMR dmalign bam2motif
+# Programs built by default; dmDMR is gated on the presence of GSL.
+PROGS = dmtools bam2dm dmalign bam2motif
+
+# Canonical bam2dm implementation. dmtools invokes the bam2dm binary produced
+# from this source.
+BAM2DM_SRC := bam2dm.cpp
 
 CXX ?= g++
 CC ?= gcc
@@ -76,6 +81,23 @@ prefix = /usr/local
 includedir = $(prefix)/include
 libdir = $(exec_prefix)/lib
 
+# Detect GSL for dmDMR; allow disabling with WITH_GSL=0.
+ifeq ($(WITH_GSL),0)
+    HAVE_GSL := NO
+else
+    gsl_tmp:=$(shell mktemp -t gslcheckXXXXX.c 2>/dev/null || (TMPDIR=$${TMPDIR:-/tmp}; mktemp $$TMPDIR/gslcheckXXXXX.c))
+    $(file >$(gsl_tmp),#include <gsl/gsl_matrix_double.h>)
+    $(file >>$(gsl_tmp),int main() { gsl_matrix *m = gsl_matrix_calloc(1,1); gsl_matrix_free(m); return 0; })
+    HAVE_GSL := $(shell $(CXX) $(CXXFLAGS) -lgsl -lgslcblas -lm $(gsl_tmp) -o /dev/null >/dev/null 2>&1 && echo "YES")
+    $(shell rm -f $(gsl_tmp))
+endif
+
+ifeq ($(HAVE_GSL),YES)
+    PROGS += dmDMR
+else
+    $(info GSL not found; skipping dmDMR. Install libgsl-dev and rerun make WITH_GSL=1 to enable.)
+endif
+
 .PHONY: all clean lib test doc
 
 .SUFFIXES: .c .o .pico
@@ -141,7 +163,7 @@ htslib/libhts.a:
 	$(MAKE) -C htslib libhts.a
 
 bam2dm: libBinaMeth.a htslib/libhts.a
-	$(CXX) $(CXXFLAGS) -no-pie bam2dm.cpp -o bam2dm -m64 -I. libBinaMeth.a -Wl,-rpath $(RPATH) htslib/libhts.a $(LDFLAGS_SUB)
+	$(CXX) $(CXXFLAGS) -no-pie $(BAM2DM_SRC) -o bam2dm -m64 -I. libBinaMeth.a -Wl,-rpath $(RPATH) htslib/libhts.a $(LDFLAGS_SUB)
 
 bam2motif: libBinaMeth.a htslib/libhts.a
 	$(CXX) $(CXXFLAGS) -no-pie bam2motif.cpp -o bam2motif -m64 -I. libBinaMeth.a -Wl,-rpath $(RPATH) htslib/libhts.a $(LDFLAGS_SUB)
@@ -171,4 +193,4 @@ install-env: libBinaMeth.a libBinaMeth.so
 	install *.h $(prefix)/include
 
 libs:
-	make -C htslib
+	$(MAKE) -C htslib libhts.a

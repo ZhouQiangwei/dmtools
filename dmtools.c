@@ -27,6 +27,8 @@
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>
+#include <errno.h>
+#include <sys/wait.h>
 #include <pthread.h>
 
 #include <glob.h>
@@ -68,6 +70,7 @@ void bmPrintHdr(binaMethFile_t *bm);
 void bmPrintIndexNode(bmRTreeNode_t *node, int level);
 char *fastStrcat(char *s, char *t);
 void onlyexecuteCMD(const char *cmd, const char *errorinfor);
+int executeCMDWithStatus(const char *cmd, const char *errorinfor);
 size_t get_executable_path( char* processdir,char* processname, size_t len);
 unsigned long get_chr_len(binaMethFile_t *bm, char* chrom);
 int main_view_bm(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outformat, binaMethFile_t *ofp, \
@@ -80,6 +83,7 @@ void *multithread_cmd(void *arg);
 int dm_sc_qc_main(int argc, char **argv);
 int dm_sc_matrix_main(int argc, char **argv);
 int dm_sc_aggregate_main(int argc, char **argv);
+int dm_validate_main(int argc, char **argv);
 
 struct ARGS{
     char* runCMD;
@@ -104,7 +108,7 @@ struct Threading
 #define MAX_BUFF_PRINT 20000000
 const char* Help_String_main="Command Format :  dmtools <mode> [opnions]\n"
                 "\nUsage:\n"
-        "\t  [mode]         index align bam2dm mr2dm view ebsrate viewheader overlap regionstats bodystats profile chromstats sc-qc sc-matrix sc-aggregate\n\n"
+        "\t  [mode]         index align bam2dm mr2dm view ebsrate viewheader overlap regionstats bodystats profile chromstats sc-qc sc-matrix sc-aggregate validate\n\n"
         "\t  index          build index for genome\n"
         "\t  align          alignment fastq\n"
         "\t  bam2dm         calculate DNA methylation (DM format) with BAM file\n"
@@ -169,6 +173,82 @@ const char* Help_String_scaggregate="Command Format :  dmtools sc-aggregate [opt
         "\t--dense              write dense TSV matrix output in addition to summary\n"
         "\t-h|--help";
 
+const char* Help_String_validate="Command Format :  dmtools validate -i <dm file> [--verbose]\n"
+        "\nUsage: dmtools validate -i input.dm [--verbose]\n"
+        "\t [validate] required\n"
+        "\t-i|--input           input DM file to check\n"
+        "\t [validate] options\n"
+        "\t--verbose            print additional index block details\n"
+        "\t-h|--help";
+
+int dm_validate_main(int argc, char **argv){
+    char *input = NULL;
+    int verbose = 0;
+    for(int i = 1; i < argc; ++i){
+        if(strcmp(argv[i], "-i") == 0 || strcmp(argv[i], "--input") == 0){
+            if(i + 1 < argc){
+                input = argv[++i];
+            }else{
+                fprintf(stderr, "%s\n", Help_String_validate);
+                return 1;
+            }
+        }else if(strcmp(argv[i], "--verbose") == 0){
+            verbose = 1;
+        }else if(strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0){
+            fprintf(stderr, "%s\n", Help_String_validate);
+            return 0;
+        }
+    }
+
+    if(!input){
+        fprintf(stderr, "%s\n", Help_String_validate);
+        return 1;
+    }
+
+    binaMethFile_t *fp = bmOpen(input, NULL, "r");
+    if(!fp || !fp->hdr){
+        fprintf(stderr, "[dmtools validate] failed to open %s as dm file\n", input);
+        if(fp) bmClose(fp);
+        return 1;
+    }
+    if(!fp->cl || fp->cl->nKeys == 0){
+        fprintf(stderr, "[dmtools validate] chromosome list missing or empty in %s\n", input);
+        bmClose(fp);
+        return 1;
+    }
+    if(!fp->idx || !fp->idx->root || fp->idx->nItems == 0){
+        fprintf(stderr, "[dmtools validate] index missing or empty in %s\n", input);
+        bmClose(fp);
+        return 1;
+    }
+
+    uint32_t tid = 0;
+    uint32_t start = 0;
+    uint32_t end = fp->cl->len[tid];
+    if(end > 100000) end = 100000;
+    bmOverlappingIntervals_t *hits = bmGetOverlappingIntervals(fp, fp->cl->chrom[tid], start, end);
+    if(!hits){
+        fprintf(stderr, "[dmtools validate] failed to read data from %s\n", input);
+        bmClose(fp);
+        return 1;
+    }
+    if(hits->l == 0){
+        fprintf(stderr, "[dmtools validate] no records returned for %s\n", input);
+        bmDestroyOverlappingIntervals(hits);
+        bmClose(fp);
+        return 1;
+    }
+
+    if(verbose){
+        fprintf(stderr, "[dmtools validate] index items=%" PRIu64 " first fetch count=%u\n", fp->idx->nItems, hits->l);
+    }
+
+    bmDestroyOverlappingIntervals(hits);
+    bmClose(fp);
+    fprintf(stderr, "[dmtools validate] OK: %s\n", input);
+    return 0;
+}
+
 const char* Help_String_bw="Command Format :  dmtools bw [options] -i <dm> -o <out bigwig file>\n"
         "\nUsage: dmtools bw -i input.dm -o meth.bw\n"
         "\t [bw] mode paramaters, required\n"
@@ -185,24 +265,28 @@ const char* Help_String_bw="Command Format :  dmtools bw [options] -i <dm> -o <o
         "\t--zl                  The maximum number of zoom levels. [0-10], default: 2\n"
         "\t-h|--help";
 
-const char* Help_String_bam2dm="Command Format :  dmtools bam2dm [options] -g genome.fa -b <BamfileSorted> -o <methratio dm outfile prefix>\n"
-		"\nUsage: dmtools bam2dm -C -S --Cx -g genome.fa -b align.sort.bam -o meth.dm\n"
-        "   or: dmtools bam2dm -C -S -g genome.fa -b test.sort.bam -o meth.dm --NoMe (meth.dm file for methylation level, methdm.gch.dm for chromatin accessibility)\n"
+const char* Help_String_bam2dm="Command Format :  dmtools bam2dm [options] -g genome.fa -b <BamfileSorted> -m <methratio dm outfile>\n"
+                "\nUsage: dmtools bam2dm -C -S --Cx -g genome.fa -b align.sort.bam -m meth.dm\n"
+        "   or: dmtools bam2dm -C -S -g genome.fa -b test.sort.bam -m meth.dm --NoMe (meth.dm file for methylation level, methdm.gch.dm for chromatin accessibility)\n"
         "\t [bam2dm] mode paramaters, required\n"
-		"\t-g|--genome           genome fasta file\n"
-		"\t-b|--binput           Bam format file, sorted by chrom.\n"
-        "\t-o|--out              Prefix of methratio.dm output file\n"
-		"\t [bam2dm] mode paramaters, options\n"
+                "\t-g|--genome           genome fasta file\n"
+                "\t-b|--binput           Bam format file, sorted by chrom.\n"
+        "\t-m|--methratio        methratio.dm output file\n"
+                "\t [bam2dm] mode paramaters, options\n"
         "\t-n|--Nmismatch        Number of mismatches, default 0.1 percentage of read length. [0-1]\n"
-		"\t-Q                    caculate the methratio while read QulityScore >= Q. default:30\n"
-		"\t-c|--coverage         >= <INT> coverage. default:4\n"
-		"\t--maxcoverage         <= <INT> coverage. default:500\n"
-		"\t-nC                   >= <INT> nCs per region. default:1\n"
-		"\t-r|--remove_dup       REMOVE_DUP, default:false\n"
+                "\t-Q                    caculate the methratio while read QulityScore >= Q. default:30\n"
+                "\t-c|--coverage         >= <INT> coverage. default:4\n"
+                "\t--maxcoverage         <= <INT> coverage. default:500\n"
+                "\t-nC                   >= <INT> nCs per region. default:1\n"
+                "\t-r|--remove_dup       REMOVE_DUP, default:false\n"
         "\t--ph                  print head bases of seq, default: seq.txt, motif analysis\n"
         "\t--mrtxt               print prefix.methratio.txt file\n"
         "\t--cf                  context filter for print results, C, CG, CHG, CHH, default: C\n"
-        "\t-p                    [int] threads\n"
+        "\t-p|--threads          [int] threads (default: 1)\n"
+        "\t--chunk-by <chrom|bin>  process by chromosome (default) or fixed-size bins (bin mode reserved)\n"
+        "\t--bin-size <INT>      bin size when using --chunk-by bin (default: 2000)\n"
+        "\t--debug               verbose logging of parsed options and progress\n"
+        "\t--no-merge            keep per-chromosome dm files and skip the final merge step\n"
         "\t--NoMe                data type for NoMe-seq\n"
         "\t[DM format] paramaters\n"
         "\t--zl                  The maximum number of zoom levels. [0-10], default: 2\n"
@@ -212,6 +296,8 @@ const char* Help_String_bam2dm="Command Format :  dmtools bam2dm [options] -g ge
         "\t--Cx                  print context in DM file\n"
         "\t-E                    print end in DM file\n"
         "\t--Id                  print ID in DM file\n"
+        "\t--check <dm>          validate an existing dm file and exit\n"
+        "\t--validate-output     validate dm after writing (structural check)\n"
         "\t-h|--help";
 
 const char* Help_String_index="Command Format :  dmtools index [options] -g genome.fa\n"
@@ -465,7 +551,8 @@ uint8_t filter_strand = 2;
 int mincover = 0;
 int maxcover = 10000;
 int printcoverage = 0; // print countC and countCT instead of methratio
-int NTHREAD = 10;
+int NTHREAD = 1;
+int skipMerge = 0;
 int *Fcover;
 unsigned long *mPs;
 unsigned long mPs_0;
@@ -485,6 +572,8 @@ int main(int argc, char *argv[]) {
         return dm_sc_matrix_main(argc-1, argv+1);
     } else if(argc>1 && strcmp(argv[1], "sc-aggregate") == 0){
         return dm_sc_aggregate_main(argc-1, argv+1);
+    } else if(argc>1 && strcmp(argv[1], "validate") == 0){
+        return dm_validate_main(argc-1, argv+1);
     }
 
     binaMethFile_t *fp = NULL;
@@ -591,6 +680,8 @@ int main(int argc, char *argv[]) {
            fprintf(stderr, "%s\n", Help_String_scmatrix);
         }else if(strcmp(mode, "sc-aggregate") == 0){
            fprintf(stderr, "%s\n", Help_String_scaggregate);
+        }else if(strcmp(mode, "validate") == 0){
+           fprintf(stderr, "%s\n", Help_String_validate);
          }else if(strcmp(mode, "addzm") == 0){
              fprintf(stderr, "%s\n", Help_String_addzm);
          }else{
@@ -610,11 +701,14 @@ int main(int argc, char *argv[]) {
             if(strcmp(argv[i], "-g") == 0){
                 strcpy(chromlenf, argv[i+1]);
                 chromlenf_yes++;
-            }else if(strcmp(argv[i], "-p") == 0){
+            }else if(strcmp(argv[i], "-p") == 0 || strcmp(argv[i], "--threads") == 0){
                 NTHREAD = atoi(argv[i+1]);
             }else if(strcmp(argv[i], "-o") == 0 || strcmp(argv[i], "--out") == 0){
                 outfile = malloc(sizeof(char)*200);
                 strcpy(outfile, argv[i+1]);
+            }else if(strcmp(argv[i], "--no-merge") == 0){
+                skipMerge = 1;
+                continue;
             }
             strcat(bam2bm_paras, argv[i]);
             strcat(bam2bm_paras, " ");
@@ -928,6 +1022,8 @@ int main(int argc, char *argv[]) {
         strcpy(cmd, abspathtmp);
         strcat(cmd, "bam2dm ");
         strcat(cmd, bam2bm_paras);
+        fprintf(stderr, "[dmtools] exec path for bam2dm: %sbam2dm\n", abspathtmp);
+        fprintf(stderr, "[dmtools] base command: %s\n", cmd);
         //char mergecmd[10000];
         char* mergecmd = (char*) malloc(10000 * sizeof(char));
         sprintf(mergecmd, "%s/dmtools merge --pr --outformat dm -o %s -i ", abspathtmp, outfile);
@@ -1041,12 +1137,23 @@ int main(int argc, char *argv[]) {
                 free(Thread_Info[i].Arg.prcessChr);
             }
             free(Thread_Info);
-            fprintf(stderr, "CMMd %s", mergecmd);
-            onlyexecuteCMD(mergecmd, Help_String_bam2dm);
-            for(j=0;j<Nchrom;j++){
-                mergecmd[0]='\0';
-                sprintf(mergecmd, "rm %s.%s", outfile, chroms[j]);
-                onlyexecuteCMD(mergecmd, Help_String_bam2dm);
+            int mergeStatus = 0;
+            if(skipMerge){
+                fprintf(stderr, "[dmtools] --no-merge specified; keeping per-chromosome outputs\n");
+            }else{
+                fprintf(stderr, "CMMd %s", mergecmd);
+                mergeStatus = executeCMDWithStatus(mergecmd, Help_String_bam2dm);
+            }
+            if(!skipMerge && mergeStatus == 0){
+                for(j=0;j<Nchrom;j++){
+                    char rmPath[1024];
+                    snprintf(rmPath, sizeof(rmPath), "%s.%s", outfile, chroms[j]);
+                    if(remove(rmPath) != 0){
+                        fprintf(stderr, "[dmtools] warning: failed to remove %s (%s)\n", rmPath, strerror(errno));
+                    }
+                }
+            } else if(mergeStatus != 0) {
+                fprintf(stderr, "[dmtools] merge failed (status %d); temporary chromosome files retained\n", mergeStatus);
             }
             free(mergecmd);
         }else{
@@ -4459,7 +4566,11 @@ int bm_merge_all_mul(char *inbmFs, char *outfile, uint8_t pstrand, int m_method,
         substr = strtok(NULL,",");
     }
 
-    binaMethFile_t **ifps = malloc(sizeof(binaMethFile_t)*sizeifp);
+    binaMethFile_t **ifps = calloc(sizeifp, sizeof(binaMethFile_t*));
+    if(!ifps) {
+        fprintf(stderr, "[dmtools merge] failed to allocate input handles\n");
+        return -1;
+    }
 
     for(i=0;i<sizeifp;i++){
         uint32_t type1 = BMtype(infiles[i], NULL);
@@ -4510,16 +4621,22 @@ int bm_merge_all_mul(char *inbmFs, char *outfile, uint8_t pstrand, int m_method,
     int SEGlen = 1000000;
     int start = 0, end = SEGlen-1;
 
-    char **chromsUse = malloc(sizeof(char*)*MAX_LINE_PRINT);
-    char **entryid = malloc(sizeof(char*)*MAX_LINE_PRINT);
+    char **chromsUse = calloc(MAX_LINE_PRINT, sizeof(char*));
+    char **entryid = calloc(MAX_LINE_PRINT, sizeof(char*));
 //    uint32_t *chrLens = malloc(sizeof(uint32_t) * MAX_LINE_PRINT);
-    uint32_t *starts = malloc(sizeof(uint32_t) * MAX_LINE_PRINT);
-    uint32_t *ends = malloc(sizeof(uint32_t) * MAX_LINE_PRINT);
-    float *values = malloc(sizeof(float) * MAX_LINE_PRINT);
-    uint16_t *coverages = malloc(sizeof(uint16_t) * MAX_LINE_PRINT);
-    uint16_t *coverC = malloc(sizeof(uint16_t) * MAX_LINE_PRINT);
-    uint8_t *strands = malloc(sizeof(uint8_t) * MAX_LINE_PRINT);
-    uint8_t *contexts = malloc(sizeof(uint8_t) * MAX_LINE_PRINT);
+    uint32_t *starts = calloc(MAX_LINE_PRINT, sizeof(uint32_t));
+    uint32_t *ends = calloc(MAX_LINE_PRINT, sizeof(uint32_t));
+    float *values = calloc(MAX_LINE_PRINT, sizeof(float));
+    uint16_t *coverages = calloc(MAX_LINE_PRINT, sizeof(uint16_t));
+    uint16_t *coverC = calloc(MAX_LINE_PRINT, sizeof(uint16_t));
+    uint8_t *strands = calloc(MAX_LINE_PRINT, sizeof(uint8_t));
+    uint8_t *contexts = calloc(MAX_LINE_PRINT, sizeof(uint8_t));
+
+    if(!chromsUse || !entryid || !starts || !ends || !values || !coverages || !strands || !contexts || !coverC) {
+        fprintf(stderr, "[dmtools merge] failed to allocate merge buffers\n");
+        free(chromsUse); free(entryid); free(starts); free(ends); free(values); free(coverages); free(strands); free(contexts); free(coverC);
+        return -1;
+    }
 
     int printL = 0; int printedY = 0;
     for(i=0;i<ifps[0]->cl->nKeys;i++){
@@ -4572,7 +4689,8 @@ int bm_merge_all_mul(char *inbmFs, char *outfile, uint8_t pstrand, int m_method,
     }
 
     for(i =0; i < MAX_LINE_PRINT; i++){
-        free(chromsUse[i]); free(entryid[i]);
+        if(chromsUse[i]) free(chromsUse[i]);
+        if(entryid[i]) free(entryid[i]);
     }
     free(chromsUse); free(entryid); free(starts);
     free(ends); free(values); free(coverages); free(strands); free(contexts); free(coverC);
@@ -5336,6 +5454,24 @@ void onlyexecuteCMD(const char *cmd, const char *errorinfor)
     }
     pclose(ptr);
     ptr = NULL;
+}
+
+int executeCMDWithStatus(const char *cmd, const char *errorinfor)
+{
+    FILE *ptr = popen(cmd, "r");
+    if(ptr == NULL){
+        fprintf(stderr, "\n%s\n", errorinfor);
+        return -1;
+    }
+    int status = pclose(ptr);
+    if(status == -1){
+        fprintf(stderr, "[dmtools] failed to close command pipe for %s (%s)\n", cmd, strerror(errno));
+        return -1;
+    }
+    if(status != 0){
+        fprintf(stderr, "[dmtools] command failed (%d): %s\n", status, cmd);
+    }
+    return status;
 }
 
 size_t get_executable_path( char* processdir,char* processname, size_t len)

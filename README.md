@@ -28,6 +28,62 @@ For more information, please see https://dmtools-docs.rtfd.io
 And calmeth in batmeth2-dm can convert align bs bam file to dm file, https://dmtools-docs.readthedocs.io/en/latest/function/bam2dm.html
 
 
+## Installation and build dependencies
+
+The native binaries are built with GNU make and require the following system packages:
+
+- A C/C++ toolchain (GCC 5+ recommended; GCC 4.x works via the `-std=gnu++0x` fallback in the Makefile), `make`, and standard build tools
+- Compression and network dependencies: `zlib`/`libz-dev`, `libbz2-dev`, `liblzma-dev`, `libcurl4-openssl-dev`
+- Optional: GSL (`libgsl-dev`). When present, `dmDMR` is built; otherwise it is skipped automatically and the build prints a short notice.
+
+### Build without root (recommended)
+
+All targets can be installed under a user prefix without sudo:
+
+```
+export PREFIX="$HOME/.local"
+mkdir -p "$PREFIX"
+make clean
+make libs
+make
+make install PREFIX="$PREFIX"
+export PATH="$PREFIX/bin:$PATH"
+export LD_LIBRARY_PATH="$PREFIX/lib:$LD_LIBRARY_PATH"
+```
+
+Verify the toolchain:
+
+```
+dmtools bam2dm --help
+```
+
+### Conda-based toolchain (no sudo)
+
+If your cluster lacks the required system libraries, a Conda environment can provide them without root:
+
+```
+conda create -n dmtools-env -c conda-forge gcc gxx zlib bzip2 xz libcurl make
+conda activate dmtools-env
+make clean
+make libs
+make
+```
+
+### Optional system package installation
+
+If you do have root on Debian/Ubuntu, the following installs the prerequisites. This is optional because the above user-local builds avoid sudo:
+
+```
+sudo apt-get update
+sudo apt-get install -y build-essential zlib1g-dev libbz2-dev liblzma-dev libcurl4-openssl-dev
+```
+
+To include `dmDMR`, add `libgsl-dev` and rebuild with `make WITH_GSL=1`.
+
+The build outputs the `bam2dm` executable from `bam2dm.cpp`; `dmtools bam2dm` dispatches to that binary.
+When you run `dmtools bam2dm`, the driver shells out to the compiled `bam2dm` in the same directory. Use `-p N` **or** `--threads N` to control how many chromosome-parallel workers the wrapper launches (default is 1). If you pass `-p/--threads N` with `N>1`, `dmtools` fans out by chromosome (`--chrom <name>`) and then merges the per-chromosome `-m <outfile>.<chrom>` shards back together with `dmtools merge`, matching the legacy behavior of the chromosome-parallel wrapper.
+
+
 | [ dmtools ]         | process with dm file                                                    |
 |---------------------|--------------------------------------------------------------------------|
 |                     | dmtools <mode> [opnions]                                                 |
@@ -98,6 +154,48 @@ This writes per-group region summaries and, with `--dense`, a group × region ma
 For more information, please see https://dmtools-docs.rtfd.io/
 
 And calmeth in batmeth2-dm can convert align bs bam file to dm file, https://dmtools-docs.readthedocs.io/en/latest/function/bam2dm.html
+
+## Debugging and validation
+
+The `bam2dm` converter benefits from running with the address/undefined behaviour sanitizers enabled when investigating platform-specific crashes or corrupted DM output:
+
+```
+make clean
+CXXFLAGS="-O0 -g -fsanitize=address,undefined -fno-omit-frame-pointer" make bam2dm
+```
+
+The `bam2dm` binary built by `make bam2dm` comes from `bam2dm.cpp`; `dmtools bam2dm` shells out to that executable.
+
+Run the converter with verbose diagnostics and on-disk validation enabled to surface silent failures early:
+
+```
+./dmtools bam2dm --debug --validate-output \
+  -g test/test.chr1.f \
+  -b /tmp/minimal.bam \
+  -m /tmp/minimal.dm \
+  --chunk-by chrom --bin-size 2000 --threads 1
+```
+
+Bin mode uses fixed-size bins (default 2000 bp) to distribute work across threads while keeping a single, deterministic writer. Each worker opens its own BAM+index handle and appends results to a per-thread shard under `<methratio>.parts/thread_<tid>.tmp`, capping the number of temporary files to the thread count instead of the bin count. The main thread replays each shard in `(chrom,start)` order into the final dm before running `--validate-output` if requested. A BAM index (`.bai`/`.csi`) is required; missing indexes cause the command to fail fast.
+
+Example bin-mode invocation with validation:
+
+```
+./dmtools bam2dm --debug --validate-output \
+  -g test/test.chr1.f \
+  -b /tmp/minimal.bam \
+  -m /tmp/minimal.dm \
+  --chunk-by bin --bin-size 2000 --threads 4
+```
+
+To compare deterministic output across thread counts, rerun the same input with `--threads 2` (or higher) and ensure the `--validate-output` check succeeds for each run.
+
+To validate an existing DM without rewriting it, use the structural check mode, which returns a non-zero exit code on corruption and prints a short success message otherwise:
+
+```
+./dmtools bam2dm --check /tmp/minimal.dm
+dmtools validate -i /tmp/minimal.dm
+```
 
 ### next steps
 - [x] add support for NOMe-seq
