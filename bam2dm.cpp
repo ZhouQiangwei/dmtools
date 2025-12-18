@@ -195,6 +195,7 @@ static bool gDebugMode = false;
 static uint64_t gDmRecordsWritten = 0;
 static uint64_t gDmRecordsWrittenGch = 0;
 static uint64_t gGenomeSizeBases = 0;
+static bool gDmWritersClosed = false;
 
 struct FilterStats {
     std::atomic<uint64_t> totalReads{0};
@@ -347,6 +348,19 @@ static void destroyOverlapBlock(bmOverlapBlock_t *block) {
     if(block->size) free(block->size);
     if(block->offset) free(block->offset);
     free(block);
+}
+
+static void closeDmOutputs() {
+    if(gDmWritersClosed) return;
+    if(fp) {
+        bmClose(fp);
+        fp = NULL;
+    }
+    if(fp_gch) {
+        bmClose(fp_gch);
+        fp_gch = NULL;
+    }
+    gDmWritersClosed = true;
 }
 
 static int runBinChunkDebug(const std::string &bamPath, const std::vector<BinTask> &tasks, int threads, bool debugMode) {
@@ -1631,6 +1645,7 @@ int main(int argc, char* argv[])
                         }
 
                         fp = NULL;
+                        gDmWritersClosed = false;
                         methOutfileName=Prefix;
 //                methOutfileName+=".methratio.dm";
                         if(gDebugMode) fprintf(stderr, "[dm-writer] dm output path: %s\n", methOutfileName.c_str());
@@ -1836,14 +1851,7 @@ int main(int argc, char* argv[])
     myMap.clear();
     bool dmEmpty = Methratio && (gDmRecordsWritten == 0);
     fprintf(stderr, "[DM::calmeth] dm closing\n");
-    if(Methratio && fp){
-        bmClose(fp);
-        fp = NULL;
-    }
-    if(Methratio && tech=="NoMe" && fp_gch){
-        bmClose(fp_gch);
-        fp_gch = NULL;
-    }
+    if(Methratio) closeDmOutputs();
     fprintf(stderr, "[DM::calmeth] dm closed\n");
     if(Methratio && gDebugMode) {
         struct stat dmStat{};
@@ -2598,14 +2606,7 @@ void print_meth_tofile(int genome_id, ARGS* args){
 	return;
 
 error:
-        if(fp) {
-            bmClose(fp);
-            fp = NULL;
-        }
-        if(fp_gch) {
-            bmClose(fp_gch);
-            fp_gch = NULL;
-        }
+        closeDmOutputs();
         fprintf(stderr, "\nEEEEE main Received an error somewhere!\n");
         return;
 }
