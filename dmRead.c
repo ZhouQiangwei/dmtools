@@ -293,6 +293,7 @@ void bmClose(binaMethFile_t *fp) {
     if(DEBUG>1) fprintf(stderr, "kkkkxx\n");
     if(!fp) return;
     if(DEBUG>1) fprintf(stderr, "lllllxxxx\n");
+    uint16_t nLevels = fp->hdr ? fp->hdr->nLevels : 0;
     if(fp->isWrite && fp->writeBuffer) {
         if(bmFinalize(fp)) {
             fprintf(stderr, "[bmClose] There was an error while finishing writing a binaMeth file! The output is likely truncated.\n");
@@ -303,7 +304,7 @@ void bmClose(binaMethFile_t *fp) {
     if(fp->hdr) bmHdrDestroy(fp->hdr);
     if(fp->cl) destroyChromList(fp->cl);
     if(fp->idx) bmDestroyIndex(fp->idx);
-    if(fp->writeBuffer) bmDestroyWriteBuffer(fp->writeBuffer, fp->hdr ? fp->hdr->nLevels : 0);
+    if(fp->writeBuffer) bmDestroyWriteBuffer(fp->writeBuffer, nLevels);
     free(fp);
 }
 
