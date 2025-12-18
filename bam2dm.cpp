@@ -352,15 +352,15 @@ static void destroyOverlapBlock(bmOverlapBlock_t *block) {
 
 static void closeDmOutputs() {
     if(gDmWritersClosed) return;
-    if(fp) {
+    gDmWritersClosed = true;
+    if(fp && fp->writeBuffer) {
         bmClose(fp);
         fp = NULL;
     }
-    if(fp_gch) {
+    if(fp_gch && fp_gch->writeBuffer) {
         bmClose(fp_gch);
         fp_gch = NULL;
     }
-    gDmWritersClosed = true;
 }
 
 static int runBinChunkDebug(const std::string &bamPath, const std::vector<BinTask> &tasks, int threads, bool debugMode) {
@@ -2090,21 +2090,27 @@ void print_meth_tofile(int genome_id, ARGS* args){
             coverages = (uint16_t *)malloc(sizeof(uint16_t) * MAX_LINE_PRINT);
             strands = (uint8_t *)malloc(sizeof(uint8_t) * MAX_LINE_PRINT);
             contexts = (uint8_t *)malloc(sizeof(uint8_t) * MAX_LINE_PRINT);
-    //for GCH chromatin accessibility
-    chromsUse_gch = (char **)calloc(MAX_LINE_PRINT, sizeof(char*));
-    entryid_gch = (char **)calloc(MAX_LINE_PRINT, sizeof(char*));
-    starts_gch = (uint32_t *)calloc(MAX_LINE_PRINT, sizeof(uint32_t));
-    pends_gch = (uint32_t *)malloc(sizeof(uint32_t) * MAX_LINE_PRINT);
-    values_gch = (float *)malloc(sizeof(float) * MAX_LINE_PRINT);
-    coverages_gch = (uint16_t *)malloc(sizeof(uint16_t) * MAX_LINE_PRINT);
-    strands_gch = (uint8_t *)malloc(sizeof(uint8_t) * MAX_LINE_PRINT);
-    contexts_gch = (uint8_t *)malloc(sizeof(uint8_t) * MAX_LINE_PRINT);
+            const bool enableGch = (tech=="NoMe" && fp_gch);
+            if(enableGch) {
+                //for GCH chromatin accessibility
+                chromsUse_gch = (char **)calloc(MAX_LINE_PRINT, sizeof(char*));
+                entryid_gch = (char **)calloc(MAX_LINE_PRINT, sizeof(char*));
+                starts_gch = (uint32_t *)calloc(MAX_LINE_PRINT, sizeof(uint32_t));
+                pends_gch = (uint32_t *)malloc(sizeof(uint32_t) * MAX_LINE_PRINT);
+                values_gch = (float *)malloc(sizeof(float) * MAX_LINE_PRINT);
+                coverages_gch = (uint16_t *)malloc(sizeof(uint16_t) * MAX_LINE_PRINT);
+                strands_gch = (uint8_t *)malloc(sizeof(uint8_t) * MAX_LINE_PRINT);
+                contexts_gch = (uint8_t *)malloc(sizeof(uint8_t) * MAX_LINE_PRINT);
+            }
 
-    if((tech=="NoMe" && (!chromsUse_gch || !entryid_gch)) || !starts || !pends || !values || !coverages || !strands || !contexts
-       || !starts_gch || !pends_gch || !values_gch || !coverages_gch || !strands_gch || !contexts_gch) {
-        fprintf(stderr, "[dm-writer] failed to allocate output buffers for dm writing\n");
-        return;
-    }
+            if(!starts || !pends || !values || !coverages || !strands || !contexts) {
+                fprintf(stderr, "[dm-writer] failed to allocate output buffers for dm writing\n");
+                return;
+            }
+            if(enableGch && (!chromsUse_gch || !entryid_gch || !starts_gch || !pends_gch || !values_gch || !coverages_gch || !strands_gch || !contexts_gch)) {
+                fprintf(stderr, "[dm-writer] failed to allocate output buffers for GCH dm writing\n");
+                return;
+            }
 
         int printL = 0, chrprinHdr = 0, printL_gch = 0, chrprinHdr_gch = 0;
         uint64_t chromRecords = 0;
@@ -2135,6 +2141,7 @@ void print_meth_tofile(int genome_id, ARGS* args){
         };
         auto flushGchBuffer = [&](int &len) -> bool {
             if(len == 0) return true;
+            if(!enableGch) return true;
             int response = chrprinHdr_gch
                 ? bmAppendIntervals(fp_gch, starts_gch, pends_gch, values_gch, coverages_gch, strands_gch, contexts_gch, entryid_gch, len)
                 : bmAddIntervals(fp_gch, chromsUse_gch, starts_gch, pends_gch, values_gch, coverages_gch, strands_gch, contexts_gch, entryid_gch, len);
@@ -2350,7 +2357,7 @@ void print_meth_tofile(int genome_id, ARGS* args){
                             printL++;
                         }else if(middleThree=="GCA" || middleThree=="GCT" || middleThree=="GCC") { //GCH for chromatin accessibility
                             if(printL_gch >= MAX_LINE_PRINT) {
-                                if(!flushGchBuffer(printL_gch)) goto error;
+                                if(enableGch && !flushGchBuffer(printL_gch)) goto error;
                             }
                             chromsUse_gch[printL_gch] = strdup(args->Genome_Offsets[i].Genome);
                             starts_gch[printL_gch] = l+1;
@@ -2533,7 +2540,7 @@ void print_meth_tofile(int genome_id, ARGS* args){
                             printL++;
                         }else if(middleThree=="GCA" || middleThree=="GCT" || middleThree=="GCC") { //GCH for chromatin accessibility
                             if(printL_gch >= MAX_LINE_PRINT) {
-                                if(!flushGchBuffer(printL_gch)) goto error;
+                                if(enableGch && !flushGchBuffer(printL_gch)) goto error;
                             }
                             chromsUse_gch[printL_gch] = strdup(args->Genome_Offsets[i].Genome);
                             starts_gch[printL_gch] = l+1;
@@ -2556,7 +2563,7 @@ void print_meth_tofile(int genome_id, ARGS* args){
 		}
 		//end print
         if(!flushMethBuffer(printL)) goto error;
-        if(tech=="NoMe") {
+        if(enableGch) {
             if(!flushGchBuffer(printL_gch)) goto error;
         }
         if(gDebugMode) {
@@ -2591,7 +2598,7 @@ void print_meth_tofile(int genome_id, ARGS* args){
         free(starts);
         free(pends); free(values); free(coverages); free(strands); free(contexts);
 
-        if(tech=="NoMe") {
+        if(enableGch) {
             for(i =0; i < MAX_LINE_PRINT; i++){
                 if(starts_gch[i]>0 && chromsUse_gch[i]) free(chromsUse_gch[i]);
             }
