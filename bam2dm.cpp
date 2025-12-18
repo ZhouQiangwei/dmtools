@@ -1006,6 +1006,11 @@ static int validateDmFile(const std::string &dmPath, bool verbose) {
         if(fp) bmClose(fp);
         return 2;
     }
+    if(!fp->cl || fp->cl->nKeys == 0) {
+        fprintf(stderr, "[dmcheck] missing chromosome list in %s (nKeys=%u)\n", dmPath.c_str(), fp->cl ? fp->cl->nKeys : 0);
+        bmClose(fp);
+        return 2;
+    }
 
     uint32_t magic = 0;
     if(bmSetPos(fp, 0) || bmRead(&magic, sizeof(uint32_t), 1, fp) != 1) {
@@ -1088,8 +1093,26 @@ static int validateDmFile(const std::string &dmPath, bool verbose) {
             return 13;
         }
     }
+
+    uint64_t totalIntervals = 0;
+    for(uint32_t tid = 0; tid < fp->cl->nKeys; ++tid) {
+        const uint32_t chromLen = fp->cl->len[tid];
+        const uint32_t window = chromLen > 10000 ? 10000 : chromLen;
+        bmOverlappingIntervals_t *hit = bmGetOverlappingIntervals(fp, fp->cl->chrom[tid], 0, window);
+        if(hit) {
+            totalIntervals += hit->l;
+            bmDestroyOverlappingIntervals(hit);
+        }
+        if(totalIntervals > 0) break;
+    }
+    if(totalIntervals == 0) {
+        fprintf(stderr, "[dmcheck] readable index but no intervals returned from %s (chroms=%u blocks=%zu)\n", dmPath.c_str(), fp->cl->nKeys, blocks.size());
+        bmClose(fp);
+        return 14;
+    }
+
     bmClose(fp);
-    if(verbose) fprintf(stderr, "[dmcheck] %s: ok (%zu indexed blocks)\n", dmPath.c_str(), blocks.size());
+    if(verbose) fprintf(stderr, "[dmcheck] %s: ok (%zu indexed blocks, firstIntervals=%" PRIu64 ")\n", dmPath.c_str(), blocks.size(), totalIntervals);
     return 0;
 }
 int main(int argc, char* argv[])
