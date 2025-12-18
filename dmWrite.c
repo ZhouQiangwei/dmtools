@@ -1191,7 +1191,7 @@ error:
         free(fp->writeBuffer->firstZoomBuffer);
     }
     if(fp->writeBuffer->lastZoomBuffer) free(fp->writeBuffer->lastZoomBuffer);
-    if(fp->writeBuffer->nNodes) free(fp->writeBuffer->lastZoomBuffer);
+    if(fp->writeBuffer->nNodes) free(fp->writeBuffer->nNodes);
     return 6;
 }
 
