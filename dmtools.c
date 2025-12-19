@@ -1459,7 +1459,7 @@ int main(int argc, char *argv[]) {
                 strcpy(old_chrom, chrom);
                 printL++;
             }
-            if(printL>MAX_LINE_PRINT){
+            if(printL>=MAX_LINE_PRINT){
                 //We can continue appending similarly formatted entries
                 //N.B. you can't append a different chromosome (those always go into different
                 if(bmAppendIntervals(fp, starts+1, ends+1, values+1, coverages+1, strands+1, contexts+1, entryid, printL-1)) {
