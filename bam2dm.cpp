@@ -3145,15 +3145,28 @@ void *Process_read(void *arg)
 //                            if(hitType==2 || hitType == 3) {if(k<2) continue;}
 //                        }
 
-						char genome_Char = toupper(((ARGS *)arg)->Genome_List[H].Genome[pos+g-1]);//
-						char genome_CharFor1 = toupper(((ARGS *)arg)->Genome_List[H].Genome[pos+g+1-1]);
-						char genome_CharFor2 = toupper(((ARGS *)arg)->Genome_List[H].Genome[pos+g+2-1]);
-						char genome_CharBac1,genome_CharBac2;
-						if(pos+g-1 > 2)
-						{
-							genome_CharBac1 = toupper(((ARGS *)arg)->Genome_List[H].Genome[pos+g-1-1]);
-							genome_CharBac2 = toupper(((ARGS *)arg)->Genome_List[H].Genome[pos+g-2-1]);
-						}
+                                                const unsigned chromLen = ((ARGS *)arg)->Genome_Offsets[Hash_Index].Offset;
+                                                char genome_Char = 'N';
+                                                char genome_CharFor1 = 'N';
+                                                char genome_CharFor2 = 'N';
+                                                char genome_CharBac1 = 'N';
+                                                char genome_CharBac2 = 'N';
+
+                                                if(pos + g - 1 < chromLen) {
+                                                        genome_Char = toupper(((ARGS *)arg)->Genome_List[H].Genome[pos+g-1]);//
+                                                }
+                                                if(pos + g < chromLen) {
+                                                        genome_CharFor1 = toupper(((ARGS *)arg)->Genome_List[H].Genome[pos+g]);
+                                                }
+                                                if(pos + g + 1 < chromLen) {
+                                                        genome_CharFor2 = toupper(((ARGS *)arg)->Genome_List[H].Genome[pos+g+1]);
+                                                }
+                                                if(pos+g-1 > 2 && pos+g-2 < chromLen) {
+                                                        genome_CharBac1 = toupper(((ARGS *)arg)->Genome_List[H].Genome[pos+g-2]);
+                                                }
+                                                if(pos+g-1 > 3 && pos+g-3 < chromLen) {
+                                                        genome_CharBac2 = toupper(((ARGS *)arg)->Genome_List[H].Genome[pos+g-3]);
+                                                }
 						if (hitType==1 || hitType==3) {
                             if(hitType==1) {
                               if(k-lens<4){
