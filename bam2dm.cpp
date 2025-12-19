@@ -94,6 +94,7 @@ typedef struct {
    char methOutPath[PATH_MAX];
    uint64_t methOutLines;
 } ARGS;
+static void freeMethArrays(ARGS &args);
 bool RELESEM = true;// false
 bool printheader = true;
 using namespace std;
@@ -196,6 +197,8 @@ static uint64_t gDmRecordsWritten = 0;
 static uint64_t gDmRecordsWrittenGch = 0;
 static uint64_t gGenomeSizeBases = 0;
 static bool gDmWritersClosed = false;
+static std::mutex gDmWriterMutex;
+static std::once_flag gMethArraysCleanupFlag;
 
 struct FilterStats {
     std::atomic<uint64_t> totalReads{0};
@@ -351,6 +354,7 @@ static void destroyOverlapBlock(bmOverlapBlock_t *block) {
 }
 
 static void closeDmOutputs() {
+    std::lock_guard<std::mutex> lock(gDmWriterMutex);
     if(gDmWritersClosed) return;
     gDmWritersClosed = true;
     if(gDebugMode) {
@@ -1913,25 +1917,13 @@ int main(int argc, char* argv[])
                     if(chroms[i]) free(chroms[i]);
             }
                         free(chroms);free(chrLens);
-			if(RELESEM){
-				for ( int i=0;i<1;i++)
-				{
-					if(Methratio)
-					{
-						delete[] args.Methy_List.plusG;
-						delete[] args.Methy_List.plusA;
-						delete[] args.Methy_List.NegG;
-						delete[] args.Methy_List.NegA;
-						delete[] args.Methy_List.plusMethylated;
-						delete[] args.Methy_List.plusUnMethylated;
-						delete[] args.Methy_List.NegMethylated;
-						delete[] args.Methy_List.NegUnMethylated;
-					}
-				}
-				delete [] args.Genome_List;
-				delete [] args.Genome_Offsets;
-				delete [] args.Org_Genome;
-			}
+                        if(RELESEM){
+                                if(Methratio) freeMethArrays(args);
+                                delete [] args.Genome_List; args.Genome_List = NULL;
+                                delete [] args.Genome_Offsets; args.Genome_Offsets = NULL;
+                                delete [] args.Org_Genome; args.Org_Genome = NULL;
+                                delete [] args.Marked_Genome; args.Marked_Genome = NULL;
+                        }
 		}
 		catch(char* Err)
 		{
@@ -2097,6 +2089,19 @@ float *values_gch;
 uint16_t *coverages_gch;
 uint8_t *strands_gch;
 uint8_t *contexts_gch;
+
+static void freeMethArrays(ARGS &args) {
+    std::call_once(gMethArraysCleanupFlag, [&](){
+        if(args.Methy_List.plusG) { delete[] args.Methy_List.plusG; args.Methy_List.plusG = nullptr; }
+        if(args.Methy_List.plusA) { delete[] args.Methy_List.plusA; args.Methy_List.plusA = nullptr; }
+        if(args.Methy_List.NegG) { delete[] args.Methy_List.NegG; args.Methy_List.NegG = nullptr; }
+        if(args.Methy_List.NegA) { delete[] args.Methy_List.NegA; args.Methy_List.NegA = nullptr; }
+        if(args.Methy_List.plusMethylated) { delete[] args.Methy_List.plusMethylated; args.Methy_List.plusMethylated = nullptr; }
+        if(args.Methy_List.plusUnMethylated) { delete[] args.Methy_List.plusUnMethylated; args.Methy_List.plusUnMethylated = nullptr; }
+        if(args.Methy_List.NegMethylated) { delete[] args.Methy_List.NegMethylated; args.Methy_List.NegMethylated = nullptr; }
+        if(args.Methy_List.NegUnMethylated) { delete[] args.Methy_List.NegUnMethylated; args.Methy_List.NegUnMethylated = nullptr; }
+    });
+}
 void print_meth_tofile(int genome_id, ARGS* args){
         if(Methratio)
         {
