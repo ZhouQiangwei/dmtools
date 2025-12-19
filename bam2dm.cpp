@@ -1605,7 +1605,8 @@ int main(int argc, char* argv[])
                 exit(0);
             }
 
-                        fprintf(stderr, "[DM::calmeth] len count GCcount %lld %d %ld\n", Genome_Size, Genome_Count, totalC+totalG);
+                        fprintf(stderr, "[DM::calmeth] len count GCcount %lld %d %" PRIu64 "\n",
+                                (long long)Genome_Size, Genome_Count, (uint64_t)(totalC + totalG));
             gGenomeSizeBases = static_cast<uint64_t>(Genome_Size);
             if(gGenomeSizeBases > 0) {
                 double cgFrac = static_cast<double>(totalC + totalG) / static_cast<double>(gGenomeSizeBases);
@@ -2201,7 +2202,8 @@ void print_meth_tofile(int genome_id, ARGS* args){
         int printL = 0, chrprinHdr = 0, printL_gch = 0, chrprinHdr_gch = 0;
         uint64_t chromRecords = 0;
         uint64_t chromRecordsGch = 0;
-        fprintf(stderr, "[DM::calmeth] Processing chrom %d %d %d\n", genome_id, totalC, totalG);
+        fprintf(stderr, "[DM::calmeth] Processing chrom %d %" PRIu64 " %" PRIu64 "\n",
+                genome_id, (uint64_t)totalC, (uint64_t)totalG);
         auto flushMethBuffer = [&](int &len) -> bool {
             if(len == 0) return true;
             int response = chrprinHdr
@@ -2670,13 +2672,7 @@ void print_meth_tofile(int genome_id, ARGS* args){
 		}
 		//printf("\n");
 
-		fprintf(stderr, "[DM::calmeth] Free mem in chromsUse\n");
-		for(i =0; i < MAX_LINE_PRINT; i++){
-            if(starts[i]>0 && chromsUse[i]) free(chromsUse[i]);
-			//fprintf(stderr, "Free mem in chromsUse %d\n", i);
-			// //if(entryid[i]) free(entryid[i]);
-			//fprintf(stderr, "Free mem in chromsUse2 %d\n", i);
-        }
+        fprintf(stderr, "[DM::calmeth] Free mem in chromsUse\n");
         fprintf(stderr, "[DM::calmeth] Free mem in all others\n\n");
         free(chromsUse);
         free(entryid);
@@ -2685,9 +2681,6 @@ void print_meth_tofile(int genome_id, ARGS* args){
         free(pends); free(values); free(coverages); free(strands); free(contexts);
 
         if(enableGch) {
-            for(i =0; i < MAX_LINE_PRINT; i++){
-                if(starts_gch[i]>0 && chromsUse_gch[i]) free(chromsUse_gch[i]);
-            }
             fprintf(stderr, "[DM::calmeth] Free mem in all others2\n\n");
             free(chromsUse_gch);
             free(entryid_gch);
