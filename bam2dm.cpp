@@ -277,7 +277,7 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
                              bool debugMode, bool validateOutput);
 
 unsigned Total_Reads_all;
-unsigned long Total_Reads=0, Total_mapped = 0, forward_mapped = 0, reverse_mapped = 0;
+uint64_t Total_Reads=0, Total_mapped = 0, forward_mapped = 0, reverse_mapped = 0;
 //----mapping count
 unsigned Tot_Unique_Org=0;//total unique hits obtained
 unsigned ALL_MAP_Org=0;
@@ -348,9 +348,15 @@ int onlyM = 0;
 
 static void destroyOverlapBlock(bmOverlapBlock_t *block) {
     if(!block) return;
-    if(block->size) free(block->size);
-    if(block->offset) free(block->offset);
-    free(block);
+    if(block->size && block->offset && (void*)block->size == (void*)block->offset) {
+        free(block->size);
+        block->size = NULL;
+        block->offset = NULL;
+        free(block);
+        return;
+    }
+
+    destroyBWOverlapBlock(block);
 }
 
 static void closeDmOutputs() {
@@ -1877,10 +1883,10 @@ int main(int argc, char* argv[])
 			if(AlignSum){
 				log=Prefix + ".align.log.txt";
 				FILE* ALIGNLOG=File_Open(log.c_str(),"w");
-				fprintf(ALIGNLOG, "Total_reads\t%u\n", Total_Reads);
-				fprintf(ALIGNLOG, "Total_Mapped_Q%d\t%u\n", QualCut, Total_mapped);
-				fprintf(ALIGNLOG, "Mapped_forword\t%u\n", forward_mapped);
-				fprintf(ALIGNLOG, "Mapped_reverse\t%u\n", reverse_mapped);
+                                fprintf(ALIGNLOG, "Total_reads\t%" PRIu64 "\n", Total_Reads);
+                                fprintf(ALIGNLOG, "Total_Mapped_Q%d\t%" PRIu64 "\n", QualCut, Total_mapped);
+                                fprintf(ALIGNLOG, "Mapped_forword\t%" PRIu64 "\n", forward_mapped);
+                                fprintf(ALIGNLOG, "Mapped_reverse\t%" PRIu64 "\n", reverse_mapped);
 				fclose(ALIGNLOG);
         }
     myMap.clear();
@@ -2962,7 +2968,7 @@ void *Process_read(void *arg)
         Total_Reads++;
 
                 if ( fileprocess>=1000000  ) {
-                        fprintf_time(stderr, "Processed %d reads.\n", Total_Reads);
+                        fprintf_time(stderr, "Processed %" PRIu64 " reads.\n", Total_Reads);
                         fileprocess = 0;
                         maybeLogFilterStats();
         }
@@ -3117,15 +3123,17 @@ void *Process_read(void *arg)
                                         lens+=length;
                         RLens+=length;
 	                cigr++;n=0;
-				}else if(*cigr=='M')
-				{
+                                }else if(*cigr=='M')
+                                {
                     hs = 0; hs_r = 3;
-					temp[n]='\0';int length=atoi(temp);
-					for(int k=lens,r=RLens,g=Glens;k<length+lens;r++,k++,g++)
-					{
+                                        temp[n]='\0';int length=atoi(temp);
+                                        for(int k=lens,r=RLens,g=Glens;k<length+lens;r++,k++,g++)
+                                        {
+                        if(static_cast<size_t>(r) >= read_Methyl_Info.size()) { CONTINUE = true; break; }
+                        if(static_cast<size_t>(k) >= rawReadBeforeBS.size()) { CONTINUE = true; break; }
                         //if(strcmp(Dummy, "A00545:105:HWCWLDSX2:3:1105:1118:36182")== 0) fprintf(stderr, "%d %d %d %c, %d %d\n", lens, length, k, readString[k], k-lens, length-4);
-						read_Methyl_Info[r] = '=';
-						if (pos+g-1 >= ((ARGS *)arg)->Genome_Offsets[Hash_Index].Offset) break;
+                                                read_Methyl_Info[r] = '=';
+                                                if (pos+g-1 >= ((ARGS *)arg)->Genome_Offsets[Hash_Index].Offset) break;
 
                         if(pos+g < left_end) {
                             //fprintf(stderr, "AAAAA -------- WWWWW");

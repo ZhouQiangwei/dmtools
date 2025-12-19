@@ -12,6 +12,8 @@
 #include <time.h>
 #include <sys/time.h>
 #include <errno.h>
+#include <stdint.h>
+#include <inttypes.h>
 #include "binaMeth.h"
 #include <stdlib.h>
 #include <unordered_map>
@@ -113,7 +115,7 @@ void Reverse_Comp(char* Dest, char* seq);
 void onlyComp(char* Dest, char* seq);
 //---------------------------------------------------------------------------------------------------------------
 unsigned Total_Reads_all;
-unsigned long Total_Reads=0, Total_mapped = 0, forward_mapped = 0, reverse_mapped = 0;
+uint64_t Total_Reads=0, Total_mapped = 0, forward_mapped = 0, reverse_mapped = 0;
 //----mapping count
 unsigned Tot_Unique_Org=0;//total unique hits obtained
 unsigned ALL_MAP_Org=0;
@@ -742,10 +744,10 @@ int main(int argc, char* argv[])
 			if(AlignSum){
 				log=Prefix + ".align.log.txt";
 				FILE* ALIGNLOG=File_Open(log.c_str(),"w");
-				fprintf(ALIGNLOG, "Total_reads\t%u\n", Total_Reads);
-				fprintf(ALIGNLOG, "Total_Mapped_Q%d\t%u\n", QualCut, Total_mapped);
-				fprintf(ALIGNLOG, "Mapped_forword\t%u\n", forward_mapped);
-				fprintf(ALIGNLOG, "Mapped_reverse\t%u\n", reverse_mapped);
+                                fprintf(ALIGNLOG, "Total_reads\t%" PRIu64 "\n", Total_Reads);
+                                fprintf(ALIGNLOG, "Total_Mapped_Q%d\t%" PRIu64 "\n", QualCut, Total_mapped);
+                                fprintf(ALIGNLOG, "Mapped_forword\t%" PRIu64 "\n", forward_mapped);
+                                fprintf(ALIGNLOG, "Mapped_reverse\t%" PRIu64 "\n", reverse_mapped);
 				fclose(ALIGNLOG);
 			}
 			fprintf(stderr, "[DM::calmeth] dm closing\n");
@@ -1756,9 +1758,9 @@ void *Process_read(void *arg)
 		}
         Total_Reads++;
 
-		if ( fileprocess>=1000000  ) {
-			fprintf_time(stderr, "Processed %d reads.\n", Total_Reads);
-			fileprocess = 0;
+                if ( fileprocess>=1000000  ) {
+                        fprintf_time(stderr, "Processed %" PRIu64 " reads.\n", Total_Reads);
+                        fileprocess = 0;
         }
 
 		if(s2t[0]=='@') 
