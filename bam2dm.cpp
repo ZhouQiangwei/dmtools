@@ -1508,9 +1508,12 @@ int main(int argc, char* argv[])
 
 			
                         char **chroms = (char **)calloc(MAX_CHROM, sizeof(char*));
+                        char **chromsGch = NULL;
                         //if(!chroms) goto error;
                         uint32_t *chrLens = (uint32_t *)malloc(sizeof(uint32_t) * MAX_CHROM);
+                        uint32_t *chrLensGch = NULL;
                         bool chromListOwnedByWriter = false;
+                        bool chromListOwnedByWriterGch = false;
 			
 			FILE* GenomeFILE=File_Open(Geno.c_str(),"r");
 			fprintf(stderr, "[DM::calmeth] Loading genome sequence : %s\n", Geno.c_str());
@@ -1628,7 +1631,40 @@ int main(int argc, char* argv[])
 			if(Sam && strcmp(Output_Name,"None") ) args.OUTFILE=File_Open(Output_Name,"w");
             if(strcmp(Output_Name_MS,"None") ) args.OUTFILEMS=File_Open(Output_Name_MS,"w");
 
-			char* Split_Point=args.Org_Genome;//split and write...
+                        auto freeChromArrays = [&](char **&names, uint32_t *&lens, int nseq) {
+                            if(names){
+                                for(int i = 0; i < nseq; ++i){
+                                    if(names[i]) free(names[i]);
+                                }
+                                free(names);
+                                names = NULL;
+                            }
+                            if(lens){
+                                free(lens);
+                                lens = NULL;
+                            }
+                        };
+                        auto cloneChromArrays = [&](char **srcNames, uint32_t *srcLens, int nseq, char ***dstNames, uint32_t **dstLens) -> bool {
+                            *dstNames = (char **)calloc(nseq, sizeof(char*));
+                            *dstLens = (uint32_t *)malloc(sizeof(uint32_t) * nseq);
+                            if(!*dstNames || !*dstLens){
+                                freeChromArrays(*dstNames, *dstLens, nseq);
+                                return false;
+                            }
+                            for(int i = 0; i < nseq; ++i){
+                                if(srcNames[i]){
+                                    (*dstNames)[i] = strdup(srcNames[i]);
+                                    if(!(*dstNames)[i]){
+                                        freeChromArrays(*dstNames, *dstLens, nseq);
+                                        return false;
+                                    }
+                                }
+                                (*dstLens)[i] = srcLens[i];
+                            }
+                            return true;
+                        };
+
+                        char* Split_Point=args.Org_Genome;//split and write...
 			args.Genome_List = new Gene_Hash[Genome_Count];
 			for ( int i=0;i<Genome_Count;i++)//Stores the location in value corresponding to has..
 			{
@@ -1820,12 +1856,16 @@ int main(int argc, char* argv[])
                                 exit(1);
                         }
                         //Create the chromosome lists
-                        fp_gch->cl = bmCreateChromList(chroms, chrLens, Genome_Count); //2
+                        if(!cloneChromArrays(chroms, chrLens, Genome_Count, &chromsGch, &chrLensGch)){
+                                fprintf(stderr, "Failed to duplicate chrom list for GCH writer\n");
+                                exit(1);
+                        }
+                        fp_gch->cl = bmCreateChromList(chromsGch, chrLensGch, Genome_Count); //2
                         if(!fp_gch->cl) {
                                 fprintf(stderr, "Failed to create dm chrom list for %s\n", GCHOutfileName.c_str());
                                 exit(1);
                         }
-                        chromListOwnedByWriter = true; // shared list handed off
+                        chromListOwnedByWriterGch = true; // shared list handed off
                         //Write the header
                         if(bmWriteHdr(fp_gch)) {
                                 fprintf(stderr, "Failed to write dm header for %s\n", GCHOutfileName.c_str());
@@ -1926,6 +1966,9 @@ int main(int argc, char* argv[])
                     if(chroms[i]) free(chroms[i]);
             }
                                 free(chroms);free(chrLens);
+                        }
+                        if(!chromListOwnedByWriterGch){
+                                freeChromArrays(chromsGch, chrLensGch, Genome_Count);
                         }
                         if(RELESEM){
                                 if(Methratio) freeMethArrays(args);
