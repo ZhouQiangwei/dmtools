@@ -255,6 +255,7 @@ typedef struct {
     int mtype;
     /* 0: bigmeth, 1: bigmeth for region with ID, 2: bigmeth for region without ID, 3: ID with strand */
     /**<0: binaMeth, 1: bigBed.*/
+    int isClosed; /**<1 if bmClose already ran to guard against double-free.*/
 } binaMethFile_t;
 
 /*!

@@ -292,6 +292,8 @@ static void bmDestroyWriteBuffer(bmWriteBuffer_t *wb, uint16_t nLevels) {
 void bmClose(binaMethFile_t *fp) {
     if(DEBUG>1) fprintf(stderr, "kkkkxx\n");
     if(!fp) return;
+    if(fp->isClosed) return;
+    fp->isClosed = 1;
     if(DEBUG>1) fprintf(stderr, "lllllxxxx\n");
     uint16_t nLevels = fp->hdr ? fp->hdr->nLevels : 0;
     if(fp->isWrite && fp->writeBuffer) {
