@@ -5,6 +5,7 @@
 #include "dmValues.h"
 #include <inttypes.h>
 #include <zlib.h>
+#include <pthread.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -323,6 +324,11 @@ int bmInit(size_t bufSize);
  * @see bmInit
  */
 void bmCleanup(void);
+
+static inline void bmCleanupOnce(void){
+    static pthread_once_t bmCleanupOnceFlag = PTHREAD_ONCE_INIT;
+    pthread_once(&bmCleanupOnceFlag, bmCleanup);
+}
 
 /*!
  * @brief Determine if a file is a binaMeth file.

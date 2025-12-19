@@ -1505,7 +1505,7 @@ int main(int argc, char *argv[]) {
         if(DEBUG>0) fprintf(stderr, "bm close1111 ----- \n");
         bmClose(fp);
         if(DEBUG>0) fprintf(stderr, "bm close22222 ---===--- \n");
-        bmCleanup();
+        bmCleanupOnce();
         /*
         * free memory from malloc
         */
@@ -1692,7 +1692,7 @@ int main(int argc, char *argv[]) {
             fclose(outfp_stats);
         }else if(strcmp(outformat, "dm") == 0){
             bmClose(ofp);
-            bmCleanup();
+            bmCleanupOnce();
         }
         return 0;
     }
@@ -2132,8 +2132,8 @@ int main(int argc, char *argv[]) {
     return 1;
 error:
     fprintf(stderr, "Received an error in process!\n");
-    bmClose(fp);
-    bmCleanup();
+    if(fp) bmClose(fp);
+    bmCleanupOnce();
     return -1;
 }
 
@@ -2300,7 +2300,7 @@ int calchromstats(char *inbmfile, char *method, int chromstep, int stepoverlap, 
     free(region);
 
     bmClose(fp);
-    bmCleanup();
+    bmCleanupOnce();
     free(countC); free(countCT);
     return 0;
 }
@@ -3289,7 +3289,7 @@ int calprofile_gtf(char *inbmfile, int upstream, int downstream, double profiles
         free(profileArgs[ithread].chrom);
     }
     free(profileArgs);
-    bmCleanup();
+    bmCleanupOnce();
     fprintf(stderr, "done free!\n");
 }
 
@@ -3500,7 +3500,7 @@ int calprofile(char *inbmfile, int upstream, int downstream, double profilestep,
         //free(profileArgs[ithread].geneid);
     }
     free(profileArgs);
-    bmCleanup();
+    bmCleanupOnce();
 }
 
 void delete_char(char str[],char target){
@@ -3773,7 +3773,7 @@ int calregionstats_file(char *inbmfile, char *method, char *bedfile, int format,
     }
 
     bmClose(fp);
-    bmCleanup();
+    bmCleanupOnce();
     fclose(Fbedfile);
     free(chrom); free(PerLine); free(strand);
     free(countC); free(countCT);
@@ -3855,7 +3855,7 @@ int calregionstats(char *inbmfile, char *method, char *region, uint8_t pstrand, 
     }
 
     bmClose(fp);
-    bmCleanup();
+    bmCleanupOnce();
     //free(chrom);
     free(countC); free(countCT);
     return 0;
@@ -3919,7 +3919,7 @@ int calbodystats_file(char *inbmfile, char *method, char *bedfile, int format, u
     }
 
     bmClose(fp);
-    bmCleanup();
+    bmCleanupOnce();
     fclose(Fbedfile);
     free(chrom); free(PerLine); free(strand);
     free(countC); free(countCT);
@@ -3975,7 +3975,7 @@ int calbodystats(char *inbmfile, char *method, char *region, uint8_t pstrand, ui
     }
 
     bmClose(fp);
-    bmCleanup();
+    bmCleanupOnce();
     //free(chrom);
     free(countC); free(countCT);
     return 0;
@@ -4563,7 +4563,7 @@ int main_view_bedfile(char *inbmF, char *bedfile, int type, FILE* outfileF, char
 error:
     //fprintf(stderr, "No results found!\n");
     bmClose(ifp);
-    bmCleanup();
+    bmCleanupOnce();
     return 1;
 }
 
@@ -4702,7 +4702,7 @@ int bm_merge_all_mul(char *inbmFs, char *outfile, uint8_t pstrand, int m_method,
 
     if(strcmp(outformat, "dm") == 0 ){
         bmClose(ofp);
-        bmCleanup();
+        bmCleanupOnce();
     }else{
         fclose(outfp_bm);
     }

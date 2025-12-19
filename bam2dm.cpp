@@ -1959,7 +1959,7 @@ int main(int argc, char* argv[])
                 }
                 if(validationStatus != 0) return validationStatus;
             }
-            if(Methratio) bmCleanup();
+            if(Methratio) bmCleanupOnce();
 //delete
                         fprintf(stderr, "[DM::calmeth] Done and release memory!\n");
                         if(!chromListOwnedByWriter){
