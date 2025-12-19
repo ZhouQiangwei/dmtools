@@ -1505,6 +1505,7 @@ int main(int argc, char* argv[])
                         char **chroms = (char **)calloc(MAX_CHROM, sizeof(char*));
                         //if(!chroms) goto error;
                         uint32_t *chrLens = (uint32_t *)malloc(sizeof(uint32_t) * MAX_CHROM);
+                        bool chromListOwnedByWriter = false;
 			
 			FILE* GenomeFILE=File_Open(Geno.c_str(),"r");
 			fprintf(stderr, "[DM::calmeth] Loading genome sequence : %s\n", Geno.c_str());
@@ -1798,6 +1799,7 @@ int main(int argc, char* argv[])
                                                 fprintf(stderr, "Failed to create dm chrom list for %s\n", methOutfileName.c_str());
                                                 exit(1);
                                         }
+                                        chromListOwnedByWriter = true; // libdm now manages chroms/chrLens lifetime
                                         //Write the header
                                         if(bmWriteHdr(fp)) {
                                                 fprintf(stderr, "Failed to write dm header for %s\n", methOutfileName.c_str());
@@ -1818,6 +1820,7 @@ int main(int argc, char* argv[])
                                 fprintf(stderr, "Failed to create dm chrom list for %s\n", GCHOutfileName.c_str());
                                 exit(1);
                         }
+                        chromListOwnedByWriter = true; // shared list handed off
                         //Write the header
                         if(bmWriteHdr(fp_gch)) {
                                 fprintf(stderr, "Failed to write dm header for %s\n", GCHOutfileName.c_str());
@@ -1913,10 +1916,12 @@ int main(int argc, char* argv[])
             if(Methratio) bmCleanup();
 //delete
                         fprintf(stderr, "[DM::calmeth] Done and release memory!\n");
-                        for(int i =0; i < Genome_Count; i++){
+                        if(!chromListOwnedByWriter){
+                                for(int i =0; i < Genome_Count; i++){
                     if(chroms[i]) free(chroms[i]);
             }
-                        free(chroms);free(chrLens);
+                                free(chroms);free(chrLens);
+                        }
                         if(RELESEM){
                                 if(Methratio) freeMethArrays(args);
                                 delete [] args.Genome_List; args.Genome_List = NULL;
