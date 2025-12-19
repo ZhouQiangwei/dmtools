@@ -608,6 +608,13 @@ int main(int argc, char *argv[]) {
     strcpy(method, "weighted");
     int chromstep = 100000;
     int stepoverlap = 50000;
+    int chromsTransferred = 0;
+
+    for(i = 0; i < MAX_LINE_PRINT; i++){
+        chroms[i] = NULL;
+        chromsUse[i] = NULL;
+        entryid[i] = NULL;
+    }
     
     char *bedfile = NULL;
     char *gtffile = NULL;
@@ -1264,6 +1271,7 @@ int main(int argc, char *argv[]) {
             fprintf(stderr, "== bmCreateChromList ==\n");
             goto error;
         }
+        chromsTransferred = 1;
 
         //Write the header
         if(bmWriteHdr(fp)) {
@@ -1499,12 +1507,16 @@ int main(int argc, char *argv[]) {
         */
     
         for(i =0; i < MAX_LINE_PRINT; i++){
-            free(chroms[i]); free(chromsUse[i]); free(entryid[i]);
+            if(!chromsTransferred && chroms[i]) free(chroms[i]);
+            if(chromsUse[i]) free(chromsUse[i]);
+            if(entryid[i]) free(entryid[i]);
         }
-        free(chroms); free(chromsUse); free(entryid); free(starts);
+        if(!chromsTransferred) free(chroms);
+        free(chromsUse); free(entryid); free(starts);
         free(ends); free(values); free(coverages); free(strands); free(contexts);
-        free(chrom); free(old_chrom); free(chrLens); 
-        free(strand); free(context); free(PerLine);free(chromlenf); 
+        free(chrom); free(old_chrom);
+        if(!chromsTransferred) free(chrLens);
+        free(strand); free(context); free(PerLine);free(chromlenf);
         if(outfile) free(outfile); if(outbmfile) free(outbmfile);
         return 0;
     }
