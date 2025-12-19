@@ -806,6 +806,8 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
                              const std::vector<BinPartLocator> &locators, int shardCount,
                              const std::string &partDir, const std::string &dmPath, int zoomlevel,
                              bool debugMode, bool validateOutput) {
+    bool chromsTransferred = false;
+
     if(tasks.empty()) {
         fprintf(stderr, "[bin] no tasks to merge\n");
         return 1;
@@ -836,6 +838,13 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
         free(chroms); free(lens);
         return 1;
     }
+    auto freeChromBuffers = [&]() {
+        if(!chromsTransferred) {
+            for(int i = 0; i < nseq; ++i) if(chroms[i]) free(chroms[i]);
+            free(chroms);
+            free(lens);
+        }
+    };
     for(int i = 0; i < nseq; ++i) {
         const char *name = faidx_iseq(fai, i);
         chroms[i] = strdup(name);
@@ -853,26 +862,24 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
     if(bmCreateHdr(out, zoomlevel)) {
         fprintf(stderr, "[bin] failed to create dm header for %s\n", dmPath.c_str());
         bmClose(out);
-        for(int i = 0; i < nseq; ++i) if(chroms[i]) free(chroms[i]);
-        free(chroms); free(lens);
         fai_destroy(fai);
+        freeChromBuffers();
         return 1;
     }
     out->cl = bmCreateChromList(chroms, lens, nseq);
     if(!out->cl) {
         fprintf(stderr, "[bin] failed to create chrom list for %s\n", dmPath.c_str());
         bmClose(out);
-        for(int i = 0; i < nseq; ++i) if(chroms[i]) free(chroms[i]);
-        free(chroms); free(lens);
         fai_destroy(fai);
+        freeChromBuffers();
         return 1;
     }
+    chromsTransferred = true;
     if(bmWriteHdr(out)) {
         fprintf(stderr, "[bin] failed to write header for %s\n", dmPath.c_str());
         bmClose(out);
-        for(int i = 0; i < nseq; ++i) if(chroms[i]) free(chroms[i]);
-        free(chroms); free(lens);
         fai_destroy(fai);
+        freeChromBuffers();
         return 1;
     }
 
@@ -889,10 +896,9 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
         shardReaders[s] = fopen(shardPath, "rb");
         if(!shardReaders[s]) {
             fprintf(stderr, "[bin] failed to open shard %s\n", shardPath);
-            for(int i = 0; i < nseq; ++i) if(chroms[i]) free(chroms[i]);
-            free(chroms); free(lens);
             fai_destroy(fai);
             bmClose(out);
+            freeChromBuffers();
             return 1;
         }
     }
@@ -913,9 +919,8 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
                     task.index, task.chrom.c_str(), task.start, task.end);
             bmClose(out);
             for(auto fh : shardReaders) if(fh) fclose(fh);
-            for(int i = 0; i < nseq; ++i) if(chroms[i]) free(chroms[i]);
-            free(chroms); free(lens);
             fai_destroy(fai);
+            freeChromBuffers();
             return 1;
         }
         FILE *in = shardReaders[loc.shard];
@@ -923,9 +928,8 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
             fprintf(stderr, "[bin] failed to seek shard %d for task %zu\n", loc.shard, task.index);
             bmClose(out);
             for(auto fh : shardReaders) if(fh) fclose(fh);
-            for(int i = 0; i < nseq; ++i) if(chroms[i]) free(chroms[i]);
-            free(chroms); free(lens);
             fai_destroy(fai);
+            freeChromBuffers();
             return 1;
         }
         BinPartFileHeader hdr{};
@@ -933,18 +937,16 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
             fprintf(stderr, "[bin] failed to read header for task %zu from shard %d\n", task.index, loc.shard);
             bmClose(out);
             for(auto fh : shardReaders) if(fh) fclose(fh);
-            for(int i = 0; i < nseq; ++i) if(chroms[i]) free(chroms[i]);
-            free(chroms); free(lens);
             fai_destroy(fai);
+            freeChromBuffers();
             return 1;
         }
         if(hdr.nRecords != loc.nRecords || hdr.start != loc.start || hdr.end != loc.end || hdr.tid != loc.tid) {
             fprintf(stderr, "[bin] shard metadata mismatch for task %zu (shard %d)\n", task.index, loc.shard);
             bmClose(out);
             for(auto fh : shardReaders) if(fh) fclose(fh);
-            for(int i = 0; i < nseq; ++i) if(chroms[i]) free(chroms[i]);
-            free(chroms); free(lens);
             fai_destroy(fai);
+            freeChromBuffers();
             return 1;
         }
 
@@ -955,9 +957,8 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
                 fprintf(stderr, "[bin] truncated part file for task %zu on shard %d\n", task.index, loc.shard);
                 bmClose(out);
                 for(auto fh : shardReaders) if(fh) fclose(fh);
-                for(int i = 0; i < nseq; ++i) if(chroms[i]) free(chroms[i]);
-                free(chroms); free(lens);
                 fai_destroy(fai);
+                freeChromBuffers();
                 return 1;
             }
 
@@ -981,9 +982,8 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
                     fprintf(stderr, "[bin] bmAddIntervals failed for %s (code %d)\n", chroms[hdr.tid], response);
                     fclose(in);
                     bmClose(out);
-                    for(int i = 0; i < nseq; ++i) if(chroms[i]) free(chroms[i]);
-                    free(chroms); free(lens);
                     fai_destroy(fai);
+                    freeChromBuffers();
                     return 1;
                 }
                 offset += chunk;
@@ -993,8 +993,7 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
 
     for(auto fh : shardReaders) if(fh) fclose(fh);
     bmClose(out);
-    for(int i = 0; i < nseq; ++i) if(chroms[i]) free(chroms[i]);
-    free(chroms); free(lens);
+    freeChromBuffers();
     fai_destroy(fai);
 
     if(validateOutput) {
@@ -2973,10 +2972,10 @@ void *Process_read(void *arg)
                         maybeLogFilterStats();
         }
 
-		if(s2t[0]=='@') 
-		{
-			continue;
-		}
+                if(!bamformat && s2t[0]=='@')
+                {
+                        continue;
+                }
 
         printheader = false;
 		if(!bamformat)
