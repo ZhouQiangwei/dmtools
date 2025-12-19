@@ -578,13 +578,13 @@ int main(int argc, char *argv[]) {
 
     binaMethFile_t *fp = NULL;
     char *filterchrom = NULL;
-    char **chroms = (char**)malloc(sizeof(char*)*MAX_LINE_PRINT);
+    char **chroms = (char**)calloc(MAX_LINE_PRINT, sizeof(char*));
     if(!chroms) goto error;
-    char **chromsUse = malloc(sizeof(char*)*MAX_LINE_PRINT);
-    char **entryid = malloc(sizeof(char*)*MAX_LINE_PRINT);
-    uint32_t *chrLens = malloc(sizeof(uint32_t) * MAX_LINE_PRINT);
-    uint32_t *starts = malloc(sizeof(uint32_t) * MAX_LINE_PRINT);
-    uint32_t *ends = malloc(sizeof(uint32_t) * MAX_LINE_PRINT);
+    char **chromsUse = (char**)calloc(MAX_LINE_PRINT, sizeof(char*));
+    char **entryid = (char**)calloc(MAX_LINE_PRINT, sizeof(char*));
+    uint32_t *chrLens = (uint32_t*)calloc(MAX_LINE_PRINT, sizeof(uint32_t));
+    uint32_t *starts = (uint32_t*)calloc(MAX_LINE_PRINT, sizeof(uint32_t));
+    uint32_t *ends = (uint32_t*)calloc(MAX_LINE_PRINT, sizeof(uint32_t));
     float *values = malloc(sizeof(float) * MAX_LINE_PRINT);
     uint16_t *coverages = malloc(sizeof(uint16_t) * MAX_LINE_PRINT);
     uint8_t *strands = malloc(sizeof(uint8_t) * MAX_LINE_PRINT);
@@ -608,6 +608,13 @@ int main(int argc, char *argv[]) {
     strcpy(method, "weighted");
     int chromstep = 100000;
     int stepoverlap = 50000;
+    int chromsTransferred = 0;
+
+    for(i = 0; i < MAX_LINE_PRINT; i++){
+        chroms[i] = NULL;
+        chromsUse[i] = NULL;
+        entryid[i] = NULL;
+    }
     
     char *bedfile = NULL;
     char *gtffile = NULL;
@@ -1188,12 +1195,14 @@ int main(int argc, char *argv[]) {
             fprintf(stderr, "please provide chrome size file with -g paramater\n");
             exit(0);
         }
-        FILE *methF = File_Open(methfile, "r"); 
+        FILE *methF = File_Open(methfile, "r");
         char *chrom = malloc(50); char *old_chrom = malloc(50);
+        old_chrom[0] = '\0';
         //int MAX_CHROM = 10000;
         char *PerLine = malloc(2000); 
         //char **chromsArray = malloc(sizeof(char*)*MAX_CHROM);
         unsigned long chrprintL = 0;
+        int maxPrintLUsed = 0;
         if(strcmp(sortY, "Y") == 0){
             fprintf(stderr, "obtained chromosome order in meth ratio file ... \n");
             while(fgets(PerLine,2000,methF)!=0){
@@ -1246,11 +1255,11 @@ int main(int argc, char *argv[]) {
         }
 
         fp = bmOpen(outbmfile, NULL, "w");
-        fp->type = write_type;
         if(!fp) {
             fprintf(stderr, "An error occurred while opening example_output.dm for writingn\n");
             return 1;
         }
+        fp->type = write_type;
         
         //Allow up to 10 zoom levels, though fewer will be used in practice
         if(bmCreateHdr(fp, zoomlevel)) {
@@ -1264,6 +1273,7 @@ int main(int argc, char *argv[]) {
             fprintf(stderr, "== bmCreateChromList ==\n");
             goto error;
         }
+        chromsTransferred = 1;
 
         //Write the header
         if(bmWriteHdr(fp)) {
@@ -1450,8 +1460,9 @@ int main(int argc, char *argv[]) {
                 }
                 strcpy(old_chrom, chrom);
                 printL++;
+                if(printL > maxPrintLUsed) maxPrintLUsed = printL;
             }
-            if(printL>MAX_LINE_PRINT){
+            if(printL>=MAX_LINE_PRINT){
                 //We can continue appending similarly formatted entries
                 //N.B. you can't append a different chromosome (those always go into different
                 if(bmAppendIntervals(fp, starts+1, ends+1, values+1, coverages+1, strands+1, contexts+1, entryid, printL-1)) {
@@ -1464,6 +1475,7 @@ int main(int argc, char *argv[]) {
         } // end read me file
         if(printL > 1) {
             if(DEBUG>1) fprintf(stderr, "--last print %d %d %d\n", starts[printL-1], ends[printL-1], printL-1);
+            if(printL > maxPrintLUsed) maxPrintLUsed = printL;
             if(bmAppendIntervals(fp, starts+1, ends+1, values+1, coverages+1, strands+1, contexts+1, entryid, printL-1)) {
                 fprintf(stderr, "bmAppendIntervals 3\n");
                 goto error;
@@ -1493,18 +1505,25 @@ int main(int argc, char *argv[]) {
         if(DEBUG>0) fprintf(stderr, "bm close1111 ----- \n");
         bmClose(fp);
         if(DEBUG>0) fprintf(stderr, "bm close22222 ---===--- \n");
-        bmCleanup();
+        bmCleanupOnce();
         /*
         * free memory from malloc
         */
     
-        for(i =0; i < MAX_LINE_PRINT; i++){
-            free(chroms[i]); free(chromsUse[i]); free(entryid[i]);
+        int chromEntriesToFree = (int)(chrprintL + printedchr);
+        for(i =0; i < chromEntriesToFree; i++){
+            if(!chromsTransferred && chroms[i]) free(chroms[i]);
         }
-        free(chroms); free(chromsUse); free(entryid); free(starts);
+        for(i =0; i < maxPrintLUsed; i++){
+            if(chromsUse[i]) free(chromsUse[i]);
+            if(entryid[i]) free(entryid[i]);
+        }
+        if(!chromsTransferred) free(chroms);
+        free(chromsUse); free(entryid); free(starts);
         free(ends); free(values); free(coverages); free(strands); free(contexts);
-        free(chrom); free(old_chrom); free(chrLens); 
-        free(strand); free(context); free(PerLine);free(chromlenf); 
+        free(chrom); free(old_chrom);
+        if(!chromsTransferred) free(chrLens);
+        free(strand); free(context); free(PerLine);free(chromlenf);
         if(outfile) free(outfile); if(outbmfile) free(outbmfile);
         return 0;
     }
@@ -1673,7 +1692,7 @@ int main(int argc, char *argv[]) {
             fclose(outfp_stats);
         }else if(strcmp(outformat, "dm") == 0){
             bmClose(ofp);
-            bmCleanup();
+            bmCleanupOnce();
         }
         return 0;
     }
@@ -2113,8 +2132,8 @@ int main(int argc, char *argv[]) {
     return 1;
 error:
     fprintf(stderr, "Received an error in process!\n");
-    bmClose(fp);
-    bmCleanup();
+    if(fp) bmClose(fp);
+    bmCleanupOnce();
     return -1;
 }
 
@@ -2281,7 +2300,7 @@ int calchromstats(char *inbmfile, char *method, int chromstep, int stepoverlap, 
     free(region);
 
     bmClose(fp);
-    bmCleanup();
+    bmCleanupOnce();
     free(countC); free(countCT);
     return 0;
 }
@@ -3270,7 +3289,7 @@ int calprofile_gtf(char *inbmfile, int upstream, int downstream, double profiles
         free(profileArgs[ithread].chrom);
     }
     free(profileArgs);
-    bmCleanup();
+    bmCleanupOnce();
     fprintf(stderr, "done free!\n");
 }
 
@@ -3481,7 +3500,7 @@ int calprofile(char *inbmfile, int upstream, int downstream, double profilestep,
         //free(profileArgs[ithread].geneid);
     }
     free(profileArgs);
-    bmCleanup();
+    bmCleanupOnce();
 }
 
 void delete_char(char str[],char target){
@@ -3754,7 +3773,7 @@ int calregionstats_file(char *inbmfile, char *method, char *bedfile, int format,
     }
 
     bmClose(fp);
-    bmCleanup();
+    bmCleanupOnce();
     fclose(Fbedfile);
     free(chrom); free(PerLine); free(strand);
     free(countC); free(countCT);
@@ -3836,7 +3855,7 @@ int calregionstats(char *inbmfile, char *method, char *region, uint8_t pstrand, 
     }
 
     bmClose(fp);
-    bmCleanup();
+    bmCleanupOnce();
     //free(chrom);
     free(countC); free(countCT);
     return 0;
@@ -3900,7 +3919,7 @@ int calbodystats_file(char *inbmfile, char *method, char *bedfile, int format, u
     }
 
     bmClose(fp);
-    bmCleanup();
+    bmCleanupOnce();
     fclose(Fbedfile);
     free(chrom); free(PerLine); free(strand);
     free(countC); free(countCT);
@@ -3956,7 +3975,7 @@ int calbodystats(char *inbmfile, char *method, char *region, uint8_t pstrand, ui
     }
 
     bmClose(fp);
-    bmCleanup();
+    bmCleanupOnce();
     //free(chrom);
     free(countC); free(countCT);
     return 0;
@@ -4544,7 +4563,7 @@ int main_view_bedfile(char *inbmF, char *bedfile, int type, FILE* outfileF, char
 error:
     //fprintf(stderr, "No results found!\n");
     bmClose(ifp);
-    bmCleanup();
+    bmCleanupOnce();
     return 1;
 }
 
@@ -4683,7 +4702,7 @@ int bm_merge_all_mul(char *inbmFs, char *outfile, uint8_t pstrand, int m_method,
 
     if(strcmp(outformat, "dm") == 0 ){
         bmClose(ofp);
-        bmCleanup();
+        bmCleanupOnce();
     }else{
         fclose(outfp_bm);
     }

@@ -94,6 +94,7 @@ typedef struct {
    char methOutPath[PATH_MAX];
    uint64_t methOutLines;
 } ARGS;
+static void freeMethArrays(ARGS &args);
 bool RELESEM = true;// false
 bool printheader = true;
 using namespace std;
@@ -196,6 +197,8 @@ static uint64_t gDmRecordsWritten = 0;
 static uint64_t gDmRecordsWrittenGch = 0;
 static uint64_t gGenomeSizeBases = 0;
 static bool gDmWritersClosed = false;
+static std::mutex gDmWriterMutex;
+static std::once_flag gMethArraysCleanupFlag;
 
 struct FilterStats {
     std::atomic<uint64_t> totalReads{0};
@@ -274,7 +277,7 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
                              bool debugMode, bool validateOutput);
 
 unsigned Total_Reads_all;
-unsigned long Total_Reads=0, Total_mapped = 0, forward_mapped = 0, reverse_mapped = 0;
+uint64_t Total_Reads=0, Total_mapped = 0, forward_mapped = 0, reverse_mapped = 0;
 //----mapping count
 unsigned Tot_Unique_Org=0;//total unique hits obtained
 unsigned ALL_MAP_Org=0;
@@ -345,23 +348,30 @@ int onlyM = 0;
 
 static void destroyOverlapBlock(bmOverlapBlock_t *block) {
     if(!block) return;
-    if(block->size) free(block->size);
-    if(block->offset) free(block->offset);
-    free(block);
+    if(block->size && block->offset && (void*)block->size == (void*)block->offset) {
+        free(block->size);
+        block->size = NULL;
+        block->offset = NULL;
+        free(block);
+        return;
+    }
+
+    destroyBWOverlapBlock(block);
 }
 
 static void closeDmOutputs() {
+    std::lock_guard<std::mutex> lock(gDmWriterMutex);
     if(gDmWritersClosed) return;
     gDmWritersClosed = true;
     if(gDebugMode) {
         fprintf(stderr, "[dm-writer] closing outputs fp=%p fp_gch=%p\n", (void*)fp, (void*)fp_gch);
     }
-    if(fp && fp->writeBuffer) {
+    if(fp) {
         if(gDebugMode) fprintf(stderr, "[dm-writer] closing main dm writer\n");
         bmClose(fp);
         fp = NULL;
     }
-    if(fp_gch && fp_gch->writeBuffer) {
+    if(fp_gch) {
         if(gDebugMode) fprintf(stderr, "[dm-writer] closing GCH dm writer\n");
         bmClose(fp_gch);
         fp_gch = NULL;
@@ -796,6 +806,8 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
                              const std::vector<BinPartLocator> &locators, int shardCount,
                              const std::string &partDir, const std::string &dmPath, int zoomlevel,
                              bool debugMode, bool validateOutput) {
+    bool chromsTransferred = false;
+
     if(tasks.empty()) {
         fprintf(stderr, "[bin] no tasks to merge\n");
         return 1;
@@ -826,6 +838,13 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
         free(chroms); free(lens);
         return 1;
     }
+    auto freeChromBuffers = [&]() {
+        if(!chromsTransferred) {
+            for(int i = 0; i < nseq; ++i) if(chroms[i]) free(chroms[i]);
+            free(chroms);
+            free(lens);
+        }
+    };
     for(int i = 0; i < nseq; ++i) {
         const char *name = faidx_iseq(fai, i);
         chroms[i] = strdup(name);
@@ -843,26 +862,24 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
     if(bmCreateHdr(out, zoomlevel)) {
         fprintf(stderr, "[bin] failed to create dm header for %s\n", dmPath.c_str());
         bmClose(out);
-        for(int i = 0; i < nseq; ++i) if(chroms[i]) free(chroms[i]);
-        free(chroms); free(lens);
         fai_destroy(fai);
+        freeChromBuffers();
         return 1;
     }
     out->cl = bmCreateChromList(chroms, lens, nseq);
     if(!out->cl) {
         fprintf(stderr, "[bin] failed to create chrom list for %s\n", dmPath.c_str());
         bmClose(out);
-        for(int i = 0; i < nseq; ++i) if(chroms[i]) free(chroms[i]);
-        free(chroms); free(lens);
         fai_destroy(fai);
+        freeChromBuffers();
         return 1;
     }
+    chromsTransferred = true;
     if(bmWriteHdr(out)) {
         fprintf(stderr, "[bin] failed to write header for %s\n", dmPath.c_str());
         bmClose(out);
-        for(int i = 0; i < nseq; ++i) if(chroms[i]) free(chroms[i]);
-        free(chroms); free(lens);
         fai_destroy(fai);
+        freeChromBuffers();
         return 1;
     }
 
@@ -879,10 +896,9 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
         shardReaders[s] = fopen(shardPath, "rb");
         if(!shardReaders[s]) {
             fprintf(stderr, "[bin] failed to open shard %s\n", shardPath);
-            for(int i = 0; i < nseq; ++i) if(chroms[i]) free(chroms[i]);
-            free(chroms); free(lens);
             fai_destroy(fai);
             bmClose(out);
+            freeChromBuffers();
             return 1;
         }
     }
@@ -903,9 +919,8 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
                     task.index, task.chrom.c_str(), task.start, task.end);
             bmClose(out);
             for(auto fh : shardReaders) if(fh) fclose(fh);
-            for(int i = 0; i < nseq; ++i) if(chroms[i]) free(chroms[i]);
-            free(chroms); free(lens);
             fai_destroy(fai);
+            freeChromBuffers();
             return 1;
         }
         FILE *in = shardReaders[loc.shard];
@@ -913,9 +928,8 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
             fprintf(stderr, "[bin] failed to seek shard %d for task %zu\n", loc.shard, task.index);
             bmClose(out);
             for(auto fh : shardReaders) if(fh) fclose(fh);
-            for(int i = 0; i < nseq; ++i) if(chroms[i]) free(chroms[i]);
-            free(chroms); free(lens);
             fai_destroy(fai);
+            freeChromBuffers();
             return 1;
         }
         BinPartFileHeader hdr{};
@@ -923,18 +937,16 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
             fprintf(stderr, "[bin] failed to read header for task %zu from shard %d\n", task.index, loc.shard);
             bmClose(out);
             for(auto fh : shardReaders) if(fh) fclose(fh);
-            for(int i = 0; i < nseq; ++i) if(chroms[i]) free(chroms[i]);
-            free(chroms); free(lens);
             fai_destroy(fai);
+            freeChromBuffers();
             return 1;
         }
         if(hdr.nRecords != loc.nRecords || hdr.start != loc.start || hdr.end != loc.end || hdr.tid != loc.tid) {
             fprintf(stderr, "[bin] shard metadata mismatch for task %zu (shard %d)\n", task.index, loc.shard);
             bmClose(out);
             for(auto fh : shardReaders) if(fh) fclose(fh);
-            for(int i = 0; i < nseq; ++i) if(chroms[i]) free(chroms[i]);
-            free(chroms); free(lens);
             fai_destroy(fai);
+            freeChromBuffers();
             return 1;
         }
 
@@ -945,9 +957,8 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
                 fprintf(stderr, "[bin] truncated part file for task %zu on shard %d\n", task.index, loc.shard);
                 bmClose(out);
                 for(auto fh : shardReaders) if(fh) fclose(fh);
-                for(int i = 0; i < nseq; ++i) if(chroms[i]) free(chroms[i]);
-                free(chroms); free(lens);
                 fai_destroy(fai);
+                freeChromBuffers();
                 return 1;
             }
 
@@ -971,9 +982,8 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
                     fprintf(stderr, "[bin] bmAddIntervals failed for %s (code %d)\n", chroms[hdr.tid], response);
                     fclose(in);
                     bmClose(out);
-                    for(int i = 0; i < nseq; ++i) if(chroms[i]) free(chroms[i]);
-                    free(chroms); free(lens);
                     fai_destroy(fai);
+                    freeChromBuffers();
                     return 1;
                 }
                 offset += chunk;
@@ -983,8 +993,7 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
 
     for(auto fh : shardReaders) if(fh) fclose(fh);
     bmClose(out);
-    for(int i = 0; i < nseq; ++i) if(chroms[i]) free(chroms[i]);
-    free(chroms); free(lens);
+    freeChromBuffers();
     fai_destroy(fai);
 
     if(validateOutput) {
@@ -1499,8 +1508,12 @@ int main(int argc, char* argv[])
 
 			
                         char **chroms = (char **)calloc(MAX_CHROM, sizeof(char*));
+                        char **chromsGch = NULL;
                         //if(!chroms) goto error;
                         uint32_t *chrLens = (uint32_t *)malloc(sizeof(uint32_t) * MAX_CHROM);
+                        uint32_t *chrLensGch = NULL;
+                        bool chromListOwnedByWriter = false;
+                        bool chromListOwnedByWriterGch = false;
 			
 			FILE* GenomeFILE=File_Open(Geno.c_str(),"r");
 			fprintf(stderr, "[DM::calmeth] Loading genome sequence : %s\n", Geno.c_str());
@@ -1592,7 +1605,8 @@ int main(int argc, char* argv[])
                 exit(0);
             }
 
-                        fprintf(stderr, "[DM::calmeth] len count GCcount %lld %d %ld\n", Genome_Size, Genome_Count, totalC+totalG);
+                        fprintf(stderr, "[DM::calmeth] len count GCcount %lld %d %" PRIu64 "\n",
+                                (long long)Genome_Size, Genome_Count, (uint64_t)(totalC + totalG));
             gGenomeSizeBases = static_cast<uint64_t>(Genome_Size);
             if(gGenomeSizeBases > 0) {
                 double cgFrac = static_cast<double>(totalC + totalG) / static_cast<double>(gGenomeSizeBases);
@@ -1618,7 +1632,40 @@ int main(int argc, char* argv[])
 			if(Sam && strcmp(Output_Name,"None") ) args.OUTFILE=File_Open(Output_Name,"w");
             if(strcmp(Output_Name_MS,"None") ) args.OUTFILEMS=File_Open(Output_Name_MS,"w");
 
-			char* Split_Point=args.Org_Genome;//split and write...
+                        auto freeChromArrays = [&](char **&names, uint32_t *&lens, int nseq) {
+                            if(names){
+                                for(int i = 0; i < nseq; ++i){
+                                    if(names[i]) free(names[i]);
+                                }
+                                free(names);
+                                names = NULL;
+                            }
+                            if(lens){
+                                free(lens);
+                                lens = NULL;
+                            }
+                        };
+                        auto cloneChromArrays = [&](char **srcNames, uint32_t *srcLens, int nseq, char ***dstNames, uint32_t **dstLens) -> bool {
+                            *dstNames = (char **)calloc(nseq, sizeof(char*));
+                            *dstLens = (uint32_t *)malloc(sizeof(uint32_t) * nseq);
+                            if(!*dstNames || !*dstLens){
+                                freeChromArrays(*dstNames, *dstLens, nseq);
+                                return false;
+                            }
+                            for(int i = 0; i < nseq; ++i){
+                                if(srcNames[i]){
+                                    (*dstNames)[i] = strdup(srcNames[i]);
+                                    if(!(*dstNames)[i]){
+                                        freeChromArrays(*dstNames, *dstLens, nseq);
+                                        return false;
+                                    }
+                                }
+                                (*dstLens)[i] = srcLens[i];
+                            }
+                            return true;
+                        };
+
+                        char* Split_Point=args.Org_Genome;//split and write...
 			args.Genome_List = new Gene_Hash[Genome_Count];
 			for ( int i=0;i<Genome_Count;i++)//Stores the location in value corresponding to has..
 			{
@@ -1794,6 +1841,7 @@ int main(int argc, char* argv[])
                                                 fprintf(stderr, "Failed to create dm chrom list for %s\n", methOutfileName.c_str());
                                                 exit(1);
                                         }
+                                        chromListOwnedByWriter = true; // libdm now manages chroms/chrLens lifetime
                                         //Write the header
                                         if(bmWriteHdr(fp)) {
                                                 fprintf(stderr, "Failed to write dm header for %s\n", methOutfileName.c_str());
@@ -1809,11 +1857,16 @@ int main(int argc, char* argv[])
                                 exit(1);
                         }
                         //Create the chromosome lists
-                        fp_gch->cl = bmCreateChromList(chroms, chrLens, Genome_Count); //2
+                        if(!cloneChromArrays(chroms, chrLens, Genome_Count, &chromsGch, &chrLensGch)){
+                                fprintf(stderr, "Failed to duplicate chrom list for GCH writer\n");
+                                exit(1);
+                        }
+                        fp_gch->cl = bmCreateChromList(chromsGch, chrLensGch, Genome_Count); //2
                         if(!fp_gch->cl) {
                                 fprintf(stderr, "Failed to create dm chrom list for %s\n", GCHOutfileName.c_str());
                                 exit(1);
                         }
+                        chromListOwnedByWriterGch = true; // shared list handed off
                         //Write the header
                         if(bmWriteHdr(fp_gch)) {
                                 fprintf(stderr, "Failed to write dm header for %s\n", GCHOutfileName.c_str());
@@ -1870,10 +1923,10 @@ int main(int argc, char* argv[])
 			if(AlignSum){
 				log=Prefix + ".align.log.txt";
 				FILE* ALIGNLOG=File_Open(log.c_str(),"w");
-				fprintf(ALIGNLOG, "Total_reads\t%u\n", Total_Reads);
-				fprintf(ALIGNLOG, "Total_Mapped_Q%d\t%u\n", QualCut, Total_mapped);
-				fprintf(ALIGNLOG, "Mapped_forword\t%u\n", forward_mapped);
-				fprintf(ALIGNLOG, "Mapped_reverse\t%u\n", reverse_mapped);
+                                fprintf(ALIGNLOG, "Total_reads\t%" PRIu64 "\n", Total_Reads);
+                                fprintf(ALIGNLOG, "Total_Mapped_Q%d\t%" PRIu64 "\n", QualCut, Total_mapped);
+                                fprintf(ALIGNLOG, "Mapped_forword\t%" PRIu64 "\n", forward_mapped);
+                                fprintf(ALIGNLOG, "Mapped_reverse\t%" PRIu64 "\n", reverse_mapped);
 				fclose(ALIGNLOG);
         }
     myMap.clear();
@@ -1906,32 +1959,25 @@ int main(int argc, char* argv[])
                 }
                 if(validationStatus != 0) return validationStatus;
             }
-            if(Methratio) bmCleanup();
+            if(Methratio) bmCleanupOnce();
 //delete
                         fprintf(stderr, "[DM::calmeth] Done and release memory!\n");
-                        for(int i =0; i < Genome_Count; i++){
+                        if(!chromListOwnedByWriter){
+                                for(int i =0; i < Genome_Count; i++){
                     if(chroms[i]) free(chroms[i]);
             }
-                        free(chroms);free(chrLens);
-			if(RELESEM){
-				for ( int i=0;i<1;i++)
-				{
-					if(Methratio)
-					{
-						delete[] args.Methy_List.plusG;
-						delete[] args.Methy_List.plusA;
-						delete[] args.Methy_List.NegG;
-						delete[] args.Methy_List.NegA;
-						delete[] args.Methy_List.plusMethylated;
-						delete[] args.Methy_List.plusUnMethylated;
-						delete[] args.Methy_List.NegMethylated;
-						delete[] args.Methy_List.NegUnMethylated;
-					}
-				}
-				delete [] args.Genome_List;
-				delete [] args.Genome_Offsets;
-				delete [] args.Org_Genome;
-			}
+                                free(chroms);free(chrLens);
+                        }
+                        if(!chromListOwnedByWriterGch){
+                                freeChromArrays(chromsGch, chrLensGch, Genome_Count);
+                        }
+                        if(RELESEM){
+                                if(Methratio) freeMethArrays(args);
+                                delete [] args.Genome_List; args.Genome_List = NULL;
+                                delete [] args.Genome_Offsets; args.Genome_Offsets = NULL;
+                                delete [] args.Org_Genome; args.Org_Genome = NULL;
+                                delete [] args.Marked_Genome; args.Marked_Genome = NULL;
+                        }
 		}
 		catch(char* Err)
 		{
@@ -2097,6 +2143,19 @@ float *values_gch;
 uint16_t *coverages_gch;
 uint8_t *strands_gch;
 uint8_t *contexts_gch;
+
+static void freeMethArrays(ARGS &args) {
+    std::call_once(gMethArraysCleanupFlag, [&](){
+        if(args.Methy_List.plusG) { delete[] args.Methy_List.plusG; args.Methy_List.plusG = nullptr; }
+        if(args.Methy_List.plusA) { delete[] args.Methy_List.plusA; args.Methy_List.plusA = nullptr; }
+        if(args.Methy_List.NegG) { delete[] args.Methy_List.NegG; args.Methy_List.NegG = nullptr; }
+        if(args.Methy_List.NegA) { delete[] args.Methy_List.NegA; args.Methy_List.NegA = nullptr; }
+        if(args.Methy_List.plusMethylated) { delete[] args.Methy_List.plusMethylated; args.Methy_List.plusMethylated = nullptr; }
+        if(args.Methy_List.plusUnMethylated) { delete[] args.Methy_List.plusUnMethylated; args.Methy_List.plusUnMethylated = nullptr; }
+        if(args.Methy_List.NegMethylated) { delete[] args.Methy_List.NegMethylated; args.Methy_List.NegMethylated = nullptr; }
+        if(args.Methy_List.NegUnMethylated) { delete[] args.Methy_List.NegUnMethylated; args.Methy_List.NegUnMethylated = nullptr; }
+    });
+}
 void print_meth_tofile(int genome_id, ARGS* args){
         if(Methratio)
         {
@@ -2107,6 +2166,12 @@ void print_meth_tofile(int genome_id, ARGS* args){
             }
             chromsUse = (char **)calloc(MAX_LINE_PRINT, sizeof(char*));
             entryid = (char **)calloc(MAX_LINE_PRINT, sizeof(char*));
+            starts = nullptr;
+            pends = nullptr;
+            values = nullptr;
+            coverages = nullptr;
+            strands = nullptr;
+            contexts = nullptr;
             if(!chromsUse || !entryid) {
                 fprintf(stderr, "[dm-writer] failed to allocate output buffers\n");
                 return;
@@ -2143,7 +2208,8 @@ void print_meth_tofile(int genome_id, ARGS* args){
         int printL = 0, chrprinHdr = 0, printL_gch = 0, chrprinHdr_gch = 0;
         uint64_t chromRecords = 0;
         uint64_t chromRecordsGch = 0;
-        fprintf(stderr, "[DM::calmeth] Processing chrom %d %d %d\n", genome_id, totalC, totalG);
+        fprintf(stderr, "[DM::calmeth] Processing chrom %d %" PRIu64 " %" PRIu64 "\n",
+                genome_id, (uint64_t)totalC, (uint64_t)totalG);
         auto flushMethBuffer = [&](int &len) -> bool {
             if(len == 0) return true;
             int response = chrprinHdr
@@ -2601,7 +2667,7 @@ void print_meth_tofile(int genome_id, ARGS* args){
         //
         fprintf(stderr, "[DM::calmeth] Free mem in Methy_List\n");
         for(i=0; i< longestChr; i++){
-			args->Methy_List.plusG[i] = 0;
+                        args->Methy_List.plusG[i] = 0;
 			args->Methy_List.plusA[i] = 0;
 			args->Methy_List.NegG[i] = 0;
 			args->Methy_List.NegA[i] = 0;
@@ -2612,36 +2678,56 @@ void print_meth_tofile(int genome_id, ARGS* args){
 		}
 		//printf("\n");
 
-		fprintf(stderr, "[DM::calmeth] Free mem in chromsUse\n");
-		for(i =0; i < MAX_LINE_PRINT; i++){
-            if(starts[i]>0 && chromsUse[i]) free(chromsUse[i]);
-			//fprintf(stderr, "Free mem in chromsUse %d\n", i);
-			// //if(entryid[i]) free(entryid[i]);
-			//fprintf(stderr, "Free mem in chromsUse2 %d\n", i);
-        }
+        fprintf(stderr, "[DM::calmeth] Free mem in chromsUse\n");
         fprintf(stderr, "[DM::calmeth] Free mem in all others\n\n");
-        free(chromsUse);
-        free(entryid);
-
-        free(starts);
-        free(pends); free(values); free(coverages); free(strands); free(contexts);
-
-        if(enableGch) {
-            for(i =0; i < MAX_LINE_PRINT; i++){
-                if(starts_gch[i]>0 && chromsUse_gch[i]) free(chromsUse_gch[i]);
+        auto freeOutputBuffers = [&](){
+            if(chromsUse) { free(chromsUse); chromsUse = NULL; }
+            if(entryid) { free(entryid); entryid = NULL; }
+            if(starts) { free(starts); starts = NULL; }
+            if(pends) { free(pends); pends = NULL; }
+            if(values) { free(values); values = NULL; }
+            if(coverages) { free(coverages); coverages = NULL; }
+            if(strands) { free(strands); strands = NULL; }
+            if(contexts) { free(contexts); contexts = NULL; }
+            if(enableGch) {
+                fprintf(stderr, "[DM::calmeth] Free mem in all others2\n\n");
+                if(chromsUse_gch) { free(chromsUse_gch); chromsUse_gch = NULL; }
+                if(entryid_gch) { free(entryid_gch); entryid_gch = NULL; }
+                if(starts_gch) { free(starts_gch); starts_gch = NULL; }
+                if(pends_gch) { free(pends_gch); pends_gch = NULL; }
+                if(values_gch) { free(values_gch); values_gch = NULL; }
+                if(coverages_gch) { free(coverages_gch); coverages_gch = NULL; }
+                if(strands_gch) { free(strands_gch); strands_gch = NULL; }
+                if(contexts_gch) { free(contexts_gch); contexts_gch = NULL; }
             }
-            fprintf(stderr, "[DM::calmeth] Free mem in all others2\n\n");
-            free(chromsUse_gch);
-            free(entryid_gch);
-            free(starts_gch);
-            free(pends_gch); free(values_gch); free(coverages_gch); free(strands_gch); free(contexts_gch);
-        }
+        };
+
+        freeOutputBuffers();
 
 	}//end methratio
 	return;
 
 error:
         closeDmOutputs();
+        auto freeOutputBuffers = [&](){
+            if(chromsUse) { free(chromsUse); chromsUse = NULL; }
+            if(entryid) { free(entryid); entryid = NULL; }
+            if(starts) { free(starts); starts = NULL; }
+            if(pends) { free(pends); pends = NULL; }
+            if(values) { free(values); values = NULL; }
+            if(coverages) { free(coverages); coverages = NULL; }
+            if(strands) { free(strands); strands = NULL; }
+            if(contexts) { free(contexts); contexts = NULL; }
+            if(chromsUse_gch) { free(chromsUse_gch); chromsUse_gch = NULL; }
+            if(entryid_gch) { free(entryid_gch); entryid_gch = NULL; }
+            if(starts_gch) { free(starts_gch); starts_gch = NULL; }
+            if(pends_gch) { free(pends_gch); pends_gch = NULL; }
+            if(values_gch) { free(values_gch); values_gch = NULL; }
+            if(coverages_gch) { free(coverages_gch); coverages_gch = NULL; }
+            if(strands_gch) { free(strands_gch); strands_gch = NULL; }
+            if(contexts_gch) { free(contexts_gch); contexts_gch = NULL; }
+        };
+        freeOutputBuffers();
         fprintf(stderr, "\nEEEEE main Received an error somewhere!\n");
         return;
 }
@@ -2952,15 +3038,15 @@ void *Process_read(void *arg)
         Total_Reads++;
 
                 if ( fileprocess>=1000000  ) {
-                        fprintf_time(stderr, "Processed %d reads.\n", Total_Reads);
+                        fprintf_time(stderr, "Processed %" PRIu64 " reads.\n", Total_Reads);
                         fileprocess = 0;
                         maybeLogFilterStats();
         }
 
-		if(s2t[0]=='@') 
-		{
-			continue;
-		}
+                if(!bamformat && s2t[0]=='@')
+                {
+                        continue;
+                }
 
         printheader = false;
 		if(!bamformat)
@@ -3107,15 +3193,17 @@ void *Process_read(void *arg)
                                         lens+=length;
                         RLens+=length;
 	                cigr++;n=0;
-				}else if(*cigr=='M')
-				{
+                                }else if(*cigr=='M')
+                                {
                     hs = 0; hs_r = 3;
-					temp[n]='\0';int length=atoi(temp);
-					for(int k=lens,r=RLens,g=Glens;k<length+lens;r++,k++,g++)
-					{
+                                        temp[n]='\0';int length=atoi(temp);
+                                        for(int k=lens,r=RLens,g=Glens;k<length+lens;r++,k++,g++)
+                                        {
+                        if(static_cast<size_t>(r) >= read_Methyl_Info.size()) { CONTINUE = true; break; }
+                        if(static_cast<size_t>(k) >= rawReadBeforeBS.size()) { CONTINUE = true; break; }
                         //if(strcmp(Dummy, "A00545:105:HWCWLDSX2:3:1105:1118:36182")== 0) fprintf(stderr, "%d %d %d %c, %d %d\n", lens, length, k, readString[k], k-lens, length-4);
-						read_Methyl_Info[r] = '=';
-						if (pos+g-1 >= ((ARGS *)arg)->Genome_Offsets[Hash_Index].Offset) break;
+                                                read_Methyl_Info[r] = '=';
+                                                if (pos+g-1 >= ((ARGS *)arg)->Genome_Offsets[Hash_Index].Offset) break;
 
                         if(pos+g < left_end) {
                             //fprintf(stderr, "AAAAA -------- WWWWW");
@@ -3127,15 +3215,28 @@ void *Process_read(void *arg)
 //                            if(hitType==2 || hitType == 3) {if(k<2) continue;}
 //                        }
 
-						char genome_Char = toupper(((ARGS *)arg)->Genome_List[H].Genome[pos+g-1]);//
-						char genome_CharFor1 = toupper(((ARGS *)arg)->Genome_List[H].Genome[pos+g+1-1]);
-						char genome_CharFor2 = toupper(((ARGS *)arg)->Genome_List[H].Genome[pos+g+2-1]);
-						char genome_CharBac1,genome_CharBac2;
-						if(pos+g-1 > 2)
-						{
-							genome_CharBac1 = toupper(((ARGS *)arg)->Genome_List[H].Genome[pos+g-1-1]);
-							genome_CharBac2 = toupper(((ARGS *)arg)->Genome_List[H].Genome[pos+g-2-1]);
-						}
+                                                const unsigned chromLen = ((ARGS *)arg)->Genome_Offsets[Hash_Index].Offset;
+                                                char genome_Char = 'N';
+                                                char genome_CharFor1 = 'N';
+                                                char genome_CharFor2 = 'N';
+                                                char genome_CharBac1 = 'N';
+                                                char genome_CharBac2 = 'N';
+
+                                                if(pos + g - 1 < chromLen) {
+                                                        genome_Char = toupper(((ARGS *)arg)->Genome_List[H].Genome[pos+g-1]);//
+                                                }
+                                                if(pos + g < chromLen) {
+                                                        genome_CharFor1 = toupper(((ARGS *)arg)->Genome_List[H].Genome[pos+g]);
+                                                }
+                                                if(pos + g + 1 < chromLen) {
+                                                        genome_CharFor2 = toupper(((ARGS *)arg)->Genome_List[H].Genome[pos+g+1]);
+                                                }
+                                                if(pos+g-1 > 2 && pos+g-2 < chromLen) {
+                                                        genome_CharBac1 = toupper(((ARGS *)arg)->Genome_List[H].Genome[pos+g-2]);
+                                                }
+                                                if(pos+g-1 > 3 && pos+g-3 < chromLen) {
+                                                        genome_CharBac2 = toupper(((ARGS *)arg)->Genome_List[H].Genome[pos+g-3]);
+                                                }
 						if (hitType==1 || hitType==3) {
                             if(hitType==1) {
                               if(k-lens<4){
