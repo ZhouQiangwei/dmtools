@@ -2166,6 +2166,12 @@ void print_meth_tofile(int genome_id, ARGS* args){
             }
             chromsUse = (char **)calloc(MAX_LINE_PRINT, sizeof(char*));
             entryid = (char **)calloc(MAX_LINE_PRINT, sizeof(char*));
+            starts = nullptr;
+            pends = nullptr;
+            values = nullptr;
+            coverages = nullptr;
+            strands = nullptr;
+            contexts = nullptr;
             if(!chromsUse || !entryid) {
                 fprintf(stderr, "[dm-writer] failed to allocate output buffers\n");
                 return;
@@ -2661,7 +2667,7 @@ void print_meth_tofile(int genome_id, ARGS* args){
         //
         fprintf(stderr, "[DM::calmeth] Free mem in Methy_List\n");
         for(i=0; i< longestChr; i++){
-			args->Methy_List.plusG[i] = 0;
+                        args->Methy_List.plusG[i] = 0;
 			args->Methy_List.plusA[i] = 0;
 			args->Methy_List.NegG[i] = 0;
 			args->Methy_List.NegA[i] = 0;
@@ -2674,25 +2680,54 @@ void print_meth_tofile(int genome_id, ARGS* args){
 
         fprintf(stderr, "[DM::calmeth] Free mem in chromsUse\n");
         fprintf(stderr, "[DM::calmeth] Free mem in all others\n\n");
-        free(chromsUse);
-        free(entryid);
+        auto freeOutputBuffers = [&](){
+            if(chromsUse) { free(chromsUse); chromsUse = NULL; }
+            if(entryid) { free(entryid); entryid = NULL; }
+            if(starts) { free(starts); starts = NULL; }
+            if(pends) { free(pends); pends = NULL; }
+            if(values) { free(values); values = NULL; }
+            if(coverages) { free(coverages); coverages = NULL; }
+            if(strands) { free(strands); strands = NULL; }
+            if(contexts) { free(contexts); contexts = NULL; }
+            if(enableGch) {
+                fprintf(stderr, "[DM::calmeth] Free mem in all others2\n\n");
+                if(chromsUse_gch) { free(chromsUse_gch); chromsUse_gch = NULL; }
+                if(entryid_gch) { free(entryid_gch); entryid_gch = NULL; }
+                if(starts_gch) { free(starts_gch); starts_gch = NULL; }
+                if(pends_gch) { free(pends_gch); pends_gch = NULL; }
+                if(values_gch) { free(values_gch); values_gch = NULL; }
+                if(coverages_gch) { free(coverages_gch); coverages_gch = NULL; }
+                if(strands_gch) { free(strands_gch); strands_gch = NULL; }
+                if(contexts_gch) { free(contexts_gch); contexts_gch = NULL; }
+            }
+        };
 
-        free(starts);
-        free(pends); free(values); free(coverages); free(strands); free(contexts);
-
-        if(enableGch) {
-            fprintf(stderr, "[DM::calmeth] Free mem in all others2\n\n");
-            free(chromsUse_gch);
-            free(entryid_gch);
-            free(starts_gch);
-            free(pends_gch); free(values_gch); free(coverages_gch); free(strands_gch); free(contexts_gch);
-        }
+        freeOutputBuffers();
 
 	}//end methratio
 	return;
 
 error:
         closeDmOutputs();
+        auto freeOutputBuffers = [&](){
+            if(chromsUse) { free(chromsUse); chromsUse = NULL; }
+            if(entryid) { free(entryid); entryid = NULL; }
+            if(starts) { free(starts); starts = NULL; }
+            if(pends) { free(pends); pends = NULL; }
+            if(values) { free(values); values = NULL; }
+            if(coverages) { free(coverages); coverages = NULL; }
+            if(strands) { free(strands); strands = NULL; }
+            if(contexts) { free(contexts); contexts = NULL; }
+            if(chromsUse_gch) { free(chromsUse_gch); chromsUse_gch = NULL; }
+            if(entryid_gch) { free(entryid_gch); entryid_gch = NULL; }
+            if(starts_gch) { free(starts_gch); starts_gch = NULL; }
+            if(pends_gch) { free(pends_gch); pends_gch = NULL; }
+            if(values_gch) { free(values_gch); values_gch = NULL; }
+            if(coverages_gch) { free(coverages_gch); coverages_gch = NULL; }
+            if(strands_gch) { free(strands_gch); strands_gch = NULL; }
+            if(contexts_gch) { free(contexts_gch); contexts_gch = NULL; }
+        };
+        freeOutputBuffers();
         fprintf(stderr, "\nEEEEE main Received an error somewhere!\n");
         return;
 }
