@@ -366,12 +366,12 @@ static void closeDmOutputs() {
     if(gDebugMode) {
         fprintf(stderr, "[dm-writer] closing outputs fp=%p fp_gch=%p\n", (void*)fp, (void*)fp_gch);
     }
-    if(fp && fp->writeBuffer) {
+    if(fp) {
         if(gDebugMode) fprintf(stderr, "[dm-writer] closing main dm writer\n");
         bmClose(fp);
         fp = NULL;
     }
-    if(fp_gch && fp_gch->writeBuffer) {
+    if(fp_gch) {
         if(gDebugMode) fprintf(stderr, "[dm-writer] closing GCH dm writer\n");
         bmClose(fp_gch);
         fp_gch = NULL;

@@ -50,6 +50,9 @@ int bmInit(size_t defaultBufSize) {
 
 //This should be called before quiting, to release memory acquired by curl
 void bmCleanup() {
+    static int bmCleaned = 0;
+    if(bmCleaned) return;
+    bmCleaned = 1;
 #ifndef NOCURL
     curl_global_cleanup();
 #endif
