@@ -281,28 +281,32 @@ error:
 }
 
 //This is here mostly for convenience
-static void bmDestroyWriteBuffer(bmWriteBuffer_t *wb) {
+static void bmDestroyWriteBuffer(bmWriteBuffer_t *wb, uint16_t nLevels) {
+    if(!wb) return;
+    destroyZoomBuffers(wb, nLevels);
     if(wb->p) free(wb->p);
     if(wb->compressP) free(wb->compressP);
-    if(wb->firstZoomBuffer) free(wb->firstZoomBuffer);
-    if(wb->lastZoomBuffer) free(wb->lastZoomBuffer);
-    if(wb->nNodes) free(wb->nNodes);
     free(wb);
 }
 
 void bmClose(binaMethFile_t *fp) {
     if(DEBUG>1) fprintf(stderr, "kkkkxx\n");
     if(!fp) return;
+    if(fp->isClosed) return;
+    fp->isClosed = 1;
     if(DEBUG>1) fprintf(stderr, "lllllxxxx\n");
-    if(bmFinalize(fp)) {
-        fprintf(stderr, "[bmClose] There was an error while finishing writing a binaMeth file! The output is likely truncated.\n");
+    uint16_t nLevels = fp->hdr ? fp->hdr->nLevels : 0;
+    if(fp->isWrite && fp->writeBuffer) {
+        if(bmFinalize(fp)) {
+            fprintf(stderr, "[bmClose] There was an error while finishing writing a binaMeth file! The output is likely truncated.\n");
+        }
     }
     if(DEBUG>1) fprintf(stderr, "222222222\n");
     if(fp->URL) urlClose(fp->URL);
     if(fp->hdr) bmHdrDestroy(fp->hdr);
     if(fp->cl) destroyChromList(fp->cl);
     if(fp->idx) bmDestroyIndex(fp->idx);
-    if(fp->writeBuffer) bmDestroyWriteBuffer(fp->writeBuffer);
+    if(fp->writeBuffer) bmDestroyWriteBuffer(fp->writeBuffer, nLevels);
     free(fp);
 }
 
