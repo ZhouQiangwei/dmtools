@@ -985,7 +985,7 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
             size_t offset = 0;
             while(offset < recs.size()) {
                 size_t chunk = std::min(static_cast<size_t>(MAX_LINE_PRINT), recs.size() - offset);
-                char* chromName = chroms[dmTid];
+                char* chromName = const_cast<char*>(task.chrom.c_str());
                 uint32_t chrLen = lens[dmTid];
                 size_t writeCount = 0;
                 for(size_t i = 0; i < chunk; ++i) {
@@ -1010,7 +1010,7 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
                                                   static_cast<uint32_t>(writeCount));
                     if(response != 0) {
                         fprintf(stderr, "[bin] bmAddIntervals failed for %s (code %d) task=%zu shardTid=%u\n",
-                                chromName, response, task.index, hdr.tid);
+                                task.chrom.c_str(), response, task.index, hdr.tid);
                         fclose(in);
                         bmClose(out);
                         fai_destroy(fai);
@@ -1509,9 +1509,13 @@ int main(int argc, char* argv[])
         for(int t = 0; t < std::max(1, NTHREADS); ++t) {
             char partPath[PATH_MAX];
             snprintf(partPath, sizeof(partPath), "%s/thread_%d.tmp", partDir.c_str(), t);
-            unlink(partPath);
+            if(unlink(partPath) != 0) {
+                fprintf(stderr, "[bin] unlink failed %s: %s\n", partPath, strerror(errno));
+            }
         }
-        rmdir(partDir.c_str());
+        if(rmdir(partDir.c_str()) != 0) {
+            fprintf(stderr, "[bin] rmdir failed %s: %s\n", partDir.c_str(), strerror(errno));
+        }
         if(binBedGenerated && !binTempBed.empty()) unlink(binTempBed.c_str());
         return rc;
     }
