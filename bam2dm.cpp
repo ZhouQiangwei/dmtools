@@ -19,6 +19,7 @@
 #include <sys/stat.h>
 #include <stdint.h>
 #include <inttypes.h>
+#include <limits>
 #include <cerrno>
 #include <thread>
 #include <mutex>
@@ -178,6 +179,293 @@ static size_t estimateAlignedColumns(const std::string &cigar) {
     aligned += insertBases;
     return aligned + 16; // safety padding
 }
+
+static bool update_meth_counts_for_read(const std::string &readString,
+                                        const std::string &cigar,
+                                        int pos,
+                                        int hitType,
+                                        const Gene_Hash *genomeList,
+                                        const Offset_Record *genomeOffsets,
+                                        int genomeIndex,
+                                        int left_end,
+                                        Methy_Hash &methy,
+                                        int methyBase,
+                                        size_t methySize,
+                                        int rangeStart,
+                                        int rangeEnd,
+                                        bool methratio,
+                                        int onlyM,
+                                        int PHead,
+                                        int onlyPHead,
+                                        int *readC,
+                                        int *readmC,
+                                        int *readCG,
+                                        int *readmCG,
+                                        int *readCHG,
+                                        int *readmCHG,
+                                        int *readCHH,
+                                        int *readmCHH,
+                                        const char *readName,
+                                        const char *chrom,
+                                        FILE *headOut,
+                                        std::vector<char> *read_Methyl_Info,
+                                        std::vector<char> *rawReadBeforeBS,
+                                        unsigned &lens,
+                                        int &Glens,
+                                        int &RLens) {
+    char temp[32];
+    unsigned n = 0;
+    bool CONTINUE = false;
+    const char *cigr = cigar.c_str();
+    lens = 0;
+    Glens = 0;
+    RLens = 0;
+    char headseq[4];
+    char headseq_rc[4];
+    unsigned int hs = 0;
+    int hs_r = 3;
+    int printh = 0;
+
+    while(*cigr != '\0') {
+        if(*cigr >= '0' && *cigr <= '9') {
+            if(n + 1 >= sizeof(temp)) { CONTINUE = true; break; }
+            temp[n] = *cigr;
+            cigr++; n++;
+        } else if(*cigr == 'S') {
+            temp[n] = '\0';
+            int length = atoi(temp);
+            if(read_Methyl_Info) {
+                for(int i = RLens; i < RLens + length; i++) {
+                    if(static_cast<size_t>(i) >= read_Methyl_Info->size()) { CONTINUE = true; break; }
+                    (*read_Methyl_Info)[i] = 'S';
+                }
+                if(CONTINUE) break;
+            }
+            lens += length;
+            RLens += length;
+            cigr++; n = 0;
+        } else if(*cigr == 'M') {
+            hs = 0;
+            hs_r = 3;
+            temp[n] = '\0';
+            int length = atoi(temp);
+            for(int k = lens, r = RLens, g = Glens; k < length + static_cast<int>(lens); r++, k++, g++) {
+                if(read_Methyl_Info) {
+                    if(static_cast<size_t>(r) >= read_Methyl_Info->size()) { CONTINUE = true; break; }
+                    (*read_Methyl_Info)[r] = '=';
+                }
+                if(rawReadBeforeBS) {
+                    if(static_cast<size_t>(k) >= rawReadBeforeBS->size()) { CONTINUE = true; break; }
+                }
+                if(CONTINUE) break;
+                if(pos + g - 1 >= static_cast<int>(genomeOffsets[genomeIndex].Offset)) break;
+                if(pos + g < left_end) continue;
+
+                const unsigned chromLen = genomeOffsets[genomeIndex].Offset;
+                char genome_Char = 'N';
+                char genome_CharFor1 = 'N';
+                char genome_CharFor2 = 'N';
+                char genome_CharBac1 = 'N';
+                char genome_CharBac2 = 'N';
+
+                if(pos + g - 1 < static_cast<int>(chromLen)) {
+                    genome_Char = toupper(genomeList[genomeIndex].Genome[pos + g - 1]);
+                }
+                if(pos + g < static_cast<int>(chromLen)) {
+                    genome_CharFor1 = toupper(genomeList[genomeIndex].Genome[pos + g]);
+                }
+                if(pos + g + 1 < static_cast<int>(chromLen)) {
+                    genome_CharFor2 = toupper(genomeList[genomeIndex].Genome[pos + g + 1]);
+                }
+                if(pos + g - 1 > 2 && pos + g - 2 < static_cast<int>(chromLen)) {
+                    genome_CharBac1 = toupper(genomeList[genomeIndex].Genome[pos + g - 2]);
+                }
+                if(pos + g - 1 > 3 && pos + g - 3 < static_cast<int>(chromLen)) {
+                    genome_CharBac2 = toupper(genomeList[genomeIndex].Genome[pos + g - 3]);
+                }
+
+                const int call_pos = pos + g - 1;
+                const bool inRange = (rangeEnd > rangeStart)
+                    ? (call_pos >= rangeStart && call_pos < rangeEnd)
+                    : true;
+                int methyIndex = call_pos - methyBase;
+                const bool inMethy = inRange && methyIndex >= 0 && static_cast<size_t>(methyIndex) < methySize;
+
+                if(hitType == 1 || hitType == 3) {
+                    if(PHead == 1 && headOut) {
+                        if(hitType == 1) {
+                            if(k - static_cast<int>(lens) < 4) {
+                                if(readString[k] == 'T' && genome_Char == 'C') headseq[hs] = 'U';
+                                else headseq[hs] = readString[k];
+                                hs++;
+                            }
+                        } else {
+                            if(k - static_cast<int>(lens) >= length - 4) {
+                                if(readString[k] == 'T' && genome_Char == 'C') headseq[hs_r] = 'U';
+                                else headseq[hs_r] = readString[k];
+                                hs_r--;
+                            }
+                        }
+                        if(hs == 4 || hs_r == -1) {
+                            if(hitType == 1 && printh == 0)
+                                fprintf(headOut, "%s\t%d\t%s\t%d\t%s\t%s\n", readName, hitType, chrom, pos, cigar.c_str(), headseq);
+                            printh = 1;
+                            if(onlyPHead == 1) break;
+                        }
+                    }
+
+                    if(readString[k] == 'C' && genome_Char == 'C') {
+                        if(readC) (*readC)++;
+                        if(readmC) (*readmC)++;
+                        if(read_Methyl_Info) (*read_Methyl_Info)[r] = (onlyM == 1) ? (genome_CharFor1 == 'G' ? 'Z' : (genome_CharFor2 == 'G' ? 'X' : 'H')) : 'M';
+                        if(methratio && inMethy) {
+                            gFilterStats.methylCalls.fetch_add(1);
+                            methy.plusMethylated[methyIndex]++;
+                        }
+                        if(genome_CharFor1 == 'G') {
+                            if(readCG) (*readCG)++;
+                            if(readmCG) (*readmCG)++;
+                            met_CG++;
+                        } else if(genome_CharFor1 != 'G' && genome_CharFor2 != 'G') {
+                            if(readCHG) (*readCHG)++;
+                            if(readmCHG) (*readmCHG)++;
+                            met_CHH++;
+                        } else if(genome_CharFor1 != 'G' && genome_CharFor2 == 'G') {
+                            if(readCHH) (*readCHH)++;
+                            if(readmCHH) (*readmCHH)++;
+                            met_CHG++;
+                        }
+                    } else if(readString[k] == 'T' && genome_Char == 'C') {
+                        if(readC) (*readC)++;
+                        if(read_Methyl_Info) (*read_Methyl_Info)[r] = (onlyM == 1) ? (genome_CharFor1 == 'G' ? 'z' : (genome_CharFor2 == 'G' ? 'x' : 'h')) : 'U';
+                        if(rawReadBeforeBS) (*rawReadBeforeBS)[k] = 'C';
+                        if(methratio && inMethy) {
+                            gFilterStats.methylCalls.fetch_add(1);
+                            methy.plusUnMethylated[methyIndex]++;
+                        }
+                        if(genome_CharFor1 == 'G') {
+                            if(readCG) (*readCG)++;
+                            non_met_CG++;
+                        } else if(genome_CharFor1 != 'G' && genome_CharFor2 != 'G') {
+                            if(readCHG) (*readCHG)++;
+                            non_met_CHH++;
+                        } else if(genome_CharFor1 != 'G' && genome_CharFor2 == 'G') {
+                            if(readCHH) (*readCHH)++;
+                            non_met_CHG++;
+                        }
+                    } else if(read_Methyl_Info && readString[k] != genome_Char) {
+                        (*read_Methyl_Info)[r] = genome_Char;
+                    }
+
+                    if(methratio && inMethy) {
+                        if(readString[k] == 'G' && methy.plusG) methy.plusG[methyIndex]++;
+                        else if(readString[k] == 'A' && methy.plusA) methy.plusA[methyIndex]++;
+                    }
+                } else if(hitType == 2 || hitType == 4) {
+                    if(PHead == 1 && headOut) {
+                        if(hitType == 2) {
+                            if(k - static_cast<int>(lens) < 4) {
+                                if(readString[k] == 'A' && genome_Char == 'G') headseq[hs] = 'U';
+                                else headseq[hs] = readString[k];
+                                hs++;
+                            }
+                        } else {
+                            if(k - static_cast<int>(lens) >= length - 4) {
+                                if(readString[k] == 'A' && genome_Char == 'G') headseq[hs_r] = 'U';
+                                else headseq[hs_r] = readString[k];
+                                hs_r--;
+                            }
+                        }
+                        if(hs == 4 || hs_r == -1) {
+                            if(hitType == 2 && printh == 0)
+                                fprintf(headOut, "%s\t%d\t%s\t%d\t%s\t%s\n", readName, hitType, chrom, pos, cigar.c_str(), headseq);
+                            printh = 1;
+                            if(onlyPHead == 1) break;
+                        }
+                    }
+
+                    if(readString[k] == 'G' && genome_Char == 'G') {
+                        if(readC) (*readC)++;
+                        if(readmC) (*readmC)++;
+                        if(read_Methyl_Info) (*read_Methyl_Info)[r] = (onlyM == 1) ? (genome_CharBac1 == 'C' ? 'Z' : (genome_CharBac2 == 'C' ? 'X' : 'H')) : 'M';
+                        if(methratio && inMethy) {
+                            gFilterStats.methylCalls.fetch_add(1);
+                            methy.NegMethylated[methyIndex]++;
+                        }
+                        if(genome_CharBac1 == 'C') {
+                            if(readCG) (*readCG)++;
+                            if(readmCG) (*readmCG)++;
+                            met_CG++;
+                        } else if(genome_CharBac1 != 'C' && genome_CharBac2 != 'C') {
+                            if(readCHG) (*readCHG)++;
+                            if(readmCHG) (*readmCHG)++;
+                            met_CHH++;
+                        } else if(genome_CharBac1 != 'C' && genome_CharBac2 == 'C') {
+                            if(readCHH) (*readCHH)++;
+                            if(readmCHH) (*readmCHH)++;
+                            met_CHG++;
+                        }
+                    } else if(readString[k] == 'A' && genome_Char == 'G') {
+                        if(readC) (*readC)++;
+                        if(read_Methyl_Info) (*read_Methyl_Info)[r] = (onlyM == 1) ? (genome_CharBac1 == 'C' ? 'z' : (genome_CharBac2 == 'C' ? 'x' : 'h')) : 'U';
+                        if(rawReadBeforeBS) (*rawReadBeforeBS)[k] = 'G';
+                        if(methratio && inMethy) {
+                            gFilterStats.methylCalls.fetch_add(1);
+                            methy.NegUnMethylated[methyIndex]++;
+                        }
+                        if(genome_CharBac1 == 'C') {
+                            if(readCG) (*readCG)++;
+                            non_met_CG++;
+                        } else if(genome_CharBac1 != 'C' && genome_CharBac2 != 'C') {
+                            if(readCHG) (*readCHG)++;
+                            non_met_CHH++;
+                        } else if(genome_CharBac1 != 'C' && genome_CharBac2 == 'C') {
+                            if(readCHH) (*readCHH)++;
+                            non_met_CHG++;
+                        }
+                    } else if(read_Methyl_Info && readString[k] != genome_Char) {
+                        (*read_Methyl_Info)[r] = genome_Char;
+                    }
+
+                    if(methratio && inMethy) {
+                        if(readString[k] == 'C' && methy.NegG) methy.NegG[methyIndex]++;
+                        else if(readString[k] == 'T' && methy.NegA) methy.NegA[methyIndex]++;
+                    }
+                }
+            }
+            if(CONTINUE) break;
+            cigr++; n = 0; lens += length; Glens += length; RLens += length;
+        } else if(*cigr == 'I') {
+            temp[n] = '\0';
+            int length = atoi(temp);
+            if(read_Methyl_Info) {
+                for(int i = 0; i < length; i++) {
+                    if(static_cast<size_t>(i + RLens) >= read_Methyl_Info->size()) { CONTINUE = true; break; }
+                    (*read_Methyl_Info)[i + RLens] = 'I';
+                }
+                if(CONTINUE) break;
+            }
+            lens += length;
+            RLens += length;
+            cigr++; n = 0;
+        } else if(*cigr == 'D') {
+            temp[n] = '\0';
+            unsigned int length = atoi(temp);
+            Glens += length;
+            cigr++; n = 0;
+        } else {
+            CONTINUE = true;
+            break;
+        }
+    }
+
+    if((hitType == 3 || hitType == 4) && printh == 1 && headOut) {
+        onlyComp(headseq_rc, headseq);
+        fprintf(headOut, "%s\t%d\t%s\t%d\t%s\t%s\n", readName, hitType, chrom, pos, cigar.c_str(), headseq_rc);
+    }
+
+    return !CONTINUE;
+}
 struct BinTask {
     std::string chrom;
     int64_t start;
@@ -258,10 +546,10 @@ struct BinPartLocator {
 struct BinPartRecord {
     uint32_t pos;
     uint32_t end;
-    float value;
-    uint16_t coverage;
-    uint8_t strand;
-    uint8_t context;
+    uint32_t plusM;
+    uint32_t plusU;
+    uint32_t negM;
+    uint32_t negU;
 };
 
 static int runBinChunkDebug(const std::string &bamPath, const std::vector<BinTask> &tasks, int threads, bool debugMode);
@@ -269,7 +557,8 @@ static int materializeBinTasksToBed(const std::string &genomePath, const std::st
                                     std::string &bedOut, size_t &taskCount, bool debugMode);
 static int loadBinTasksFromBed(const std::string &bedPath, std::vector<BinTask> &tasks, bool debugMode);
 static int validateDmFile(const std::string &dmPath, bool verbose);
-static int runBinTasksToParts(const std::string &bamPath, const std::vector<BinTask> &tasks, int threads,
+static int runBinTasksToParts(const std::string &bamPath, const std::string &genomePath,
+                              const std::vector<BinTask> &tasks, int threads,
                               const std::string &partDir, bool debugMode, std::vector<BinPartLocator> &locators);
 static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<BinTask> &tasks,
                              const std::vector<BinPartLocator> &locators, int shardCount,
@@ -381,6 +670,10 @@ static void closeDmOutputs() {
 static int runBinChunkDebug(const std::string &bamPath, const std::vector<BinTask> &tasks, int threads, bool debugMode) {
     if(bamPath.empty()) {
         fprintf(stderr, "[bin] input BAM/SAM is required for --chunk-by bin mode\n");
+        return 1;
+    }
+    if(genomePath.empty()) {
+        fprintf(stderr, "[bin] genome is required for --chunk-by bin mode\n");
         return 1;
     }
     if(tasks.empty()) {
@@ -618,7 +911,8 @@ static int loadBinTasksFromBed(const std::string &bedPath, std::vector<BinTask> 
     return tasks.empty() ? 1 : 0;
 }
 
-static int runBinTasksToParts(const std::string &bamPath, const std::vector<BinTask> &tasks, int threads,
+static int runBinTasksToParts(const std::string &bamPath, const std::string &genomePath,
+                              const std::vector<BinTask> &tasks, int threads,
                               const std::string &partDir, bool debugMode, std::vector<BinPartLocator> &locators) {
     if(bamPath.empty()) {
         fprintf(stderr, "[bin] input BAM/SAM is required for --chunk-by bin mode\n");
@@ -690,10 +984,21 @@ static int runBinTasksToParts(const std::string &bamPath, const std::vector<BinT
             fclose(shard);
             return;
         }
+        faidx_t *fai = fai_load(genomePath.c_str());
+        if(!fai) {
+            fprintf(stderr, "[bin-worker-%d] failed to load genome index %s\n", workerId, genomePath.c_str());
+            hts_idx_destroy(idx);
+            bam_hdr_destroy(header);
+            sam_close(bam);
+            workerError.store(1);
+            fclose(shard);
+            return;
+        }
 
         bam1_t *b = bam_init1();
         if(!b) {
             fprintf(stderr, "[bin-worker-%d] failed to allocate bam1_t\n", workerId);
+            fai_destroy(fai);
             hts_idx_destroy(idx);
             bam_hdr_destroy(header);
             sam_close(bam);
@@ -701,6 +1006,8 @@ static int runBinTasksToParts(const std::string &bamPath, const std::vector<BinT
             workerError.store(1);
             return;
         }
+        std::unordered_map<std::string, std::string> chromCache;
+        std::unordered_map<std::string, int> chromLenCache;
 
         while(true) {
             size_t taskId = nextTask.fetch_add(1);
@@ -723,20 +1030,129 @@ static int runBinTasksToParts(const std::string &bamPath, const std::vector<BinT
                 continue;
             }
 
+            auto seqIt = chromCache.find(task.chrom);
+            int chromLen = 0;
+            if(seqIt == chromCache.end()) {
+                int fetchLen = faidx_seq_len(fai, task.chrom.c_str());
+                if(fetchLen < 0) {
+                    std::lock_guard<std::mutex> lock(logMutex);
+                    fprintf(stderr, "[bin-worker-%d] failed to load genome length for %s\n", workerId, task.chrom.c_str());
+                    workerError.store(1);
+                    hts_itr_destroy(iter);
+                    continue;
+                }
+                int readLen = 0;
+                char *seq = faidx_fetch_seq(fai, task.chrom.c_str(), 0, fetchLen - 1, &readLen);
+                if(!seq || readLen <= 0) {
+                    std::lock_guard<std::mutex> lock(logMutex);
+                    fprintf(stderr, "[bin-worker-%d] failed to fetch genome sequence for %s\n", workerId, task.chrom.c_str());
+                    if(seq) free(seq);
+                    workerError.store(1);
+                    hts_itr_destroy(iter);
+                    continue;
+                }
+                chromCache.emplace(task.chrom, std::string(seq, readLen));
+                chromLenCache.emplace(task.chrom, readLen);
+                free(seq);
+                seqIt = chromCache.find(task.chrom);
+            }
+            chromLen = chromLenCache[task.chrom];
+            Gene_Hash genomeList[1]{};
+            Offset_Record genomeOffsets[1]{};
+            genomeList[0].Genome = const_cast<char*>(seqIt->second.c_str());
+            genomeList[0].Index = 0;
+            strncpy(genomeOffsets[0].Genome, task.chrom.c_str(), sizeof(genomeOffsets[0].Genome) - 1);
+            genomeOffsets[0].Genome[sizeof(genomeOffsets[0].Genome) - 1] = '\0';
+            genomeOffsets[0].Offset = static_cast<unsigned>(chromLen);
+
+            const size_t binLen = static_cast<size_t>(std::max<int64_t>(0, task.end - task.start));
+            std::vector<int> plusM(binLen, 0);
+            std::vector<int> plusU(binLen, 0);
+            std::vector<int> negM(binLen, 0);
+            std::vector<int> negU(binLen, 0);
+            Methy_Hash methy{};
+            methy.plusMethylated = plusM.data();
+            methy.plusUnMethylated = plusU.data();
+            methy.NegMethylated = negM.data();
+            methy.NegUnMethylated = negU.data();
+            methy.plusG = nullptr;
+            methy.plusA = nullptr;
+            methy.NegG = nullptr;
+            methy.NegA = nullptr;
+
+            std::unordered_map<std::string, int> overlapMap;
             std::vector<BinPartRecord> records;
+            char Dummy[BATBUF], forReadString[BATBUF], Chrom[CHROMSIZE], Chrom_P[CHROMSIZE], CIG[BATBUF], forQuality[BATBUF];
+            int Flag = -1;
+            int mapQuality = 0;
+            int pos = 0;
+            int pos_P = 0;
+            int Insert_Size = 0;
+            int hitType = 0;
+
             while(sam_itr_next(bam, iter, b) >= 0) {
-                const int64_t pos = b->core.pos;
-                if(pos < task.start || pos >= task.end) continue;
-                BinPartRecord rec{};
-                rec.pos = static_cast<uint32_t>(pos);
-                rec.end = rec.pos + 1;
-                rec.value = 1.0f;
-                rec.coverage = 1;
-                rec.strand = (b->core.flag & BAM_FREVERSE) ? 1 : 0;
-                rec.context = 0;
-                records.push_back(rec);
+                int ct = processbamread(header, b, Dummy, Flag, Chrom, pos, mapQuality, CIG, Chrom_P, pos_P, Insert_Size,
+                                        forReadString, forQuality, hitType);
+                if(ct == -1) continue;
+                if(mapQuality < QualCut) continue;
+
+                std::string readString = forReadString;
+                std::string cigStr = CIG;
+                if(pos - 1 < task.start || pos - 1 >= task.end) continue;
+                int Nmismatch = conutMismatch(cigStr, genomeOffsets[0].Offset, genomeList[0].Genome, readString, pos, hitType);
+                if(Nmismatch > 0.5 + UPPER_MAX_MISMATCH * strlen(readString.c_str())) continue;
+
+                int left_end = -1;
+                if(skipOverlap == 1) {
+                    if(Flag & 0x1) {
+                        if(strcmp(Chrom_P, "=") == 0 && pos > pos_P) {
+                            auto it = overlapMap.find(Dummy);
+                            if(it != overlapMap.end()) {
+                                left_end = it->second;
+                                overlapMap.erase(it);
+                            }
+                        }
+                    }
+                }
+
+                unsigned lens = 0;
+                int Glens = 0;
+                int RLens = 0;
+                bool ok = update_meth_counts_for_read(readString, cigStr, pos, hitType, genomeList, genomeOffsets, 0, left_end,
+                                                      methy, static_cast<int>(task.start), binLen, static_cast<int>(task.start),
+                                                      static_cast<int>(task.end), Methratio, onlyM, 0, 0,
+                                                      nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+                                                      Dummy, Chrom, nullptr, nullptr, nullptr, lens, Glens, RLens);
+                if(!ok) continue;
+
+                if(skipOverlap == 1) {
+                    if(Flag & 0x1) {
+                        if(strcmp(Chrom_P, "=") == 0 && pos <= pos_P && pos + Glens > pos_P) {
+                            overlapMap[Dummy] = pos + Glens;
+                        }
+                    }
+                }
             }
             hts_itr_destroy(iter);
+
+            if(binLen > 0) {
+                records.reserve(binLen);
+                for(size_t i = 0; i < binLen; ++i) {
+                    uint32_t pm = static_cast<uint32_t>(plusM[i]);
+                    uint32_t pu = static_cast<uint32_t>(plusU[i]);
+                    uint32_t nm = static_cast<uint32_t>(negM[i]);
+                    uint32_t nu = static_cast<uint32_t>(negU[i]);
+                    if(pm + pu + nm + nu == 0) continue;
+                    BinPartRecord rec{};
+                    rec.pos = static_cast<uint32_t>(task.start + static_cast<int64_t>(i));
+                    rec.end = rec.pos + 1;
+                    rec.plusM = pm;
+                    rec.plusU = pu;
+                    rec.negM = nm;
+                    rec.negU = nu;
+                    records.push_back(rec);
+                }
+            }
 
             std::sort(records.begin(), records.end(), [](const BinPartRecord &a, const BinPartRecord &b) {
                 if(a.pos == b.pos) return a.end < b.end;
@@ -786,6 +1202,7 @@ static int runBinTasksToParts(const std::string &bamPath, const std::vector<BinT
         }
 
         bam_destroy1(b);
+        fai_destroy(fai);
         hts_idx_destroy(idx);
         bam_hdr_destroy(header);
         sam_close(bam);
@@ -922,6 +1339,8 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
         }
     }
 
+    std::unordered_map<std::string, std::string> chromSeqCache;
+
     std::vector<char*> chromBuf(MAX_LINE_PRINT, NULL);
     std::vector<uint32_t> startBuf(MAX_LINE_PRINT, 0);
     std::vector<uint32_t> endBuf(MAX_LINE_PRINT, 0);
@@ -982,26 +1401,96 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
                 return 1;
             }
 
+            std::vector<BinPartRecord> merged;
+            merged.reserve(recs.size());
+            for(const auto &r : recs) {
+                if(!merged.empty() && merged.back().pos == r.pos) {
+                    merged.back().plusM += r.plusM;
+                    merged.back().plusU += r.plusU;
+                    merged.back().negM += r.negM;
+                    merged.back().negU += r.negU;
+                } else {
+                    merged.push_back(r);
+                }
+            }
+
             size_t offset = 0;
-            while(offset < recs.size()) {
-                size_t chunk = std::min(static_cast<size_t>(MAX_LINE_PRINT), recs.size() - offset);
+            while(offset < merged.size()) {
+                size_t chunk = std::min(static_cast<size_t>(MAX_LINE_PRINT), merged.size() - offset);
                 char* chromName = chroms[dmTid];
                 uint32_t chrLen = lens[dmTid];
+                auto seqIt = chromSeqCache.find(chromName);
+                if(seqIt == chromSeqCache.end()) {
+                    int fetchLen = faidx_seq_len(fai, chromName);
+                    if(fetchLen <= 0) {
+                        fprintf(stderr, "[bin] failed to load genome length for %s\n", chromName);
+                        bmClose(out);
+                        for(auto fh : shardReaders) if(fh) fclose(fh);
+                        fai_destroy(fai);
+                        freeChromBuffers();
+                        return 1;
+                    }
+                    int readLen = 0;
+                    char *seq = faidx_fetch_seq(fai, chromName, 0, fetchLen - 1, &readLen);
+                    if(!seq || readLen <= 0) {
+                        fprintf(stderr, "[bin] failed to fetch genome sequence for %s\n", chromName);
+                        if(seq) free(seq);
+                        bmClose(out);
+                        for(auto fh : shardReaders) if(fh) fclose(fh);
+                        fai_destroy(fai);
+                        freeChromBuffers();
+                        return 1;
+                    }
+                    chromSeqCache.emplace(chromName, std::string(seq, readLen));
+                    chromSeqLens.emplace(chromName, readLen);
+                    free(seq);
+                    seqIt = chromSeqCache.find(chromName);
+                }
+                const std::string &refSeq = seqIt->second;
                 size_t writeCount = 0;
                 for(size_t i = 0; i < chunk; ++i) {
-                    const BinPartRecord &r = recs[offset + i];
+                    const BinPartRecord &r = merged[offset + i];
                     uint32_t s = r.pos;
-                    uint32_t e = r.end;
                     if(s >= chrLen) continue;
-                    if(e > chrLen) e = chrLen;
-                    if(e <= s) continue;
+                    char refBase = toupper(refSeq[s]);
+                    uint32_t mc = 0;
+                    uint32_t uc = 0;
+                    uint8_t strand = 0;
+                    uint8_t context = 0;
+                    if(refBase == 'C') {
+                        mc = r.plusM;
+                        uc = r.plusU;
+                        strand = 0;
+                        char c1 = (s + 1 < chrLen) ? toupper(refSeq[s + 1]) : 'N';
+                        char c2 = (s + 2 < chrLen) ? toupper(refSeq[s + 2]) : 'N';
+                        if(c1 == 'G') context = 1;
+                        else if(c1 != 'G' && c2 == 'G') context = 2;
+                        else if(c1 != 'G' && c2 != 'G') context = 3;
+                    } else if(refBase == 'G') {
+                        mc = r.negM;
+                        uc = r.negU;
+                        strand = 1;
+                        char c1 = (s >= 1) ? toupper(refSeq[s - 1]) : 'N';
+                        char c2 = (s >= 2) ? toupper(refSeq[s - 2]) : 'N';
+                        if(c1 == 'C') context = 1;
+                        else if(c1 != 'C' && c2 == 'C') context = 2;
+                        else if(c1 != 'C' && c2 != 'C') context = 3;
+                    } else {
+                        continue;
+                    }
+                    uint32_t cov = mc + uc;
+                    if(cov == 0) continue;
+                    float ratio = static_cast<float>(mc) / static_cast<float>(cov);
+                    if(ratio < 0.0f) ratio = 0.0f;
+                    if(ratio > 1.0f) ratio = 1.0f;
+
                     chromBuf[writeCount] = chromName;
-                    startBuf[writeCount] = s;
-                    endBuf[writeCount] = e;
-                    valueBuf[writeCount] = r.value;
-                    covBuf[writeCount] = r.coverage;
-                    strandBuf[writeCount] = r.strand;
-                    contextBuf[writeCount] = r.context;
+                    startBuf[writeCount] = s + 1;
+                    endBuf[writeCount] = s + 2;
+                    valueBuf[writeCount] = ratio;
+                    covBuf[writeCount] = static_cast<uint16_t>(std::min<uint32_t>(cov, std::numeric_limits<uint16_t>::max()));
+                    strandBuf[writeCount] = strand;
+                    contextBuf[writeCount] = context;
                     ++writeCount;
                 }
                 if(writeCount > 0) {
@@ -1502,7 +1991,7 @@ int main(int argc, char* argv[])
         std::string dmOutPath = Prefix;
         if(debugMode) fprintf(stderr, "[bin] dm output path: %s\n", dmOutPath.c_str());
         std::vector<BinPartLocator> locators;
-        rc = runBinTasksToParts(bamPath, tasks, NTHREADS, partDir, debugMode, locators);
+        rc = runBinTasksToParts(bamPath, Geno, tasks, NTHREADS, partDir, debugMode, locators);
         if(rc == 0) {
             rc = mergeBinPartsToDm(Geno, tasks, locators, std::max(1, NTHREADS), partDir, dmOutPath, zoomlevel, debugMode, validateOutput);
         }
@@ -2986,8 +3475,6 @@ void *Process_read(void *arg)
         char *s2t = (char*) malloc(1000);
         std::vector<char> read_Methyl_Info;
         std::vector<char> rawReadBeforeBS;
-        char temp[32];
-    char headseq[4]; unsigned int hs=0, hs_r =3; int printh = 0; char headseq_rc[4]; 
 	char Dummy[BATBUF],forReadString[BATBUF],Chrom[CHROMSIZE];
 	char Chrom_P[CHROMSIZE];int pos_P=0;int Insert_Size=0;int Qsingle=0; //Paired-end reads
 	string CIGr;char CIG[BATBUF];
@@ -3203,268 +3690,25 @@ void *Process_read(void *arg)
                         int Hash_Index=((ARGS *)arg)->Genome_List[H].Index;//load current genome..
                         std::copy(readString.begin(), readString.end(), rawReadBeforeBS.begin());
                         rawReadBeforeBS[readString.size()] = '\0';
-                        unsigned lens=0;int Glens=0;int RLens=0;
-                        unsigned n=0;bool CONTINUE=false;
-                        const char* cigr=CIGr.c_str();
-            if(DEBUG>1) fprintf(fPH, "%s %d %s %s\n", Dummy, hitType, cigr, readString.c_str());
-            printh = 0;
+                        unsigned lens = 0;
+                        int Glens = 0;
+                        int RLens = 0;
+                        if(DEBUG>1) fprintf(fPH, "%s %d %s %s\n", Dummy, hitType, CIGr.c_str(), readString.c_str());
                         gFilterStats.enterMethyl.fetch_add(1);
-                        while(*cigr!='\0')//RLens--READs Length \\ lens--raw reads length \\ GLens--genome Lens
-                        {
-                                if(*cigr>='0' && *cigr<='9')
-                                {
-                                        if(n+1 >= sizeof(temp)) { CONTINUE = true; break; }
-                                        temp[n]=*cigr;
-                                        cigr++;n++;
-				}else if(*cigr=='S')
-				{
-                                        int i;temp[n]='\0';int length=atoi(temp);
-                                        for(i=RLens;i<RLens+length;i++)
-                                        {
-                                                if(static_cast<size_t>(i) >= read_Methyl_Info.size()) { CONTINUE = true; break; }
-                                                read_Methyl_Info[i] = 'S';
-                                        }
-                                        lens+=length;
-                        RLens+=length;
-	                cigr++;n=0;
-                                }else if(*cigr=='M')
-                                {
-                    hs = 0; hs_r = 3;
-                                        temp[n]='\0';int length=atoi(temp);
-                                        for(int k=lens,r=RLens,g=Glens;k<length+lens;r++,k++,g++)
-                                        {
-                        if(static_cast<size_t>(r) >= read_Methyl_Info.size()) { CONTINUE = true; break; }
-                        if(static_cast<size_t>(k) >= rawReadBeforeBS.size()) { CONTINUE = true; break; }
-                        //if(strcmp(Dummy, "A00545:105:HWCWLDSX2:3:1105:1118:36182")== 0) fprintf(stderr, "%d %d %d %c, %d %d\n", lens, length, k, readString[k], k-lens, length-4);
-                                                read_Methyl_Info[r] = '=';
-                                                if (pos+g-1 >= ((ARGS *)arg)->Genome_Offsets[Hash_Index].Offset) break;
-
-                        if(pos+g < left_end) {
-                            //fprintf(stderr, "AAAAA -------- WWWWW");
-                            continue;
-                        }
-
-//                        if(rrbs){
-//                            if(hitType==1 || hitType == 4) {if(k+2>=RLens) break;}
-//                            if(hitType==2 || hitType == 3) {if(k<2) continue;}
-//                        }
-
-                                                const unsigned chromLen = ((ARGS *)arg)->Genome_Offsets[Hash_Index].Offset;
-                                                char genome_Char = 'N';
-                                                char genome_CharFor1 = 'N';
-                                                char genome_CharFor2 = 'N';
-                                                char genome_CharBac1 = 'N';
-                                                char genome_CharBac2 = 'N';
-
-                                                if(pos + g - 1 < chromLen) {
-                                                        genome_Char = toupper(((ARGS *)arg)->Genome_List[H].Genome[pos+g-1]);//
-                                                }
-                                                if(pos + g < chromLen) {
-                                                        genome_CharFor1 = toupper(((ARGS *)arg)->Genome_List[H].Genome[pos+g]);
-                                                }
-                                                if(pos + g + 1 < chromLen) {
-                                                        genome_CharFor2 = toupper(((ARGS *)arg)->Genome_List[H].Genome[pos+g+1]);
-                                                }
-                                                if(pos+g-1 > 2 && pos+g-2 < chromLen) {
-                                                        genome_CharBac1 = toupper(((ARGS *)arg)->Genome_List[H].Genome[pos+g-2]);
-                                                }
-                                                if(pos+g-1 > 3 && pos+g-3 < chromLen) {
-                                                        genome_CharBac2 = toupper(((ARGS *)arg)->Genome_List[H].Genome[pos+g-3]);
-                                                }
-						if (hitType==1 || hitType==3) {
-                            if(hitType==1) {
-                              if(k-lens<4){
-                                if (readString[k]=='T' && genome_Char=='C') headseq[hs] = 'U';
-                                else headseq[hs] = readString[k];
-                                hs++;
-                              }
-                            }else{
-                              if(k-lens>=length-4) {
-                                if (readString[k]=='T' && genome_Char=='C') headseq[hs_r] = 'U';
-                                else headseq[hs_r] = readString[k];
-                                hs_r--;
-                              }
-                            }
-                            if(PHead == 1) {
-                              if(hs == 4 || hs_r == -1) {
-                                if(hitType==1 && printh==0) 
-                                    fprintf(fPH, "%s\t%d\t%s\t%d\t%s\t%s\n", Dummy, hitType, Chrom, pos, CIGr.c_str(), headseq);
-                                printh = 1;
-                                if(onlyPHead == 1) break;
-                              }
-                            }
-
-                                                        if (readString[k]=='C' && genome_Char=='C')
-                                                        {
-                                readC++; readmC++;
-                                                                read_Methyl_Info[r] = 'M';
-                                                                if(Methratio ) { gFilterStats.methylCalls.fetch_add(1); ((ARGS *)arg)->Methy_List.plusMethylated[pos+g-1]++; }
-                                if(genome_CharFor1=='G')
-                                {
-                                        readCG++; readmCG++;
-                                                                                if(onlyM == 1) read_Methyl_Info[r] = 'Z';
-                                        met_CG++;
-                                }//Z methylated C in CpG context
-                                else if(genome_CharFor1!='G' && genome_CharFor2!='G')
-                                {
-                                        readCHG++; readmCHG++;
-                                                                                if(onlyM == 1) read_Methyl_Info[r] = 'H';
-                                        met_CHH++;
-                                }//H methylated C in CHH context
-                                else if(genome_CharFor1!='G' && genome_CharFor2=='G')
-                                {
-                                        readCHH++; readmCHH++;
-                                                                                if(onlyM == 1) read_Methyl_Info[r] = 'X';
-                                        met_CHG++;
-                                }//X methylated C in CHG context
-                                                        }
-                                                        else if (readString[k]=='T' && genome_Char=='C')
-                                                        {
-                                readC++;
-                                                                read_Methyl_Info[r] = 'U';
-                                                                rawReadBeforeBS[k] = 'C';
-                                                                if(Methratio ) { gFilterStats.methylCalls.fetch_add(1); ((ARGS *)arg)->Methy_List.plusUnMethylated[pos+g-1]++; }
-                                if(genome_CharFor1=='G')
-                                {
-                                        readCG++;
-                                                                                if(onlyM == 1) read_Methyl_Info[r] = 'z';
-                                        non_met_CG++;
-                                }//z unmethylated C in CpG context
-                                else if(genome_CharFor1!='G' && genome_CharFor2!='G')
-                                {
-                                        readCHG++;
-                                                                                if(onlyM == 1) read_Methyl_Info[r] = 'h';
-                                        non_met_CHH++;
-                                }//h unmethylated C in CHH context
-                                else if(genome_CharFor1!='G' && genome_CharFor2=='G')
-                                {
-                                        readCHH++;
-                                                                                if(onlyM == 1) read_Methyl_Info[r] = 'x';
-                                        non_met_CHG++;
-                                }//x unmethylated C in CHG context
-
-                                                        }
-							else if (readString[k] != genome_Char) 
-							{
-								read_Methyl_Info[r] = genome_Char;  //readString[k]; // genome_Char; for hypol
-							}
-							if(Methratio)
-							{
-								if(readString[k]=='G') ((ARGS *)arg)->Methy_List.plusG[pos+g-1]++;
-								else if(readString[k]=='A') ((ARGS *)arg)->Methy_List.plusA[pos+g-1]++;
-							}
-						}
-						else if (hitType==2 || hitType==4) {
-                            if(hitType==2) {
-                              if(k-lens<4){
-                                if (readString[k]=='A' && genome_Char=='G') headseq[hs] = 'U';
-                                else headseq[hs] = readString[k];
-                                hs++;
-                              }
-                            }else{
-                              if(k-lens>=length-4) {
-                                if (readString[k]=='A' && genome_Char=='G') headseq[hs_r] = 'U';
-                                else headseq[hs_r] = readString[k];
-                                hs_r--;
-                              }
-                            }
-                            if(PHead == 1) {
-                              if(hs == 4 || hs_r == -1) {
-                                if(hitType==2 && printh == 0) fprintf(fPH, "%s\t%d\t%s\t%d\t%s\t%s\n", Dummy, hitType, Chrom, pos, CIGr.c_str(), headseq);
-                                printh = 1;
-                                if(onlyPHead == 1) break;
-                              }
-                            }
-
-                                                        if (readString[k]=='G' && genome_Char=='G')
-                                                        {
-                                readC++; readmC++;
-                                                                read_Methyl_Info[r] = 'M';
-                                                                if(Methratio ) { gFilterStats.methylCalls.fetch_add(1); ((ARGS *)arg)->Methy_List.NegMethylated[pos+g-1]++; }
-                                if(genome_CharBac1=='C')
-                                {
-                                        readCG++; readmCG++;
-                                                                                if(onlyM == 1) read_Methyl_Info[r] = 'Z';
-                                        met_CG++;
-                                }
-                                else if(genome_CharBac1!='C' && genome_CharBac2!='C')
-                                {
-                                        readCHG++; readmCHG++;
-                                                                                if(onlyM == 1) read_Methyl_Info[r] = 'H';
-                                        met_CHH++;
-                                }
-                                else if(genome_CharBac1!='C' && genome_CharBac2=='C')
-                                {
-                                        readCHH++; readmCHH++;
-                                                                                if(onlyM == 1) read_Methyl_Info[r] = 'X';
-                                        met_CHG++;
-                                }
-                               }
-                                                        else if (readString[k]=='A' && genome_Char=='G')
-                                                        {
-                                readC++;
-                                                                read_Methyl_Info[r] = 'U';
-                                                                rawReadBeforeBS[k] = 'G';
-                                                                if(Methratio) { gFilterStats.methylCalls.fetch_add(1); ((ARGS *)arg)->Methy_List.NegUnMethylated[pos+g-1]++; }
-                                if(genome_CharBac1=='C')
-                                {
-                                        readCG++;
-                                                                                if(onlyM == 1) read_Methyl_Info[r] = 'z';
-                                        non_met_CG++;
-                                }
-                                else if(genome_CharBac1!='C' && genome_CharBac2!='C')
-                                {
-                                        readCHG++;
-                                                                                if(onlyM == 1) read_Methyl_Info[r] = 'h';
-                                        non_met_CHH++;
-                                }
-                                else if(genome_CharBac1!='C' && genome_CharBac2=='C')
-                                {
-                                        readCHH++;
-                                                                                if(onlyM == 1) read_Methyl_Info[r] = 'x';
-                                        non_met_CHG++;
-                                }
-                                }
-							else if (readString[k] != genome_Char) {
-								
-								read_Methyl_Info[r] = genome_Char;  //readString[k]; //genome_Char;
-							}
-							if(Methratio)
-							{
-								if(readString[k]=='C') ((ARGS *)arg)->Methy_List.NegG[pos+g-1]++;
-								else if(readString[k]=='T') ((ARGS *)arg)->Methy_List.NegA[pos+g-1]++;
-							}
-						}
-					}
-					cigr++;n=0;lens+=length;Glens+=length;RLens+=length;
-                                }else if(*cigr=='I')
-                                {
-                                        int i;temp[n]='\0';int length=atoi(temp);
-                                        for(i=0;i<length;i++)
-                                        {
-                                                if(static_cast<size_t>(i+RLens) >= read_Methyl_Info.size()) { CONTINUE = true; break; }
-                                                read_Methyl_Info[i+RLens] = 'I';
-                                        }
-                                        lens+=length;
-                                        RLens+=length;
-                                        cigr++;n=0;
-                                }else if(*cigr=='D')
-                                {
-                                        temp[n]='\0';unsigned int length=atoi(temp);
-                                        Glens+=length;
-                                        cigr++;n=0;
-                                }else
-				{
-					CONTINUE=true;
-					break;
-				}
-			}
-            if((hitType==3 || hitType==4) && printh == 1) {
-                onlyComp(headseq_rc, headseq);
-                //fprintf(fPH, "%s %d %s %d %s %s\n", Dummy, hitType, Chrom, pos, CIGr.c_str(), headseq_rc);
-                fprintf(fPH, "%s\t%d\t%s\t%d\t%s\t%s\n", Dummy, hitType, Chrom, pos, CIGr.c_str(), headseq_rc);
-            }
-			if(CONTINUE) continue;
+                        bool ok = update_meth_counts_for_read(readString, CIGr, pos, hitType,
+                                                             ((ARGS *)arg)->Genome_List,
+                                                             ((ARGS *)arg)->Genome_Offsets,
+                                                             Hash_Index, left_end,
+                                                             ((ARGS *)arg)->Methy_List,
+                                                             0,
+                                                             static_cast<size_t>(((ARGS *)arg)->Genome_Offsets[Hash_Index].Offset),
+                                                             0,
+                                                             static_cast<int>(((ARGS *)arg)->Genome_Offsets[Hash_Index].Offset),
+                                                             Methratio, onlyM, PHead, onlyPHead,
+                                                             &readC, &readmC, &readCG, &readmCG, &readCHG, &readmCHG, &readCHH, &readmCHH,
+                                                             Dummy, Chrom, fPH, &read_Methyl_Info,
+                                                             &rawReadBeforeBS, lens, Glens, RLens);
+                        if(!ok) continue;
 
             if(skipOverlap == 1) {
                 if (Flag & 0x1) {
