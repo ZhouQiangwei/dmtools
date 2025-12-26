@@ -970,9 +970,16 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
     uint32_t lastStart = 0;
     uint32_t lastEnd = 0;
     bool haveLast = false;
+    uint32_t currentTid = std::numeric_limits<uint32_t>::max();
+    bool chromHasBlock = false;
 
     for(const auto &task : ordered) {
         const uint32_t dmTid = chromOrder.at(task.chrom);
+        if(dmTid != currentTid) {
+            currentTid = dmTid;
+            chromHasBlock = false;
+            haveLast = false;
+        }
         const BinPartLocator &loc = locators[task.index];
         if(loc.shard < 0 || loc.shard >= shardCount) {
             fprintf(stderr, "[bin] missing shard assignment for task %zu (%s:%" PRId64 "-%" PRId64 ")\n",
@@ -1063,12 +1070,24 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
                     ++writeCount;
                 }
                 if(writeCount > 0) {
-                    int response = bmAddIntervals(out, chromBuf.data(), startBuf.data(), endBuf.data(), valueBuf.data(),
+                    int response = 0;
+                    if(!chromHasBlock) {
+                        response = bmAddIntervals(out, chromBuf.data(), startBuf.data(), endBuf.data(), valueBuf.data(),
                                                   covBuf.data(), strandBuf.data(), contextBuf.data(), entryBuf.data(),
                                                   static_cast<uint32_t>(writeCount));
+                        if(response == 0) chromHasBlock = true;
+                    } else {
+                        response = bmAppendIntervals(out, startBuf.data(), endBuf.data(), valueBuf.data(),
+                                                     covBuf.data(), strandBuf.data(), contextBuf.data(), entryBuf.data(),
+                                                     static_cast<uint32_t>(writeCount));
+                    }
                     if(response != 0) {
-                        fprintf(stderr, "[bin] bmAddIntervals failed for %s (code %d) task=%zu shardTid=%u\n",
-                                task.chrom.c_str(), response, task.index, hdr.tid);
+                        const size_t sample = std::min(writeCount, static_cast<size_t>(5));
+                        for(size_t i = 0; i < sample; ++i) {
+                            fprintf(stderr, "[bin] interval[%zu]=%u-%u\n", i, startBuf[i], endBuf[i]);
+                        }
+                        fprintf(stderr, "[bin] bm%sIntervals failed for %s (code %d) task=%zu shardTid=%u\n",
+                                chromHasBlock ? "Append" : "Add", task.chrom.c_str(), response, task.index, hdr.tid);
                         bmClose(out);
                         for(auto fh : shardReaders) if(fh) fclose(fh);
                         fai_destroy(fai);
