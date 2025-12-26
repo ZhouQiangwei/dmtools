@@ -850,6 +850,11 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
         chroms[i] = strdup(name);
         lens[i] = static_cast<uint32_t>(faidx_seq_len(fai, name));
     }
+    std::unordered_map<std::string, uint32_t> nameToFaiTid;
+    nameToFaiTid.reserve(static_cast<size_t>(nseq) * 2);
+    for(int i = 0; i < nseq; ++i) {
+        nameToFaiTid[chroms[i]] = static_cast<uint32_t>(i);
+    }
 
     binaMethFile_t *out = (binaMethFile_t*)bmOpen((char*)dmPath.c_str(), NULL, "w");
     if(!out) {
@@ -913,6 +918,16 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
     std::vector<char*> entryBuf(MAX_LINE_PRINT, NULL);
 
     for(const auto &task : ordered) {
+        auto faiIt = nameToFaiTid.find(task.chrom);
+        if(faiIt == nameToFaiTid.end()) {
+            fprintf(stderr, "[bin] chrom %s not found in genome index\n", task.chrom.c_str());
+            for(auto fh : shardReaders) if(fh) fclose(fh);
+            bmClose(out);
+            fai_destroy(fai);
+            freeChromBuffers();
+            return 1;
+        }
+        const uint32_t fastaTid = faiIt->second;
         const BinPartLocator &loc = locators[task.index];
         if(loc.shard < 0 || loc.shard >= shardCount) {
             fprintf(stderr, "[bin] missing shard assignment for task %zu (%s:%" PRId64 "-%" PRId64 ")\n",
@@ -941,7 +956,7 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
             freeChromBuffers();
             return 1;
         }
-        if(hdr.nRecords != loc.nRecords || hdr.start != loc.start || hdr.end != loc.end || hdr.tid != loc.tid) {
+        if(hdr.nRecords != loc.nRecords || hdr.start != loc.start || hdr.end != loc.end) {
             fprintf(stderr, "[bin] shard metadata mismatch for task %zu (shard %d)\n", task.index, loc.shard);
             bmClose(out);
             for(auto fh : shardReaders) if(fh) fclose(fh);
@@ -967,7 +982,7 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
                 size_t chunk = std::min(static_cast<size_t>(MAX_LINE_PRINT), recs.size() - offset);
                 for(size_t i = 0; i < chunk; ++i) {
                     const BinPartRecord &r = recs[offset + i];
-                    chromBuf[i] = chroms[hdr.tid];
+                    chromBuf[i] = chroms[fastaTid];
                     startBuf[i] = r.pos;
                     endBuf[i] = r.end;
                     valueBuf[i] = r.value;
@@ -979,7 +994,7 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
                                               covBuf.data(), strandBuf.data(), contextBuf.data(), entryBuf.data(),
                                               static_cast<uint32_t>(chunk));
                 if(response != 0) {
-                    fprintf(stderr, "[bin] bmAddIntervals failed for %s (code %d)\n", chroms[hdr.tid], response);
+                    fprintf(stderr, "[bin] bmAddIntervals failed for %s (code %d)\n", chroms[fastaTid], response);
                     fclose(in);
                     bmClose(out);
                     fai_destroy(fai);

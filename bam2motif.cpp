@@ -2158,9 +2158,13 @@ void *Process_read(void *arg)
 
     if(((ARGS *)arg)->bedFILE == NULL || strcmp(((ARGS *)arg)->processChr, "NAN-mm") != 0 ) break;
   }
-	free(s2t);
-	fclose(fIS);
-    free(fPH);
+    if(iter) hts_itr_destroy(iter);
+    if(idx) hts_idx_destroy(idx);
+    bam_destroy1(b);
+    if(s2t) free(s2t);
+    if(fIS) fclose(fIS);
+    if(fPH) fclose(fPH);
+    return nullptr;
 }
 
 void Print_Mismatch_Quality(FILE* OUTFILE_MM, int L) {
