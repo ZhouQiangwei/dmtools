@@ -1051,7 +1051,7 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
                     if(s >= chrLen) continue;
                     if(e > chrLen) e = chrLen;
                     if(e <= s) continue;
-                    if(debugMode || validateOutput) {
+                    if(debugMode) {
                         if(haveLast) {
                             if(dmTid < lastTid || (dmTid == lastTid && s < lastEnd)) {
                                 fprintf(stderr,
