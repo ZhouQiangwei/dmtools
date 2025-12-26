@@ -889,19 +889,18 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
         lens[i] = static_cast<uint32_t>(faidx_seq_len(fai, name));
     }
 
+    if(bmInit(1<<17) != 0) {
+        fprintf(stderr, "[bin] received an error in bmInit\n");
+        fai_destroy(fai);
+        freeChromBuffers();
+        return 1;
+    }
     binaMethFile_t *out = (binaMethFile_t*)bmOpen((char*)dmPath.c_str(), NULL, "w");
     if(!out) {
         fprintf(stderr, "[bin] failed to open output dm %s\n", dmPath.c_str());
         for(int i = 0; i < nseq; ++i) if(chroms[i]) free(chroms[i]);
         free(chroms); free(lens);
         fai_destroy(fai);
-        return 1;
-    }
-    if(bmInit(1<<17) != 0) {
-        fprintf(stderr, "[bin] received an error in bmInit\n");
-        bmClose(out);
-        fai_destroy(fai);
-        freeChromBuffers();
         return 1;
     }
     out->type = write_type;
