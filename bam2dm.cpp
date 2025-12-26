@@ -8,6 +8,7 @@
 #include "limits.h"
 #include <map>
 #include <algorithm>
+#include <limits>
 #include <stdarg.h>
 #include <time.h>
 #include <sys/time.h>
@@ -747,7 +748,9 @@ static int runBinTasksToParts(const std::string &bamPath, const std::vector<BinT
                     recordMap.emplace(posU, rec);
                 } else {
                     it->second.value += 1.0f;
-                    it->second.coverage += 1;
+                    if(it->second.coverage < std::numeric_limits<uint16_t>::max()) {
+                        it->second.coverage += 1;
+                    }
                 }
             }
             hts_itr_destroy(iter);
@@ -761,6 +764,20 @@ static int runBinTasksToParts(const std::string &bamPath, const std::vector<BinT
                 if(a.pos == b.pos) return a.end < b.end;
                 return a.pos < b.pos;
             });
+
+            size_t writeIndex = 0;
+            for(size_t i = 0; i < records.size(); ++i) {
+                if(writeIndex == 0 || records[i].pos != records[writeIndex - 1].pos) {
+                    records[writeIndex++] = records[i];
+                } else {
+                    uint32_t cov = static_cast<uint32_t>(records[writeIndex - 1].coverage) +
+                                   static_cast<uint32_t>(records[i].coverage);
+                    records[writeIndex - 1].coverage = static_cast<uint16_t>(
+                        std::min<uint32_t>(cov, std::numeric_limits<uint16_t>::max()));
+                    records[writeIndex - 1].value += records[i].value;
+                }
+            }
+            records.resize(writeIndex);
 
             BinPartLocator loc{};
             loc.shard = workerId;
@@ -1052,8 +1069,8 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
                     if(response != 0) {
                         fprintf(stderr, "[bin] bmAddIntervals failed for %s (code %d) task=%zu shardTid=%u\n",
                                 task.chrom.c_str(), response, task.index, hdr.tid);
-                        fclose(in);
                         bmClose(out);
+                        for(auto fh : shardReaders) if(fh) fclose(fh);
                         fai_destroy(fai);
                         freeChromBuffers();
                         return 1;
@@ -1570,7 +1587,19 @@ int main(int argc, char* argv[])
             return rc;
         }
         std::string bamPath = argv[InFileStart];
-        std::string partDir = Prefix + ".parts";
+        std::string partDir;
+        if(debugMode) {
+            partDir = Prefix + ".parts";
+        } else {
+            char tempDirTemplate[] = "/tmp/dmtools_bam2dm_XXXXXX";
+            char *created = mkdtemp(tempDirTemplate);
+            if(created) {
+                partDir = created;
+            } else {
+                fprintf(stderr, "[bin] mkdtemp failed, using %s.parts: %s\n", Prefix.c_str(), strerror(errno));
+                partDir = Prefix + ".parts";
+            }
+        }
         std::string dmOutPath = Prefix;
         if(debugMode) fprintf(stderr, "[bin] dm output path: %s\n", dmOutPath.c_str());
         std::vector<BinPartLocator> locators;
