@@ -1430,8 +1430,8 @@ int main(int argc, char* argv[])
             fprintf(stderr, "--chunk-by bin currently requires BAM input via -b/--binput\n");
             return 1;
         }
-        if(!Methratio) {
-            fprintf(stderr, "[bin] --chunk-by bin requires methratio output (-m)\n");
+        if(Prefix.empty() || Prefix == "None") {
+            fprintf(stderr, "[bin] --chunk-by bin requires an output dm path via -o <out.dm>\n");
             return 1;
         }
         if(InFileStart == 0 || InFileEnd < InFileStart) {
@@ -1467,10 +1467,12 @@ int main(int argc, char* argv[])
         }
         std::string bamPath = argv[InFileStart];
         std::string partDir = Prefix + ".parts";
+        std::string dmOutPath = Prefix;
+        if(debugMode) fprintf(stderr, "[bin] dm output path: %s\n", dmOutPath.c_str());
         std::vector<BinPartLocator> locators;
         rc = runBinTasksToParts(bamPath, tasks, NTHREADS, partDir, debugMode, locators);
         if(rc == 0) {
-            rc = mergeBinPartsToDm(Geno, tasks, locators, std::max(1, NTHREADS), partDir, methOutfileName, zoomlevel, debugMode, validateOutput);
+            rc = mergeBinPartsToDm(Geno, tasks, locators, std::max(1, NTHREADS), partDir, dmOutPath, zoomlevel, debugMode, validateOutput);
         }
         for(int t = 0; t < std::max(1, NTHREADS); ++t) {
             char partPath[PATH_MAX];
