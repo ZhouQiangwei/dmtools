@@ -277,6 +277,36 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
                              const std::vector<BinPartLocator> &locators, int shardCount,
                              const std::string &partDir, const std::string &dmPath, int zoomlevel,
                              bool debugMode, uint32_t write_type);
+static bool parseBinSize(const char *arg, int &out) {
+    if(!arg || !*arg) return false;
+    char *end = nullptr;
+    long value = strtol(arg, &end, 10);
+    if(end == arg || value <= 0) return false;
+    long multiplier = 1;
+    if(*end != '\0') {
+        if(end[1] != '\0') return false;
+        switch(*end) {
+            case 'k':
+            case 'K':
+                multiplier = 1000;
+                break;
+            case 'm':
+            case 'M':
+                multiplier = 1000 * 1000;
+                break;
+            case 'g':
+            case 'G':
+                multiplier = 1000 * 1000 * 1000L;
+                break;
+            default:
+                return false;
+        }
+    }
+    long result = value * multiplier;
+    if(result <= 0 || result > INT_MAX) return false;
+    out = static_cast<int>(result);
+    return true;
+}
 
 unsigned Total_Reads_all;
 uint64_t Total_Reads=0, Total_mapped = 0, forward_mapped = 0, reverse_mapped = 0;
@@ -1310,7 +1340,7 @@ int main(int argc, char* argv[])
         "\t--Id                  print ID\n"
         "\t--zl                  The maximum number of zoom levels. [1-10], default: 2\n"
         "\t--chunk-by <chrom|bin>  process by chromosome (default) or fixed-size bins\n"
-        "\t--bin-size <INT>      bin size in bases when using --chunk-by bin (default: 2000)\n"
+        "\t--bin-size <INT>      bin size in bases when using --chunk-by bin (default: 200000)\n"
         "\t--debug               verbose logging of parsed options and progress\n"
         "\t--check <dm>          validate an existing dm file and exit\n"
         "\t--validate-output     validate dm after writing (structural check)\n"
@@ -1365,7 +1395,7 @@ int main(int argc, char* argv[])
     std::string checkDmFile;
     bool debugMode = false;
     std::string chunkBy = "chrom";
-    int binSize = 2000;
+    int binSize = 200000;
 
 	for(int i=1;i<argc;i++)
 	{
@@ -1422,12 +1452,12 @@ int main(int argc, char* argv[])
         else if(!strcmp(argv[i], "--bin-size"))
         {
             if(i + 1 >= argc) {
-                fprintf(stderr, "--bin-size requires an integer\n");
+                fprintf(stderr, "--bin-size requires an integer or a size suffix (e.g., 200k, 1m)\n");
                 return 1;
             }
-            binSize = atoi(argv[++i]);
-            if(binSize <= 0) {
-                fprintf(stderr, "--bin-size must be positive\n");
+            const char *arg = argv[++i];
+            if(!parseBinSize(arg, binSize)) {
+                fprintf(stderr, "--bin-size invalid value: %s\n", arg);
                 return 1;
             }
         }
