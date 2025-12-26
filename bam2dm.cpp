@@ -276,7 +276,7 @@ static int runBinTasksToParts(const std::string &bamPath, const std::vector<BinT
 static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<BinTask> &tasks,
                              const std::vector<BinPartLocator> &locators, int shardCount,
                              const std::string &partDir, const std::string &dmPath, int zoomlevel,
-                             bool debugMode, bool validateOutput, uint32_t write_type);
+                             bool debugMode, uint32_t write_type);
 
 unsigned Total_Reads_all;
 uint64_t Total_Reads=0, Total_mapped = 0, forward_mapped = 0, reverse_mapped = 0;
@@ -843,7 +843,7 @@ static int runBinTasksToParts(const std::string &bamPath, const std::vector<BinT
 static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<BinTask> &tasks,
                              const std::vector<BinPartLocator> &locators, int shardCount,
                              const std::string &partDir, const std::string &dmPath, int zoomlevel,
-                             bool debugMode, bool validateOutput, uint32_t write_type) {
+                             bool debugMode, uint32_t write_type) {
     bool chromsTransferred = false;
 
     if(tasks.empty()) {
@@ -1119,9 +1119,6 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
     freeChromBuffers();
     fai_destroy(fai);
 
-    if(validateOutput) {
-        return validateDmFile(dmPath, debugMode);
-    }
     return 0;
 }
 
@@ -1163,6 +1160,10 @@ static int validateDmFile(const std::string &dmPath, bool verbose) {
         return 1;
     }
     const uint64_t fileSize = static_cast<uint64_t>(st.st_size);
+    if(fileSize < 256) {
+        fprintf(stderr, "[dmcheck] file too small to be valid dm: %s (size=%" PRIu64 ")\n", dmPath.c_str(), fileSize);
+        return 1;
+    }
     binaMethFile_t *fp = bmOpen((char*)dmPath.c_str(), NULL, "r");
     if(!fp || !fp->hdr) {
         fprintf(stderr, "[dmcheck] unable to open %s as dm\n", dmPath.c_str());
@@ -1638,8 +1639,13 @@ int main(int argc, char* argv[])
         std::vector<BinPartLocator> locators;
         rc = runBinTasksToParts(bamPath, tasks, NTHREADS, partDir, debugMode, write_type, locators);
         if(rc == 0) {
+            fprintf(stderr, "[bin] workers done, start merge\n");
             rc = mergeBinPartsToDm(Geno, tasks, locators, std::max(1, NTHREADS), partDir, dmOutPath, zoomlevel, debugMode,
-                                   validateOutput, write_type);
+                                   write_type);
+            fprintf(stderr, "[bin] merge done rc=%d\n", rc);
+            if(rc != 0) {
+                fprintf(stderr, "[bin] merge failed, skip validate\n");
+            }
         }
         for(int t = 0; t < std::max(1, NTHREADS); ++t) {
             char partPath[PATH_MAX];
@@ -1658,6 +1664,11 @@ int main(int argc, char* argv[])
             }
         }
         if(binBedGenerated && !binTempBed.empty()) unlink(binTempBed.c_str());
+        if(rc == 0 && validateOutput) {
+            fprintf(stderr, "[bin] start validate\n");
+            rc = validateDmFile(dmOutPath, debugMode);
+            fprintf(stderr, "[bin] validate done rc=%d\n", rc);
+        }
         return rc;
     }
 
