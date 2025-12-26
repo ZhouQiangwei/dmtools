@@ -725,11 +725,17 @@ static int runBinTasksToParts(const std::string &bamPath, const std::vector<BinT
 
             std::vector<BinPartRecord> records;
             while(sam_itr_next(bam, iter, b) >= 0) {
+                if(b->core.flag & BAM_FUNMAP) continue;
                 const int64_t pos = b->core.pos;
+                if(pos < 0) continue;
                 if(pos < task.start || pos >= task.end) continue;
                 BinPartRecord rec{};
                 rec.pos = static_cast<uint32_t>(pos);
                 rec.end = rec.pos + 1;
+                if(rec.end > static_cast<uint64_t>(task.end)) {
+                    rec.end = static_cast<uint32_t>(task.end);
+                }
+                if(rec.end <= rec.pos) continue;
                 rec.value = 1.0f;
                 rec.coverage = 1;
                 rec.strand = (b->core.flag & BAM_FREVERSE) ? 1 : 0;
@@ -930,6 +936,10 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
     std::vector<uint8_t> strandBuf(MAX_LINE_PRINT, 0);
     std::vector<uint8_t> contextBuf(MAX_LINE_PRINT, 0);
     std::vector<char*> entryBuf(MAX_LINE_PRINT, NULL);
+    uint32_t lastTid = 0;
+    uint32_t lastStart = 0;
+    uint32_t lastEnd = 0;
+    bool haveLast = false;
 
     for(const auto &task : ordered) {
         const uint32_t dmTid = chromOrder.at(task.chrom);
@@ -995,6 +1005,24 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
                     if(s >= chrLen) continue;
                     if(e > chrLen) e = chrLen;
                     if(e <= s) continue;
+                    if(debugMode || validateOutput) {
+                        if(haveLast) {
+                            if(dmTid < lastTid || (dmTid == lastTid && s < lastStart)) {
+                                fprintf(stderr,
+                                        "[bin] OUT_OF_ORDER interval task=%zu chrom=%s start=%u end=%u prevTid=%u prevStart=%u prevEnd=%u\n",
+                                        task.index, task.chrom.c_str(), s, e, lastTid, lastStart, lastEnd);
+                                bmClose(out);
+                                for(auto fh : shardReaders) if(fh) fclose(fh);
+                                fai_destroy(fai);
+                                freeChromBuffers();
+                                return 1;
+                            }
+                        }
+                        lastTid = dmTid;
+                        lastStart = s;
+                        lastEnd = e;
+                        haveLast = true;
+                    }
                     chromBuf[writeCount] = chromName;
                     startBuf[writeCount] = s;
                     endBuf[writeCount] = e;
