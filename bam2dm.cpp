@@ -271,11 +271,12 @@ static int materializeBinTasksToBed(const std::string &genomePath, const std::st
 static int loadBinTasksFromBed(const std::string &bedPath, std::vector<BinTask> &tasks, bool debugMode);
 static int validateDmFile(const std::string &dmPath, bool verbose);
 static int runBinTasksToParts(const std::string &bamPath, const std::vector<BinTask> &tasks, int threads,
-                              const std::string &partDir, bool debugMode, std::vector<BinPartLocator> &locators);
+                              const std::string &partDir, bool debugMode, uint32_t write_type,
+                              std::vector<BinPartLocator> &locators);
 static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<BinTask> &tasks,
                              const std::vector<BinPartLocator> &locators, int shardCount,
                              const std::string &partDir, const std::string &dmPath, int zoomlevel,
-                             bool debugMode, bool validateOutput);
+                             bool debugMode, bool validateOutput, uint32_t write_type);
 
 unsigned Total_Reads_all;
 uint64_t Total_Reads=0, Total_mapped = 0, forward_mapped = 0, reverse_mapped = 0;
@@ -620,7 +621,8 @@ static int loadBinTasksFromBed(const std::string &bedPath, std::vector<BinTask> 
 }
 
 static int runBinTasksToParts(const std::string &bamPath, const std::vector<BinTask> &tasks, int threads,
-                              const std::string &partDir, bool debugMode, std::vector<BinPartLocator> &locators) {
+                              const std::string &partDir, bool debugMode, uint32_t write_type,
+                              std::vector<BinPartLocator> &locators) {
     if(bamPath.empty()) {
         fprintf(stderr, "[bin] input BAM/SAM is required for --chunk-by bin mode\n");
         return 1;
@@ -744,7 +746,7 @@ static int runBinTasksToParts(const std::string &bamPath, const std::vector<BinT
                     rec.value = 1.0f;
                     rec.coverage = 1;
                     rec.strand = (b->core.flag & BAM_FREVERSE) ? 1 : 0;
-                    rec.context = 0;
+                    rec.context = (write_type & BM_CONTEXT) ? 1 : 0;
                     recordMap.emplace(posU, rec);
                 } else {
                     it->second.value += 1.0f;
@@ -841,7 +843,7 @@ static int runBinTasksToParts(const std::string &bamPath, const std::vector<BinT
 static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<BinTask> &tasks,
                              const std::vector<BinPartLocator> &locators, int shardCount,
                              const std::string &partDir, const std::string &dmPath, int zoomlevel,
-                             bool debugMode, bool validateOutput) {
+                             bool debugMode, bool validateOutput, uint32_t write_type) {
     bool chromsTransferred = false;
 
     if(tasks.empty()) {
@@ -895,6 +897,7 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
         fai_destroy(fai);
         return 1;
     }
+    out->type = write_type;
     if(bmCreateHdr(out, zoomlevel)) {
         fprintf(stderr, "[bin] failed to create dm header for %s\n", dmPath.c_str());
         bmClose(out);
@@ -1071,14 +1074,19 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
                 }
                 if(writeCount > 0) {
                     int response = 0;
+                    uint32_t *endPtr = (write_type & BM_END) ? endBuf.data() : nullptr;
+                    uint16_t *covPtr = (write_type & BM_COVER) ? covBuf.data() : nullptr;
+                    uint8_t *strandPtr = (write_type & BM_STRAND) ? strandBuf.data() : nullptr;
+                    uint8_t *contextPtr = (write_type & BM_CONTEXT) ? contextBuf.data() : nullptr;
+                    char **entryPtr = (write_type & BM_ID) ? entryBuf.data() : nullptr;
                     if(!chromHasBlock) {
-                        response = bmAddIntervals(out, chromBuf.data(), startBuf.data(), endBuf.data(), valueBuf.data(),
-                                                  covBuf.data(), strandBuf.data(), contextBuf.data(), entryBuf.data(),
+                        response = bmAddIntervals(out, chromBuf.data(), startBuf.data(), endPtr, valueBuf.data(),
+                                                  covPtr, strandPtr, contextPtr, entryPtr,
                                                   static_cast<uint32_t>(writeCount));
                         if(response == 0) chromHasBlock = true;
                     } else {
-                        response = bmAppendIntervals(out, startBuf.data(), endBuf.data(), valueBuf.data(),
-                                                     covBuf.data(), strandBuf.data(), contextBuf.data(), entryBuf.data(),
+                        response = bmAppendIntervals(out, startBuf.data(), endPtr, valueBuf.data(),
+                                                     covPtr, strandPtr, contextPtr, entryPtr,
                                                      static_cast<uint32_t>(writeCount));
                     }
                     if(response != 0) {
@@ -1622,9 +1630,10 @@ int main(int argc, char* argv[])
         std::string dmOutPath = Prefix;
         if(debugMode) fprintf(stderr, "[bin] dm output path: %s\n", dmOutPath.c_str());
         std::vector<BinPartLocator> locators;
-        rc = runBinTasksToParts(bamPath, tasks, NTHREADS, partDir, debugMode, locators);
+        rc = runBinTasksToParts(bamPath, tasks, NTHREADS, partDir, debugMode, write_type, locators);
         if(rc == 0) {
-            rc = mergeBinPartsToDm(Geno, tasks, locators, std::max(1, NTHREADS), partDir, dmOutPath, zoomlevel, debugMode, validateOutput);
+            rc = mergeBinPartsToDm(Geno, tasks, locators, std::max(1, NTHREADS), partDir, dmOutPath, zoomlevel, debugMode,
+                                   validateOutput, write_type);
         }
         for(int t = 0; t < std::max(1, NTHREADS); ++t) {
             char partPath[PATH_MAX];
