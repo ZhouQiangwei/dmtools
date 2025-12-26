@@ -347,6 +347,7 @@ long longestChr = 0;
 string processingchr = "NULL";
 string newchr = "NULL";
 int printtxt=0;
+bool writeInsertSize=false;
 int Mcoverage=4;
 int maxcoverage=1000;
 int binspan=50000;
@@ -1333,6 +1334,7 @@ int main(int argc, char* argv[])
         "\t--mrtxt               print prefix.methratio.txt file\n"
         "\t--cf                  context filter for print results, C, CG, CHG, CHH, default: C\n"
         "\t--pe_overlap          skip paired end overlap region, 0 or 1, default 1\n"
+        "\t--insert-size         write prefix.insert_size.1M.txt (default: off)\n"
         "\t-p|--threads          [int] threads (default: 1)\n"
         "\t--NoMe                data type for NoMe-seq\n"
         "\t [DM format] paramaters\n"
@@ -1471,6 +1473,8 @@ int main(int argc, char* argv[])
         }
         else if(!strcmp(argv[i],"--pe_overlap")){
             skipOverlap = atoi(argv[++i]);
+        }else if(!strcmp(argv[i],"--insert-size")){
+            writeInsertSize = true;
         }else if(!strcmp(argv[i],"--ph")){
             PHead = 1;
             hsPrefix=argv[++i];
@@ -3157,9 +3161,12 @@ int processbamread(const bam_hdr_t *header, const bam1_t *b, char* Dummy,int &Fl
 void *Process_read(void *arg)
 {
 	//unsigned Total_Reads=0, Total_mapped = 0, forward_mapped = 0, reverse_mapped = 0;
-	string fileIS = Prefix + ".insert_size.1M.txt";
-	long process_vali = 0;
-	FILE* fIS = File_Open(fileIS.c_str(), "w");
+    string fileIS = Prefix + ".insert_size.1M.txt";
+    long process_vali = 0;
+    FILE* fIS = NULL;
+    if(writeInsertSize) {
+        fIS = File_Open(fileIS.c_str(), "w");
+    }
     FILE* fPH=File_Open(hsPrefix.c_str(),"w");
 	int processed_vali = 0;
 	int Progress=0;Number_of_Tags=INITIAL_PROGRESS_READS;
@@ -3342,7 +3349,7 @@ void *Process_read(void *arg)
 		if(strcmp(Chrom_P, "=") == 0) {
 			if(process_vali <= 1000000){
 				if(Insert_Size>=0 && Insert_Size<=2000){
-					fprintf(fIS, "%d\n", Insert_Size);
+                    if(fIS) fprintf(fIS, "%d\n", Insert_Size);
 					process_vali++;
 				}
 			}
@@ -3722,7 +3729,7 @@ void *Process_read(void *arg)
         if(idx) hts_idx_destroy(idx);
         bam_destroy1(b);
         if(s2t) free(s2t);
-        if(fIS) fclose(fIS);
+    if(fIS) fclose(fIS);
         if(fPH) fclose(fPH);
         return nullptr;
 }
