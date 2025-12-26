@@ -897,6 +897,13 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
         fai_destroy(fai);
         return 1;
     }
+    if(bmInit(1<<17) != 0) {
+        fprintf(stderr, "[bin] received an error in bmInit\n");
+        bmClose(out);
+        fai_destroy(fai);
+        freeChromBuffers();
+        return 1;
+    }
     out->type = write_type;
     if(bmCreateHdr(out, zoomlevel)) {
         fprintf(stderr, "[bin] failed to create dm header for %s\n", dmPath.c_str());

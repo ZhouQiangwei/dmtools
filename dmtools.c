@@ -1575,6 +1575,12 @@ int main(int argc, char *argv[]) {
         uint32_t type = BMtype(inbmfile, NULL);
         binaMethFile_t *ifp = NULL;
         ifp = bmOpen(inbmfile, NULL, "r");
+        if(!ifp || !ifp->hdr) {
+            fprintf(stderr, "An error occurred while opening dm file %s\n", inbmfile);
+            if(ifp) bmClose(ifp);
+            if(outfile) free(outfile);
+            return 1;
+        }
         ifp->type = ifp->hdr->version;
         FILE *outfp_bm = NULL;
         FILE *outfp_stats = NULL;
@@ -1745,6 +1751,12 @@ int main(int argc, char *argv[]) {
         uint32_t type = BMtype(inbmfile, NULL);
         binaMethFile_t *ifp = NULL;
         ifp = bmOpen(inbmfile, NULL, "r");
+        if(!ifp || !ifp->hdr) {
+            fprintf(stderr, "An error occurred while opening dm file %s\n", inbmfile);
+            if(ifp) bmClose(ifp);
+            free(inbmfile);
+            return 1;
+        }
         ifp->type = ifp->hdr->version;
         bmPrintHdr(ifp);
         //bmPrintIndexTree(ifp);
@@ -1772,6 +1784,13 @@ int main(int argc, char *argv[]) {
         uint32_t type = BMtype(inbmfile, NULL);
         binaMethFile_t *ifp = NULL;
         ifp = bmOpen(inbmfile, NULL, "r");
+        if(!ifp || !ifp->hdr) {
+            fprintf(stderr, "An error occurred while opening dm file %s\n", inbmfile);
+            if(ifp) bmClose(ifp);
+            if(outfile) free(outfile);
+            if(bsrmode) free(bsrmode);
+            return 1;
+        }
         ifp->type = ifp->hdr->version;
         if(strcmp(mode, "ebsrate") == 0) {
             float bsrate = 0; int bscount = 0;
