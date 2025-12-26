@@ -2963,7 +2963,7 @@ void *Process_read(void *arg)
     struct timespec outtime;
 	bam1_t *b = bam_init1();
     hts_idx_t *idx = NULL;
-    hts_itr_t *iter;
+    hts_itr_t *iter = NULL;
     int left_end = -1;
     int readC = 0, readmC = 0, readCG = 0, readmCG = 0, readCHG = 0, readmCHG = 0, readCHH = 0, readmCHH = 0;
 
@@ -3078,12 +3078,12 @@ void *Process_read(void *arg)
 		}
 
                 readString=forReadString;
+                CIGr=CIG;
                 const size_t cigar_cap = estimateAlignedColumns(CIGr);
                 const size_t read_buffer_cap = std::max(readString.size() + 1024, cigar_cap);
-                read_Methyl_Info.assign(read_buffer_cap, '\0');
-                rawReadBeforeBS.assign(read_buffer_cap, '\0');
-                int Read_Len=readString.length();
-                CIGr=CIG;
+                read_Methyl_Info.assign(read_buffer_cap + 1, '\0');
+                rawReadBeforeBS.assign(read_buffer_cap + 1, '\0');
+                int Read_Len=(int)readString.length();
 		//for(;forReadString[Read_Len]!=0 && forReadString[Read_Len]!='\n' && forReadString[Read_Len]!='\r';Read_Len++);
 	    	iter = String_Hash.find(processingchr.c_str());
 		H = -1;
@@ -3495,9 +3495,13 @@ void *Process_read(void *arg)
         if(gDebugMode) {
                 maybeLogFilterStats();
         }
-        free(s2t);
-	fclose(fIS);
-    fclose(fPH);
+        if(iter) hts_itr_destroy(iter);
+        if(idx) hts_idx_destroy(idx);
+        bam_destroy1(b);
+        if(s2t) free(s2t);
+        if(fIS) fclose(fIS);
+        if(fPH) fclose(fPH);
+        return nullptr;
 }
 
 void Print_Mismatch_Quality(FILE* OUTFILE_MM, int L) {

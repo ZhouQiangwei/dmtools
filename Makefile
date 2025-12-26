@@ -30,6 +30,7 @@ else
     CXXSTD ?= -std=gnu++0x
 endif
 CXXFLAGS += $(CXXSTD)
+ASAN_FLAGS = -fsanitize=address -fno-omit-frame-pointer -O1 -g
 #-fopenmp
 #-Wall
 ## changed: = instaed of ?= above 4 lines
@@ -164,6 +165,12 @@ htslib/libhts.a:
 
 bam2dm: libBinaMeth.a htslib/libhts.a
 	$(CXX) $(CXXFLAGS) -no-pie $(BAM2DM_SRC) -o bam2dm -m64 -I. libBinaMeth.a -Wl,-rpath $(RPATH) htslib/libhts.a $(LDFLAGS_SUB)
+
+bam2dm-asan: CXXFLAGS += $(ASAN_FLAGS)
+bam2dm-asan: CFLAGS += $(ASAN_FLAGS)
+bam2dm-asan: LDFLAGS_SUB += -fsanitize=address
+bam2dm-asan: clean libBinaMeth.a htslib/libhts.a
+	$(CXX) $(CXXFLAGS) -no-pie $(BAM2DM_SRC) -o bam2dm-asan -m64 -I. libBinaMeth.a -Wl,-rpath $(RPATH) htslib/libhts.a $(LDFLAGS_SUB)
 
 bam2motif: libBinaMeth.a htslib/libhts.a
 	$(CXX) $(CXXFLAGS) -no-pie bam2motif.cpp -o bam2motif -m64 -I. libBinaMeth.a -Wl,-rpath $(RPATH) htslib/libhts.a $(LDFLAGS_SUB)
