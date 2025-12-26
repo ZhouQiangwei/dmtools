@@ -1104,6 +1104,9 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
                     endBuf[writeCount] = e;
                     valueBuf[writeCount] = r.value;
                     covBuf[writeCount] = r.coverage;
+                    if(r.coverage > 0) {
+                        valueBuf[writeCount] = r.value / static_cast<float>(r.coverage);
+                    }
                     strandBuf[writeCount] = r.strand;
                     contextBuf[writeCount] = r.context;
                     ++writeCount;
