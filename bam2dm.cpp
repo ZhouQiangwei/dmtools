@@ -883,10 +883,29 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
         return 1;
     }
 
+    std::unordered_map<std::string, uint32_t> chromOrder;
+    chromOrder.reserve(static_cast<size_t>(nseq) * 2);
+    for(uint32_t i = 0; i < static_cast<uint32_t>(nseq); ++i) {
+        chromOrder[chroms[i]] = i;
+    }
+    for(const auto &task : tasks) {
+        if(chromOrder.find(task.chrom) == chromOrder.end()) {
+            fprintf(stderr, "[bin] chrom %s not present in genome index\n", task.chrom.c_str());
+            bmClose(out);
+            fai_destroy(fai);
+            freeChromBuffers();
+            return 1;
+        }
+    }
+
     std::vector<BinTask> ordered = tasks;
-    std::sort(ordered.begin(), ordered.end(), [](const BinTask &a, const BinTask &b) {
-        if(a.chrom == b.chrom) return a.start < b.start;
-        return a.chrom < b.chrom;
+    std::sort(ordered.begin(), ordered.end(), [&](const BinTask &a, const BinTask &b) {
+        uint32_t oa = chromOrder.at(a.chrom);
+        uint32_t ob = chromOrder.at(b.chrom);
+        if(oa != ob) return oa < ob;
+        if(a.start != b.start) return a.start < b.start;
+        if(a.end != b.end) return a.end < b.end;
+        return a.index < b.index;
     });
 
     std::vector<FILE*> shardReaders(shardCount, NULL);
@@ -913,6 +932,7 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
     std::vector<char*> entryBuf(MAX_LINE_PRINT, NULL);
 
     for(const auto &task : ordered) {
+        const uint32_t dmTid = chromOrder.at(task.chrom);
         const BinPartLocator &loc = locators[task.index];
         if(loc.shard < 0 || loc.shard >= shardCount) {
             fprintf(stderr, "[bin] missing shard assignment for task %zu (%s:%" PRId64 "-%" PRId64 ")\n",
@@ -941,7 +961,7 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
             freeChromBuffers();
             return 1;
         }
-        if(hdr.nRecords != loc.nRecords || hdr.start != loc.start || hdr.end != loc.end || hdr.tid != loc.tid) {
+        if(hdr.nRecords != loc.nRecords || hdr.start != loc.start || hdr.end != loc.end) {
             fprintf(stderr, "[bin] shard metadata mismatch for task %zu (shard %d)\n", task.index, loc.shard);
             bmClose(out);
             for(auto fh : shardReaders) if(fh) fclose(fh);
@@ -965,26 +985,38 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
             size_t offset = 0;
             while(offset < recs.size()) {
                 size_t chunk = std::min(static_cast<size_t>(MAX_LINE_PRINT), recs.size() - offset);
+                char* chromName = chroms[dmTid];
+                uint32_t chrLen = lens[dmTid];
+                size_t writeCount = 0;
                 for(size_t i = 0; i < chunk; ++i) {
                     const BinPartRecord &r = recs[offset + i];
-                    chromBuf[i] = chroms[hdr.tid];
-                    startBuf[i] = r.pos;
-                    endBuf[i] = r.end;
-                    valueBuf[i] = r.value;
-                    covBuf[i] = r.coverage;
-                    strandBuf[i] = r.strand;
-                    contextBuf[i] = r.context;
+                    uint32_t s = r.pos;
+                    uint32_t e = r.end;
+                    if(s >= chrLen) continue;
+                    if(e > chrLen) e = chrLen;
+                    if(e <= s) continue;
+                    chromBuf[writeCount] = chromName;
+                    startBuf[writeCount] = s;
+                    endBuf[writeCount] = e;
+                    valueBuf[writeCount] = r.value;
+                    covBuf[writeCount] = r.coverage;
+                    strandBuf[writeCount] = r.strand;
+                    contextBuf[writeCount] = r.context;
+                    ++writeCount;
                 }
-                int response = bmAddIntervals(out, chromBuf.data(), startBuf.data(), endBuf.data(), valueBuf.data(),
-                                              covBuf.data(), strandBuf.data(), contextBuf.data(), entryBuf.data(),
-                                              static_cast<uint32_t>(chunk));
-                if(response != 0) {
-                    fprintf(stderr, "[bin] bmAddIntervals failed for %s (code %d)\n", chroms[hdr.tid], response);
-                    fclose(in);
-                    bmClose(out);
-                    fai_destroy(fai);
-                    freeChromBuffers();
-                    return 1;
+                if(writeCount > 0) {
+                    int response = bmAddIntervals(out, chromBuf.data(), startBuf.data(), endBuf.data(), valueBuf.data(),
+                                                  covBuf.data(), strandBuf.data(), contextBuf.data(), entryBuf.data(),
+                                                  static_cast<uint32_t>(writeCount));
+                    if(response != 0) {
+                        fprintf(stderr, "[bin] bmAddIntervals failed for %s (code %d) task=%zu shardTid=%u\n",
+                                chromName, response, task.index, hdr.tid);
+                        fclose(in);
+                        bmClose(out);
+                        fai_destroy(fai);
+                        freeChromBuffers();
+                        return 1;
+                    }
                 }
                 offset += chunk;
             }
@@ -1430,8 +1462,8 @@ int main(int argc, char* argv[])
             fprintf(stderr, "--chunk-by bin currently requires BAM input via -b/--binput\n");
             return 1;
         }
-        if(!Methratio) {
-            fprintf(stderr, "[bin] --chunk-by bin requires methratio output (-m)\n");
+        if(Prefix.empty() || Prefix == "None") {
+            fprintf(stderr, "[bin] --chunk-by bin requires an output dm path via -o <out.dm>\n");
             return 1;
         }
         if(InFileStart == 0 || InFileEnd < InFileStart) {
@@ -1467,10 +1499,12 @@ int main(int argc, char* argv[])
         }
         std::string bamPath = argv[InFileStart];
         std::string partDir = Prefix + ".parts";
+        std::string dmOutPath = Prefix;
+        if(debugMode) fprintf(stderr, "[bin] dm output path: %s\n", dmOutPath.c_str());
         std::vector<BinPartLocator> locators;
         rc = runBinTasksToParts(bamPath, tasks, NTHREADS, partDir, debugMode, locators);
         if(rc == 0) {
-            rc = mergeBinPartsToDm(Geno, tasks, locators, std::max(1, NTHREADS), partDir, methOutfileName, zoomlevel, debugMode, validateOutput);
+            rc = mergeBinPartsToDm(Geno, tasks, locators, std::max(1, NTHREADS), partDir, dmOutPath, zoomlevel, debugMode, validateOutput);
         }
         for(int t = 0; t < std::max(1, NTHREADS); ++t) {
             char partPath[PATH_MAX];
@@ -2963,7 +2997,7 @@ void *Process_read(void *arg)
     struct timespec outtime;
 	bam1_t *b = bam_init1();
     hts_idx_t *idx = NULL;
-    hts_itr_t *iter;
+    hts_itr_t *iter = NULL;
     int left_end = -1;
     int readC = 0, readmC = 0, readCG = 0, readmCG = 0, readCHG = 0, readmCHG = 0, readCHH = 0, readmCHH = 0;
 
@@ -3078,12 +3112,12 @@ void *Process_read(void *arg)
 		}
 
                 readString=forReadString;
+                CIGr=CIG;
                 const size_t cigar_cap = estimateAlignedColumns(CIGr);
                 const size_t read_buffer_cap = std::max(readString.size() + 1024, cigar_cap);
-                read_Methyl_Info.assign(read_buffer_cap, '\0');
-                rawReadBeforeBS.assign(read_buffer_cap, '\0');
-                int Read_Len=readString.length();
-                CIGr=CIG;
+                read_Methyl_Info.assign(read_buffer_cap + 1, '\0');
+                rawReadBeforeBS.assign(read_buffer_cap + 1, '\0');
+                int Read_Len=(int)readString.length();
 		//for(;forReadString[Read_Len]!=0 && forReadString[Read_Len]!='\n' && forReadString[Read_Len]!='\r';Read_Len++);
 	    	iter = String_Hash.find(processingchr.c_str());
 		H = -1;
@@ -3495,9 +3529,13 @@ void *Process_read(void *arg)
         if(gDebugMode) {
                 maybeLogFilterStats();
         }
-        free(s2t);
-	fclose(fIS);
-    fclose(fPH);
+        if(iter) hts_itr_destroy(iter);
+        if(idx) hts_idx_destroy(idx);
+        bam_destroy1(b);
+        if(s2t) free(s2t);
+        if(fIS) fclose(fIS);
+        if(fPH) fclose(fPH);
+        return nullptr;
 }
 
 void Print_Mismatch_Quality(FILE* OUTFILE_MM, int L) {
