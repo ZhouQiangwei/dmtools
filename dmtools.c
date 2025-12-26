@@ -5688,7 +5688,7 @@ char* matchFiles(const char* pattern) {
         }
 
         // 为字符串分配空间
-        fileList = (char*)malloc(totalLength);
+        fileList = (char*)malloc(totalLength + 1);
         fileList[0] = '\0'; // 确保字符串以空字符开始
 
         // 构建逗号分隔的字符串

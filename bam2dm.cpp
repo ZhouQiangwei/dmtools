@@ -723,27 +723,40 @@ static int runBinTasksToParts(const std::string &bamPath, const std::vector<BinT
                 continue;
             }
 
-            std::vector<BinPartRecord> records;
+            std::unordered_map<uint32_t, BinPartRecord> recordMap;
+            recordMap.reserve(1024);
             while(sam_itr_next(bam, iter, b) >= 0) {
                 if(b->core.flag & BAM_FUNMAP) continue;
                 const int64_t pos = b->core.pos;
                 if(pos < 0) continue;
                 if(pos < task.start || pos >= task.end) continue;
-                BinPartRecord rec{};
-                rec.pos = static_cast<uint32_t>(pos);
-                rec.end = rec.pos + 1;
-                if(rec.end > static_cast<uint64_t>(task.end)) {
-                    rec.end = static_cast<uint32_t>(task.end);
+                uint32_t posU = static_cast<uint32_t>(pos);
+                auto it = recordMap.find(posU);
+                if(it == recordMap.end()) {
+                    BinPartRecord rec{};
+                    rec.pos = posU;
+                    rec.end = posU + 1;
+                    if(rec.end > static_cast<uint64_t>(task.end)) {
+                        rec.end = static_cast<uint32_t>(task.end);
+                    }
+                    if(rec.end <= rec.pos) continue;
+                    rec.value = 1.0f;
+                    rec.coverage = 1;
+                    rec.strand = (b->core.flag & BAM_FREVERSE) ? 1 : 0;
+                    rec.context = 0;
+                    recordMap.emplace(posU, rec);
+                } else {
+                    it->second.value += 1.0f;
+                    it->second.coverage += 1;
                 }
-                if(rec.end <= rec.pos) continue;
-                rec.value = 1.0f;
-                rec.coverage = 1;
-                rec.strand = (b->core.flag & BAM_FREVERSE) ? 1 : 0;
-                rec.context = 0;
-                records.push_back(rec);
             }
             hts_itr_destroy(iter);
 
+            std::vector<BinPartRecord> records;
+            records.reserve(recordMap.size());
+            for(const auto &kv : recordMap) {
+                records.push_back(kv.second);
+            }
             std::sort(records.begin(), records.end(), [](const BinPartRecord &a, const BinPartRecord &b) {
                 if(a.pos == b.pos) return a.end < b.end;
                 return a.pos < b.pos;
@@ -1007,7 +1020,7 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
                     if(e <= s) continue;
                     if(debugMode || validateOutput) {
                         if(haveLast) {
-                            if(dmTid < lastTid || (dmTid == lastTid && s < lastStart)) {
+                            if(dmTid < lastTid || (dmTid == lastTid && s < lastEnd)) {
                                 fprintf(stderr,
                                         "[bin] OUT_OF_ORDER interval task=%zu chrom=%s start=%u end=%u prevTid=%u prevStart=%u prevEnd=%u\n",
                                         task.index, task.chrom.c_str(), s, e, lastTid, lastStart, lastEnd);
