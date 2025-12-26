@@ -1618,6 +1618,8 @@ int main(int argc, char* argv[])
             processRegion);
 
     if(chunkBy == "bin") {
+        fprintf(stderr, "[bin] chunk-by bin is currently disabled: methylation calling is not consistent with chrom mode\n");
+        return 1;
         if(!bamformat) {
             fprintf(stderr, "--chunk-by bin currently requires BAM input via -b/--binput\n");
             return 1;
