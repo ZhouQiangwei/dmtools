@@ -1089,6 +1089,23 @@ static void logDirEntries(const std::string &dirPath) {
     closedir(dir);
 }
 
+static void cleanupBinPartDir(const std::string &dirPath) {
+    DIR *dir = opendir(dirPath.c_str());
+    if(!dir) {
+        fprintf(stderr, "[bin] opendir failed %s: %s\n", dirPath.c_str(), strerror(errno));
+        return;
+    }
+    struct dirent *entry = nullptr;
+    while((entry = readdir(dir)) != nullptr) {
+        if(strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
+        std::string entryPath = dirPath + "/" + entry->d_name;
+        if(unlink(entryPath.c_str()) != 0) {
+            fprintf(stderr, "[bin] unlink failed %s: %s\n", entryPath.c_str(), strerror(errno));
+        }
+    }
+    closedir(dir);
+}
+
 static int validateDmFile(const std::string &dmPath, bool verbose) {
     struct stat st{};
     if(stat(dmPath.c_str(), &st) != 0) {
@@ -1571,6 +1588,11 @@ int main(int argc, char* argv[])
         if(rmdir(partDir.c_str()) != 0) {
             fprintf(stderr, "[bin] rmdir failed %s: %s\n", partDir.c_str(), strerror(errno));
             logDirEntries(partDir);
+            cleanupBinPartDir(partDir);
+            if(rmdir(partDir.c_str()) != 0) {
+                fprintf(stderr, "[bin] rmdir retry failed %s: %s\n", partDir.c_str(), strerror(errno));
+                logDirEntries(partDir);
+            }
         }
         if(binBedGenerated && !binTempBed.empty()) unlink(binTempBed.c_str());
         return rc;
