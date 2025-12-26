@@ -743,9 +743,6 @@ int main(int argc, char *argv[]) {
                 write_type |= BM_END;
             }else if(strcmp(argv[i], "-m") == 0){
                 strcpy(methfile, argv[++i]);
-            }else if(strcmp(argv[i], "--outdm") == 0){
-                outbmfile = malloc(1000);
-                strcpy(outbmfile, argv[++i]);
             }else if(strcmp(argv[i], "--outformat") == 0){
                 strcpy(outformat, argv[++i]);
             }else if(strcmp(argv[i], "--printbed") == 0){
@@ -863,12 +860,12 @@ int main(int argc, char *argv[]) {
                 strandmeth = 1;
             }else if(strcmp(argv[i], "--pr") == 0){
                 printwarning = 1;
-            }else if(strcmp(argv[i], "-o") == 0 || strcmp(argv[i], "--out") == 0){
+            }else if(strcmp(argv[i], "-o") == 0 || strcmp(argv[i], "--out") == 0 || strcmp(argv[i], "--outdm") == 0){
                 if(strcmp(mode, "mr2dm") == 0){
                     if(!outbmfile){
                         outbmfile = malloc(1000);
-                        strcpy(outbmfile, argv[++i]);
                     }
+                    strcpy(outbmfile, argv[++i]);
                 }else{
                     outfile = malloc(sizeof(char)*1000);
                     strcpy(outfile, argv[++i]);
@@ -1195,8 +1192,12 @@ int main(int argc, char *argv[]) {
             fprintf(stderr, "please provide chrome size file with -g paramater\n");
             exit(0);
         }
+        if(!outbmfile || outbmfile[0]=='\0'){
+            fprintf(stderr, "[mr2dm] output dm is required, use -o <out.dm>\n");
+            exit(1);
+        }
         FILE *methF = File_Open(methfile, "r");
-        char *chrom = malloc(50); char *old_chrom = malloc(50);
+        char *chrom = malloc(256); char *old_chrom = malloc(256);
         old_chrom[0] = '\0';
         //int MAX_CHROM = 10000;
         char *PerLine = malloc(2000); 
@@ -1209,7 +1210,7 @@ int main(int argc, char *argv[]) {
                 if(PerLine[0] == '#') continue; // remove header #
                 //fprintf(stderr, "%s\n", PerLine);
                 if(strcmp(mrformat, "methratio") == 0 || strcmp(mrformat, "bedmethyl") == 0 || strcmp(mrformat, "bedsimple") == 0 || strcmp(mrformat, "bismark") == 0 || strcmp(mrformat, "simpleme") == 0 || strcmp(mrformat, "modkit_pileup") == 0){
-                    sscanf(PerLine, "%s", chrom);
+                    sscanf(PerLine, "%255s", chrom);
                 }else{
                     fprintf(stderr, "Unexpected mr file format!!!\n");
                     exit(0);
@@ -1225,10 +1226,18 @@ int main(int argc, char *argv[]) {
         fclose(methF);
         // open chrom size
         FILE* ChromF=File_Open(chromlenf,"r");
-        int chrlen = 0, printL = 0, i = 0, inmr = 0, printedchr = 0;
+        unsigned int chrlen = 0; int printL = 0, i = 0, inmr = 0, printedchr = 0;
         while(fgets(PerLine,2000,ChromF)!=NULL){
             if(PerLine[0] == '#') continue;
-            sscanf(PerLine, "%s%d", chrom, &chrlen);
+            int parsed = sscanf(PerLine, "%255s%u", chrom, &chrlen);
+            if(parsed != 2){
+                if(PerLine[0] == '>'){
+                    fprintf(stderr, "[mr2dm] -g expects a .fai/.len chrom-size file, but got FASTA header. Please run: samtools faidx genome.fa and use genome.fa.fai\n");
+                }else{
+                    fprintf(stderr, "[mr2dm] invalid chromosome size line (expected <chrom> <len>): %s", PerLine);
+                }
+                exit(1);
+            }
             //chrLens[printL]=chrlen;
             //chroms[printL++] = strdup(chrom);
             inmr = 0;
@@ -1256,7 +1265,7 @@ int main(int argc, char *argv[]) {
 
         fp = bmOpen(outbmfile, NULL, "w");
         if(!fp) {
-            fprintf(stderr, "An error occurred while opening example_output.dm for writingn\n");
+            fprintf(stderr, "An error occurred while opening %s for writing\n", outbmfile);
             return 1;
         }
         fp->type = write_type;
@@ -1294,7 +1303,7 @@ int main(int argc, char *argv[]) {
             if(PerLine[0] == '#') continue; // remove header #
             //fprintf(stderr, "%s\n", PerLine);
             if(strcmp(mrformat, "methratio") == 0){
-                sscanf(PerLine, "%s%u%s%s%u%u", chrom, &start, strand, context, &coverC, &coverage);
+                sscanf(PerLine, "%255s%u%1s%9s%u%u", chrom, &start, strand, context, &coverC, &coverage);
                 //fprintf(stderr, "%f\n", ((double) coverC/ coverage));
                 //sprintf(decide, "%.5f", ((double) coverC/ coverage) );
                 //value = atof(decide);
@@ -1304,32 +1313,32 @@ int main(int argc, char *argv[]) {
                 //bedmethyl2bm
                 //chrom start end name score strand thickStart thickEnd itemRgb reads_coverage percent
                 //chr11   61452   61453   .       14      +       61452   61453   0,255,0 14      0
-                sscanf(PerLine, "%s%u%u%s%*s%s%*s%*s%*s%u%f", chrom, &start, &end, nameid, strand, &coverage, &value);
+                sscanf(PerLine, "%255s%u%u%99s%*s%1s%*s%*s%*s%u%f", chrom, &start, &end, nameid, strand, &coverage, &value);
                 value = value/100;
                 coverC = (int)(value*coverage+0.5);
                 // cause start from 0
                 start++; end++;
             }else if(strcmp(mrformat, "bedsimple") == 0){
                 //chrom start end id strand context meth_reads coverage
-                sscanf(PerLine, "%s%u%u%s%s%s%u%u", chrom, &start, &end, nameid, strand, context, &coverC, &coverage);
+                sscanf(PerLine, "%255s%u%u%99s%1s%9s%u%u", chrom, &start, &end, nameid, strand, context, &coverC, &coverage);
                 if(precison == 1)
                     sprintf(decide, "%.2f", ((double) coverC/ coverage) );
                 else sprintf(decide, "%.4f", ((double) coverC/ coverage) );
                 value = atof(decide);
             }else if(strcmp(mrformat, "bismark") == 0){
                 //<chromosome> <position> <strand> <count methylated> <count unmethylated> <C-context> <trinucleotide context>
-                sscanf(PerLine, "%s%u%s%u%u%s", chrom, &start, strand, &coverC, &coverT, context);
+                sscanf(PerLine, "%255s%u%1s%u%u%9s", chrom, &start, strand, &coverC, &coverT, context);
                 coverage = coverC + coverT;
                 value = ((double) coverC/ coverage);
             }else if(strcmp(mrformat, "simpleme") == 0){
                 //chrom start value coverage strand context
                 //chr1  10471   0.833333    6   +   CG
-                int result = sscanf(PerLine, "%s\t%u\t%f\t%u\t%s\t%s", chrom, &start, &value, &coverage, strand, context);
+                int result = sscanf(PerLine, "%255s\t%u\t%f\t%u\t%1s\t%9s", chrom, &start, &value, &coverage, strand, context);
             }else if(strcmp(mrformat, "modkit_pileup") == 0){
                 //chrom start end name score strand thickStart thickEnd itemRgb N_valid_cov fraction_modified N_mod N_canonical N_other_mod N_delete N_fail N_diff N_nocall
                 unsigned int start0 = 0, end0 = 0;
                 char namebuf[100];
-                int parsed = sscanf(PerLine, "%s\t%u\t%u\t%99s\t%*s\t%s\t%*s\t%*s\t%*s\t%u\t%*f\t%u", chrom, &start0, &end0, namebuf, strand, &coverage, &coverC);
+                int parsed = sscanf(PerLine, "%255s\t%u\t%u\t%99s\t%*s\t%1s\t%*s\t%*s\t%*s\t%u\t%*f\t%u", chrom, &start0, &end0, namebuf, strand, &coverage, &coverC);
                 if(parsed != 7) continue;
                 char *mod_code = strtok(namebuf, ",");
                 char *motif_part = strtok(NULL, ",");
