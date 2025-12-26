@@ -89,9 +89,89 @@ int dm_sc_matrix_main(int argc, char **argv);
 int dm_sc_aggregate_main(int argc, char **argv);
 int dm_validate_main(int argc, char **argv);
 
+static uint32_t hashChromName(const char *name) {
+    uint32_t hash = 2166136261u;
+    for(const unsigned char *p = (const unsigned char *)name; *p; ++p) {
+        hash ^= *p;
+        hash *= 16777619u;
+    }
+    return hash;
+}
+
+static char* sanitizeChromName(const char *name) {
+    const size_t maxLen = 120;
+    char buffer[256];
+    size_t out = 0;
+    char prev = '\0';
+    for(const unsigned char *p = (const unsigned char *)name; *p && out < maxLen; ++p) {
+        char c = (char)*p;
+        bool ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-';
+        char next = ok ? c : '_';
+        if(next == '_' && (prev == '_' || out == 0)) {
+            prev = next;
+            continue;
+        }
+        buffer[out++] = next;
+        prev = next;
+    }
+    while(out > 0 && buffer[out - 1] == '_') {
+        out--;
+    }
+    if(out == 0) {
+        buffer[out++] = 'c';
+    }
+    buffer[out] = '\0';
+    uint32_t hash = hashChromName(name);
+    char *result = (char*)malloc(out + 1 + 9 + 1);
+    if(!result) return NULL;
+    snprintf(result, out + 1 + 9 + 1, "%s.%08x", buffer, hash);
+    return result;
+}
+
+static char* buildCsvFromListFile(const char *path) {
+    FILE *fp = fopen(path, "r");
+    if(!fp) {
+        fprintf(stderr, "Failed to open input list %s: %s\n", path, strerror(errno));
+        return NULL;
+    }
+    size_t cap = 1024;
+    size_t len = 0;
+    char *buf = (char*)malloc(cap);
+    if(!buf) {
+        fclose(fp);
+        return NULL;
+    }
+    buf[0] = '\0';
+    char line[PATH_MAX];
+    while(fgets(line, sizeof(line), fp)) {
+        size_t lineLen = strcspn(line, "\r\n");
+        line[lineLen] = '\0';
+        if(lineLen == 0) continue;
+        if(len + lineLen + 2 > cap) {
+            cap = (cap + lineLen + 2) * 2;
+            char *next = (char*)realloc(buf, cap);
+            if(!next) {
+                free(buf);
+                fclose(fp);
+                return NULL;
+            }
+            buf = next;
+        }
+        if(len > 0) {
+            buf[len++] = ',';
+        }
+        memcpy(buf + len, line, lineLen);
+        len += lineLen;
+        buf[len] = '\0';
+    }
+    fclose(fp);
+    return buf;
+}
+
 struct ARGS{
     char* runCMD;
     char** prcessChr;
+    char** outBasename;
     char* outfile;
     int ThreadID;
     int sizeifp;
@@ -376,6 +456,7 @@ const char* Help_String_merge="Command Format :  dmtools merge [opnions] -i meth
         "\nUsage:\n"
         "\t [merge] mode paramaters, required\n"
         "\t-i                    input DM files\n"
+        "\t--input-list          file with one input DM path per line\n"
         "\t [merge] mode paramaters, options\n"
         "\t-o                    output file\n"
 //        "\t--strand              [0/1/2] strand for show, 0 represent '+' positive strand, 1 '-' negative strand, 2 '.' all information\n"
@@ -604,9 +685,12 @@ int main(int argc, char *argv[]) {
     uint32_t write_type = 0x8000;
     char methfile[100]; char *outbmfile = NULL;
     char *inbmfile = malloc(10000);
+    inbmfile[0] = '\0';
     char *bmfile2 = malloc(1000);
     char mode[10]; char *region = NULL;
     char *inbmfiles = malloc(10000);
+    inbmfiles[0] = '\0';
+    char *inputList = NULL;
     int inbm_mul = 0;
     char *method = malloc(100);
     strcpy(method, "weighted");
@@ -753,6 +837,8 @@ int main(int argc, char *argv[]) {
                 printbed=1;
             }else if(strcmp(argv[i], "-i") == 0){
                 strcpy(inbmfile, argv[++i]);
+            }else if(strcmp(argv[i], "--input-list") == 0){
+                inputList = argv[++i];
             }else if(strcmp(argv[i], "--minC") == 0){
                 minC= atoi(argv[++i]);
             }else if(strcmp(argv[i], "--CF") == 0){
@@ -1071,28 +1157,47 @@ int main(int argc, char *argv[]) {
             rewind(iFPtr);
             fprintf(stderr, "[ dmtools ] %d chrom\n", Nchrom);
             char **chroms = malloc(sizeof(char*)*Nchrom);
+            char **partNames = malloc(sizeof(char*)*Nchrom);
             for(i=0; i<Nchrom; i++){
                 chroms[i] = malloc(sizeof(char)*200);
+                partNames[i] = NULL;
             }
             Nchrom = 0;
+            char mapPath[PATH_MAX];
+            snprintf(mapPath, sizeof(mapPath), "%s.parts.map.tsv", outfile);
+            FILE *mapFp = fopen(mapPath, "w");
+            if(!mapFp) {
+                fprintf(stderr, "Failed to open %s: %s\n", mapPath, strerror(errno));
+                exit(1);
+            }
+            char listPath[PATH_MAX];
+            snprintf(listPath, sizeof(listPath), "%s.chrom_parts.list", outfile);
+            FILE *listFp = fopen(listPath, "w");
+            if(!listFp) {
+                fprintf(stderr, "Failed to open %s: %s\n", listPath, strerror(errno));
+                fclose(mapFp);
+                exit(1);
+            }
             while(fgets(readBuffer, BUFSIZE, iFPtr)) {
                 if(readBuffer[0] == '>') {
                     token = strtok(readBuffer + 1, seps);
                     strcpy(chroms[Nchrom++], token);
-                    // input dm files
-                    if(Nchrom==1) {
-                        strcat(mergecmd, outfile);
-                        strcat(mergecmd, ".");
-                        strcat(mergecmd, token);
+                    char partBuf[32];
+                    snprintf(partBuf, sizeof(partBuf), "part%06d", Nchrom - 1);
+                    partNames[Nchrom-1] = strdup(partBuf);
+                    if(!partNames[Nchrom-1]) {
+                        fprintf(stderr, "Failed to allocate part name for %s\n", token);
+                        fclose(mapFp);
+                        fclose(listFp);
+                        exit(1);
                     }
-                    else{
-                        strcat(mergecmd, ",");
-                        strcat(mergecmd, outfile);
-                        strcat(mergecmd, ".");
-                        strcat(mergecmd, token);
-                    }
+                    fprintf(mapFp, "%s\t%s\t%s\n", partBuf, token, chromlenf);
+                    fprintf(listFp, "%s.%s\n", outfile, partBuf);
                 }
             }
+            fclose(mapFp);
+            fclose(listFp);
+            sprintf(mergecmd, "%s/dmtools merge --pr --outformat dm -o %s --input-list %s", abspathtmp, outfile, listPath);
             char* runcmd = malloc(sizeof(char)*1000);
             int j = 0, k = 0; int perThread = floor(((double)Nchrom)/NTHREAD); int Nchrs = 0;
             if(perThread<=0) perThread = 1;
@@ -1103,8 +1208,10 @@ int main(int argc, char *argv[]) {
                 args.runCMD = malloc(sizeof(char)*1000);
                 args.outfile = outfile;
                 args.prcessChr = malloc(sizeof(char*)*Nchrom);
+                args.outBasename = malloc(sizeof(char*)*Nchrom);
                 for (k = 0; k < perThread+lastp; k++) {
                     args.prcessChr[k] = malloc(200 * sizeof(char));
+                    args.outBasename[k] = malloc(256 * sizeof(char));
                 }
                 args.ThreadID=i;
                 args.Nthreads = NTHREAD;
@@ -1125,6 +1232,20 @@ int main(int argc, char *argv[]) {
                         strcpy(args.prcessChr[sizeifp++], chroms[Nchrs++]);
                     }
                 }
+                for(j=0; j<sizeifp; j++){
+                    int idx = 0;
+                    for(idx=0; idx<Nchrom; idx++){
+                        if(strcmp(chroms[idx], args.prcessChr[j]) == 0) {
+                            strncpy(args.outBasename[j], partNames[idx], 255);
+                            args.outBasename[j][255] = '\0';
+                            break;
+                        }
+                    }
+                    if(idx == Nchrom) {
+                        strncpy(args.outBasename[j], args.prcessChr[j], 255);
+                        args.outBasename[j][255] = '\0';
+                    }
+                }
 
                 //fprintf(stderr, "sss--=-= %s %d\n", args.prcessChr[0], sizeifp);
                 args.sizeifp = sizeifp;
@@ -1139,10 +1260,12 @@ int main(int argc, char *argv[]) {
                 pthread_join(Thread_Info[i].Thread,NULL);
                 // 释放内存
                 free(Thread_Info[i].Arg.runCMD);
-                for(j=0;j<perThread;j++){
+                for(j=0;j<Thread_Info[i].Arg.sizeifp;j++){
                     free(Thread_Info[i].Arg.prcessChr[j]);
+                    free(Thread_Info[i].Arg.outBasename[j]);
                 }
                 free(Thread_Info[i].Arg.prcessChr);
+                free(Thread_Info[i].Arg.outBasename);
             }
             free(Thread_Info);
             int mergeStatus = 0;
@@ -1155,7 +1278,7 @@ int main(int argc, char *argv[]) {
             if(!skipMerge && mergeStatus == 0){
                 for(j=0;j<Nchrom;j++){
                     char rmPath[1024];
-                    snprintf(rmPath, sizeof(rmPath), "%s.%s", outfile, chroms[j]);
+                    snprintf(rmPath, sizeof(rmPath), "%s.%s", outfile, partNames[j] ? partNames[j] : chroms[j]);
                     if(remove(rmPath) != 0){
                         fprintf(stderr, "[dmtools] warning: failed to remove %s (%s)\n", rmPath, strerror(errno));
                     }
@@ -1163,6 +1286,12 @@ int main(int argc, char *argv[]) {
             } else if(mergeStatus != 0) {
                 fprintf(stderr, "[dmtools] merge failed (status %d); temporary chromosome files retained\n", mergeStatus);
             }
+            for(j=0; j<Nchrom; j++){
+                free(chroms[j]);
+                if(partNames[j]) free(partNames[j]);
+            }
+            free(chroms);
+            free(partNames);
             free(mergecmd);
         }else{
             struct ARGS args;
@@ -1575,6 +1704,12 @@ int main(int argc, char *argv[]) {
         uint32_t type = BMtype(inbmfile, NULL);
         binaMethFile_t *ifp = NULL;
         ifp = bmOpen(inbmfile, NULL, "r");
+        if(!ifp || !ifp->hdr) {
+            fprintf(stderr, "An error occurred while opening dm file %s\n", inbmfile);
+            if(ifp) bmClose(ifp);
+            if(outfile) free(outfile);
+            return 1;
+        }
         ifp->type = ifp->hdr->version;
         FILE *outfp_bm = NULL;
         FILE *outfp_stats = NULL;
@@ -1723,6 +1858,20 @@ int main(int argc, char *argv[]) {
         }
 
         if(!region && !bedfile){
+            if(inputList){
+                if(inbmfile[0] != '\0'){
+                    fprintf(stderr, "[dmtools merge] provide either -i or --input-list, not both\n");
+                    return 1;
+                }
+                char *csv = buildCsvFromListFile(inputList);
+                if(!csv){
+                    fprintf(stderr, "[dmtools merge] failed to read input list %s\n", inputList);
+                    return 1;
+                }
+                strncpy(inbmfile, csv, 9999);
+                inbmfile[9999] = '\0';
+                free(csv);
+            }
             bm_merge_all_mul(inbmfile, outfile, filter_strand, m_method, zoomlevel, outformat);
         //}else if(region){
         //    bm_merge_region_mul(inbmfiles, region, filter_strand);
@@ -1745,6 +1894,12 @@ int main(int argc, char *argv[]) {
         uint32_t type = BMtype(inbmfile, NULL);
         binaMethFile_t *ifp = NULL;
         ifp = bmOpen(inbmfile, NULL, "r");
+        if(!ifp || !ifp->hdr) {
+            fprintf(stderr, "An error occurred while opening dm file %s\n", inbmfile);
+            if(ifp) bmClose(ifp);
+            free(inbmfile);
+            return 1;
+        }
         ifp->type = ifp->hdr->version;
         bmPrintHdr(ifp);
         //bmPrintIndexTree(ifp);
@@ -1772,6 +1927,13 @@ int main(int argc, char *argv[]) {
         uint32_t type = BMtype(inbmfile, NULL);
         binaMethFile_t *ifp = NULL;
         ifp = bmOpen(inbmfile, NULL, "r");
+        if(!ifp || !ifp->hdr) {
+            fprintf(stderr, "An error occurred while opening dm file %s\n", inbmfile);
+            if(ifp) bmClose(ifp);
+            if(outfile) free(outfile);
+            if(bsrmode) free(bsrmode);
+            return 1;
+        }
         ifp->type = ifp->hdr->version;
         if(strcmp(mode, "ebsrate") == 0) {
             float bsrate = 0; int bscount = 0;
@@ -5642,7 +5804,7 @@ void *multithread_cmd(void *arg){
     if(((struct ARGS*)arg)->Nthreads > 1) {
         for(((struct ARGS*)arg)->i = 0; ((struct ARGS*)arg)->i < ((struct ARGS*)arg)->sizeifp; ((struct ARGS*)arg)->i++){
             char cmd[1000] = {0};
-            sprintf(cmd, "%s %s -m %s.%s", ((struct ARGS*)arg)->runCMD, ((struct ARGS*)arg)->prcessChr[((struct ARGS*)arg)->i], ((struct ARGS*)arg)->outfile, ((struct ARGS*)arg)->prcessChr[((struct ARGS*)arg)->i]);
+            sprintf(cmd, "%s %s -m %s.%s", ((struct ARGS*)arg)->runCMD, ((struct ARGS*)arg)->prcessChr[((struct ARGS*)arg)->i], ((struct ARGS*)arg)->outfile, ((struct ARGS*)arg)->outBasename[((struct ARGS*)arg)->i]);
             fprintf(stderr, "[ dmtools ] %s %d, %d\n", cmd, ((struct ARGS*)arg)->ThreadID, ((struct ARGS*)arg)->sizeifp);
             onlyexecuteCMD(cmd, Help_String_bam2dm);
         }
@@ -5688,7 +5850,7 @@ char* matchFiles(const char* pattern) {
         }
 
         // 为字符串分配空间
-        fileList = (char*)malloc(totalLength);
+        fileList = (char*)malloc(totalLength + 1);
         fileList[0] = '\0'; // 确保字符串以空字符开始
 
         // 构建逗号分隔的字符串
