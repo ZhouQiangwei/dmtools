@@ -27,9 +27,11 @@
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>
+#include <stdint.h>
 #include <errno.h>
 #include <sys/wait.h>
 #include <pthread.h>
+#include <curl/curl.h>
 
 #include <glob.h>
 char* matchFiles(const char* pattern);
@@ -64,6 +66,8 @@ void delete_char2(char* str,char target,char target2);
 void calbody_print(binaMethFile_t *fp, char* chrom, int start, int end, int splitN, char* method, int pstrand, int format, char* geneid, uint8_t context, char* bodycase, char* strand, FILE* outfileF);
 void calregion_print(binaMethFile_t *fp, char* chrom, int start, int end, int splitN, char* method, int pstrand, int format, char* geneid, uint8_t context, char* strand, FILE* outfileF);
 void calregion_weighted_print(binaMethFile_t *fp, char* chrom, int start, int end, int splitN, char* method, int pstrand, int format, char* geneid, uint8_t context, char* bodycase, char* strand, FILE* outfileF_c, FILE* outfileF_cg, FILE* outfileF_chg, FILE* outfileF_chh, uint32_t *countC, uint32_t *countCT);
+uint32_t BMtype(char *fname, CURLcode (*callBack) (CURL*));
+void calchh(binaMethFile_t *bm, FILE* outfileF, int bsmode);
 int main_view_file(binaMethFile_t *ifp, char *bedfile, FILE* outfileF, char *outformat, binaMethFile_t *ofp);
 void bmfileinit(binaMethFile_t *ofp, binaMethFile_t *ifp, char* outfile, int zoomlevel);
 void bmPrintHdr(binaMethFile_t *bm);
@@ -1171,7 +1175,7 @@ int main(int argc, char *argv[]) {
             multithread_cmd(&args);
         }
 
-        return;
+        return 0;
     }else if(strcmp(mode, "dmDMR") == 0){
         fprintf(stderr, "differential DNA methylation analysis with dm format\n");
         //exe location
@@ -1184,7 +1188,7 @@ int main(int argc, char *argv[]) {
         strcat(cmd, bam2bm_paras);
         //这里可以加多线程，根据染色体，修改bam2dm输入--chrom chrN，每个线程处理一条染色体，最后合并输出结果。
         onlyexecuteCMD(cmd, Help_String_dmDMR);
-        return;
+        return 0;
     }
     else if(strcmp(mode, "mr2dm") == 0){
         fprintf(stderr, "mr file format %s\n", mrformat);
@@ -2372,7 +2376,7 @@ typedef struct {
     char* printbuffer_chh;
 } ProfileARGS;
 
-void profile_print_array(void *arg){
+void* profile_print_array(void *arg){
     int stored_buffer = 0;
     char* chrom = ((ProfileARGS*)arg)->chrom;
     int start = ((ProfileARGS*)arg)->start;
@@ -2435,7 +2439,7 @@ void profile_print_array(void *arg){
         }
     }
     
-    if(valid == 0) return;
+    if(valid == 0) return NULL;
     stored_buffer++;
     int total_splitN = total_splitN_flank*2+total_splitN_body;
     char* print_context = malloc(sizeof(char)*5);
@@ -2571,10 +2575,10 @@ void profile_print_array(void *arg){
     //fprintf(stderr, "%s %d\n", printbuffer, strlen(printbuffer));
     free(print_context);
     free(storetemp);
-    return;
+    return NULL;
 }
 
-void profile_print_array_mp(void *arg){
+void* profile_print_array_mp(void *arg){
     int stored_buffer = 0;
     char* chrom = ((ProfileARGS*)arg)->chrom;
     //int start = ((ProfileARGS*)arg)->start;
@@ -2609,7 +2613,7 @@ void profile_print_array_mp(void *arg){
         }
     }
 
-    if(valid == 0) return;
+    if(valid == 0) return NULL;
     stored_buffer++;
     char* print_context = malloc(sizeof(char)*5);
     char* storetemp = malloc(sizeof(char)*100);
@@ -2746,6 +2750,7 @@ void profile_print_array_mp(void *arg){
     //fprintf(stderr, "%s %d\n", printbuffer, strlen(printbuffer));
     free(print_context);
     free(storetemp);
+    return NULL;
 }
 
 uint32_t stored_buffer = 0;
@@ -3810,13 +3815,15 @@ int calregionstats(char *inbmfile, char *method, char *region, uint8_t pstrand, 
     int splitN = 1, Tsize = 4;
     char *strandstr = malloc(100*sizeof(char)); //int strand = 2;
     uint8_t my_pstrand = 2;
-    uint16_t *countC = malloc(sizeof(uint16_t)*splitN*Tsize);
-    uint16_t *countCT = malloc(sizeof(uint16_t)*splitN*Tsize);
+    uint32_t *countC = malloc(sizeof(uint32_t)*splitN*Tsize);
+    uint32_t *countCT = malloc(sizeof(uint32_t)*splitN*Tsize);
     for(i=0;i<slen; i++){
         chrom = strtok(regions[i], ",:-");
         start = atoi(strtok(NULL,",:-"));
         end = atoi(strtok(NULL,",:-")); // + 1;
         strandstr = strtok(NULL,",:-");
+        memset(countC, 0, sizeof(uint32_t)*splitN*Tsize);
+        memset(countCT, 0, sizeof(uint32_t)*splitN*Tsize);
         if(strandstr) {
             if(strandstr[0] == '+'){
                 my_pstrand = 0;
@@ -5338,7 +5345,7 @@ error:
 FILE* File_Open(const char* File_Name,const char* Mode)
 {
 	FILE *Handle;
-    Handle = fopen64(File_Name,Mode);
+    Handle = fopen(File_Name,Mode);
 	if (Handle==NULL)
 	{
 		fprintf(stderr, "File %s Cannot be opened ....",File_Name);
