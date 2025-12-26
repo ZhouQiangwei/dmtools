@@ -1157,14 +1157,14 @@ int main(int argc, char *argv[]) {
             rewind(iFPtr);
             fprintf(stderr, "[ dmtools ] %d chrom\n", Nchrom);
             char **chroms = malloc(sizeof(char*)*Nchrom);
-            char **chromsSafe = malloc(sizeof(char*)*Nchrom);
+            char **partNames = malloc(sizeof(char*)*Nchrom);
             for(i=0; i<Nchrom; i++){
                 chroms[i] = malloc(sizeof(char)*200);
-                chromsSafe[i] = NULL;
+                partNames[i] = NULL;
             }
             Nchrom = 0;
             char mapPath[PATH_MAX];
-            snprintf(mapPath, sizeof(mapPath), "%s.chrom_filename_map.tsv", outfile);
+            snprintf(mapPath, sizeof(mapPath), "%s.parts.map.tsv", outfile);
             FILE *mapFp = fopen(mapPath, "w");
             if(!mapFp) {
                 fprintf(stderr, "Failed to open %s: %s\n", mapPath, strerror(errno));
@@ -1182,15 +1182,17 @@ int main(int argc, char *argv[]) {
                 if(readBuffer[0] == '>') {
                     token = strtok(readBuffer + 1, seps);
                     strcpy(chroms[Nchrom++], token);
-                    chromsSafe[Nchrom-1] = sanitizeChromName(token);
-                    if(!chromsSafe[Nchrom-1]) {
-                        fprintf(stderr, "Failed to allocate sanitized name for %s\n", token);
+                    char partBuf[32];
+                    snprintf(partBuf, sizeof(partBuf), "part%06d", Nchrom - 1);
+                    partNames[Nchrom-1] = strdup(partBuf);
+                    if(!partNames[Nchrom-1]) {
+                        fprintf(stderr, "Failed to allocate part name for %s\n", token);
                         fclose(mapFp);
                         fclose(listFp);
                         exit(1);
                     }
-                    fprintf(mapFp, "%s\t%s.%s\n", token, outfile, chromsSafe[Nchrom-1]);
-                    fprintf(listFp, "%s.%s\n", outfile, chromsSafe[Nchrom-1]);
+                    fprintf(mapFp, "%s\t%s\t%s\n", partBuf, token, chromlenf);
+                    fprintf(listFp, "%s.%s\n", outfile, partBuf);
                 }
             }
             fclose(mapFp);
@@ -1234,7 +1236,7 @@ int main(int argc, char *argv[]) {
                     int idx = 0;
                     for(idx=0; idx<Nchrom; idx++){
                         if(strcmp(chroms[idx], args.prcessChr[j]) == 0) {
-                            strncpy(args.outBasename[j], chromsSafe[idx], 255);
+                            strncpy(args.outBasename[j], partNames[idx], 255);
                             args.outBasename[j][255] = '\0';
                             break;
                         }
@@ -1276,7 +1278,7 @@ int main(int argc, char *argv[]) {
             if(!skipMerge && mergeStatus == 0){
                 for(j=0;j<Nchrom;j++){
                     char rmPath[1024];
-                    snprintf(rmPath, sizeof(rmPath), "%s.%s", outfile, chromsSafe[j] ? chromsSafe[j] : chroms[j]);
+                    snprintf(rmPath, sizeof(rmPath), "%s.%s", outfile, partNames[j] ? partNames[j] : chroms[j]);
                     if(remove(rmPath) != 0){
                         fprintf(stderr, "[dmtools] warning: failed to remove %s (%s)\n", rmPath, strerror(errno));
                     }
@@ -1286,10 +1288,10 @@ int main(int argc, char *argv[]) {
             }
             for(j=0; j<Nchrom; j++){
                 free(chroms[j]);
-                if(chromsSafe[j]) free(chromsSafe[j]);
+                if(partNames[j]) free(partNames[j]);
             }
             free(chroms);
-            free(chromsSafe);
+            free(partNames);
             free(mergecmd);
         }else{
             struct ARGS args;
