@@ -1080,7 +1080,7 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
                 }
                 if(writeCount > 0) {
                     int response = 0;
-                    uint32_t *endPtr = (write_type & BM_END) ? endBuf.data() : nullptr;
+                    uint32_t *endPtr = endBuf.data();
                     uint16_t *covPtr = (write_type & BM_COVER) ? covBuf.data() : nullptr;
                     uint8_t *strandPtr = (write_type & BM_STRAND) ? strandBuf.data() : nullptr;
                     uint8_t *contextPtr = (write_type & BM_CONTEXT) ? contextBuf.data() : nullptr;
