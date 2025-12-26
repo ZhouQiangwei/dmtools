@@ -1224,6 +1224,13 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
                              const std::string &partDir, const std::string &dmPath, int zoomlevel,
                              bool debugMode, bool validateOutput) {
     bool chromsTransferred = false;
+    uint64_t recordsTotal = 0;
+    uint64_t recordsWritten = 0;
+    uint64_t filteredChromMissing = 0;
+    uint64_t filteredStartOob = 0;
+    uint64_t filteredEndInvalid = 0;
+    uint64_t filteredOrder = 0;
+    uint64_t filteredOther = 0;
 
     if(tasks.empty()) {
         fprintf(stderr, "[bin] no tasks to merge\n");
@@ -1308,6 +1315,7 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
     for(const auto &task : tasks) {
         if(chromOrder.find(task.chrom) == chromOrder.end()) {
             fprintf(stderr, "[bin] chrom %s not present in genome index\n", task.chrom.c_str());
+            filteredChromMissing++;
             bmClose(out);
             fai_destroy(fai);
             freeChromBuffers();
@@ -1404,6 +1412,7 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
             std::vector<BinPartRecord> merged;
             merged.reserve(recs.size());
             for(const auto &r : recs) {
+                recordsTotal++;
                 if(!merged.empty() && merged.back().pos == r.pos) {
                     merged.back().plusM += r.plusM;
                     merged.back().plusU += r.plusU;
@@ -1442,16 +1451,31 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
                         return 1;
                     }
                     chromSeqCache.emplace(chromName, std::string(seq, readLen));
-                    chromSeqLens.emplace(chromName, readLen);
                     free(seq);
                     seqIt = chromSeqCache.find(chromName);
                 }
                 const std::string &refSeq = seqIt->second;
                 size_t writeCount = 0;
+                uint32_t lastPos = 0;
+                bool hasLastPos = false;
                 for(size_t i = 0; i < chunk; ++i) {
                     const BinPartRecord &r = merged[offset + i];
                     uint32_t s = r.pos;
-                    if(s >= chrLen) continue;
+                    if(hasLastPos && s < lastPos) {
+                        filteredOrder++;
+                        continue;
+                    }
+                    hasLastPos = true;
+                    lastPos = s;
+                    if(s >= chrLen) {
+                        filteredStartOob++;
+                        continue;
+                    }
+                    uint32_t e = s + 1;
+                    if(e <= s || e > chrLen) {
+                        filteredEndInvalid++;
+                        continue;
+                    }
                     char refBase = toupper(refSeq[s]);
                     uint32_t mc = 0;
                     uint32_t uc = 0;
@@ -1476,10 +1500,14 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
                         else if(c1 != 'C' && c2 == 'C') context = 2;
                         else if(c1 != 'C' && c2 != 'C') context = 3;
                     } else {
+                        filteredOther++;
                         continue;
                     }
                     uint32_t cov = mc + uc;
-                    if(cov == 0) continue;
+                    if(cov == 0) {
+                        filteredOther++;
+                        continue;
+                    }
                     float ratio = static_cast<float>(mc) / static_cast<float>(cov);
                     if(ratio < 0.0f) ratio = 0.0f;
                     if(ratio > 1.0f) ratio = 1.0f;
@@ -1492,14 +1520,29 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
                     strandBuf[writeCount] = strand;
                     contextBuf[writeCount] = context;
                     ++writeCount;
+                    recordsWritten++;
                 }
                 if(writeCount > 0) {
+                    uint32_t firstStart = startBuf[0];
+                    uint32_t firstEnd = endBuf[0];
+                    uint32_t lastStart = startBuf[writeCount - 1];
+                    uint32_t lastEnd = endBuf[writeCount - 1];
                     int response = bmAddIntervals(out, chromBuf.data(), startBuf.data(), endBuf.data(), valueBuf.data(),
                                                   covBuf.data(), strandBuf.data(), contextBuf.data(), entryBuf.data(),
                                                   static_cast<uint32_t>(writeCount));
                     if(response != 0) {
-                        fprintf(stderr, "[bin] bmAddIntervals failed for %s (code %d) task=%zu shardTid=%u\n",
-                                chromName, response, task.index, hdr.tid);
+                        bmWriteBuffer_t *wb = out->writeBuffer;
+                        fprintf(stderr,
+                                "[bin] bmAddIntervals failed for %s (code %d) task=%zu shardTid=%u "
+                                "record_idx=%zu..%zu first=%u-%u last=%u-%u bufSize=%" PRIu32
+                                " blockSize=%" PRIu32 " nBlocks=%" PRIu64 " wb.l=%" PRIu32 "\n",
+                                chromName, response, task.index, hdr.tid,
+                                offset, offset + writeCount - 1,
+                                firstStart, firstEnd, lastStart, lastEnd,
+                                out->hdr ? out->hdr->bufSize : 0,
+                                wb ? wb->blockSize : 0,
+                                wb ? wb->nBlocks : 0,
+                                wb ? wb->l : 0);
                         fclose(in);
                         bmClose(out);
                         fai_destroy(fai);
@@ -1516,6 +1559,20 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
     bmClose(out);
     freeChromBuffers();
     fai_destroy(fai);
+
+    uint64_t recordsFiltered = filteredChromMissing + filteredStartOob + filteredEndInvalid + filteredOrder + filteredOther;
+    if(debugMode || validateOutput) {
+        fprintf(stderr,
+                "[bin-merge] records_total=%" PRIu64 " records_written=%" PRIu64 " records_filtered=%" PRIu64
+                " (chrom_missing=%" PRIu64 " start_oob=%" PRIu64 " end_invalid=%" PRIu64
+                " out_of_order=%" PRIu64 " other=%" PRIu64 ")\n",
+                recordsTotal, recordsWritten, recordsFiltered,
+                filteredChromMissing, filteredStartOob, filteredEndInvalid,
+                filteredOrder, filteredOther);
+    } else {
+        fprintf(stderr, "[bin-merge] records_total=%" PRIu64 " records_written=%" PRIu64 "\n",
+                recordsTotal, recordsWritten);
+    }
 
     if(validateOutput) {
         return validateDmFile(dmPath, debugMode);
@@ -1677,6 +1734,9 @@ int main(int argc, char* argv[])
         "\t--zl                  The maximum number of zoom levels. [1-10], default: 2\n"
         "\t--chunk-by <chrom|bin>  process by chromosome (default) or fixed-size bins\n"
         "\t--bin-size <INT>      bin size in bases when using --chunk-by bin (default: 2000)\n"
+        "\t--write-bufsize <INT> set DM write buffer size (default: 32768)\n"
+        "\t--block-size <INT>    set DM index block size (default: 256)\n"
+        "\t--cleanup-parts       delete .parts temp files after bin merge (default: off)\n"
         "\t--debug               verbose logging of parsed options and progress\n"
         "\t--check <dm>          validate an existing dm file and exit\n"
         "\t--validate-output     validate dm after writing (structural check)\n"
@@ -1732,6 +1792,9 @@ int main(int argc, char* argv[])
     bool debugMode = false;
     std::string chunkBy = "chrom";
     int binSize = 2000;
+    uint32_t writeBufSize = 0;
+    uint32_t writeBlockSize = 0;
+    bool cleanupParts = false;
 
 	for(int i=1;i<argc;i++)
 	{
@@ -1796,6 +1859,34 @@ int main(int argc, char* argv[])
                 fprintf(stderr, "--bin-size must be positive\n");
                 return 1;
             }
+        }
+        else if(!strcmp(argv[i], "--write-bufsize"))
+        {
+            if(i + 1 >= argc) {
+                fprintf(stderr, "--write-bufsize requires an integer\n");
+                return 1;
+            }
+            writeBufSize = static_cast<uint32_t>(strtoul(argv[++i], nullptr, 10));
+            if(writeBufSize == 0) {
+                fprintf(stderr, "--write-bufsize must be positive\n");
+                return 1;
+            }
+        }
+        else if(!strcmp(argv[i], "--block-size"))
+        {
+            if(i + 1 >= argc) {
+                fprintf(stderr, "--block-size requires an integer\n");
+                return 1;
+            }
+            writeBlockSize = static_cast<uint32_t>(strtoul(argv[++i], nullptr, 10));
+            if(writeBlockSize == 0) {
+                fprintf(stderr, "--block-size must be positive\n");
+                return 1;
+            }
+        }
+        else if(!strcmp(argv[i], "--cleanup-parts"))
+        {
+            cleanupParts = true;
         }
         else if(!strcmp(argv[i],"--cf")){
             contextfilter = argv[++i];
@@ -1934,6 +2025,12 @@ int main(int argc, char* argv[])
         fprintf(stderr, "[dmcheck] --validate-output requires --methratio output path\n");
         return 1;
     }
+    if(writeBufSize > 0) {
+        bmSetWriteBufSize(writeBufSize);
+    }
+    if(writeBlockSize > 0) {
+        bmSetWriteBlockSize(writeBlockSize);
+    }
 
     gDebugMode = debugMode;
     gDmRecordsWritten = 0;
@@ -1995,12 +2092,20 @@ int main(int argc, char* argv[])
         if(rc == 0) {
             rc = mergeBinPartsToDm(Geno, tasks, locators, std::max(1, NTHREADS), partDir, dmOutPath, zoomlevel, debugMode, validateOutput);
         }
-        for(int t = 0; t < std::max(1, NTHREADS); ++t) {
-            char partPath[PATH_MAX];
-            snprintf(partPath, sizeof(partPath), "%s/thread_%d.tmp", partDir.c_str(), t);
-            unlink(partPath);
+        if(cleanupParts) {
+            for(int t = 0; t < std::max(1, NTHREADS); ++t) {
+                char partPath[PATH_MAX];
+                snprintf(partPath, sizeof(partPath), "%s/thread_%d.tmp", partDir.c_str(), t);
+                if(unlink(partPath) != 0 && errno != ENOENT) {
+                    fprintf(stderr, "[bin] warning: failed to remove %s: %s\n", partPath, strerror(errno));
+                }
+            }
+            if(rmdir(partDir.c_str()) != 0 && errno != ENOENT) {
+                fprintf(stderr, "[bin] warning: failed to remove %s: %s\n", partDir.c_str(), strerror(errno));
+            }
+        } else if(debugMode) {
+            fprintf(stderr, "[bin] keeping part files under %s (use --cleanup-parts to delete)\n", partDir.c_str());
         }
-        rmdir(partDir.c_str());
         if(binBedGenerated && !binTempBed.empty()) unlink(binTempBed.c_str());
         return rc;
     }

@@ -178,16 +178,18 @@ const char* Help_String_scaggregate="Command Format :  dmtools sc-aggregate [opt
         "\t-h|--help";
 
 const char* Help_String_validate="Command Format :  dmtools validate -i <dm file> [--verbose]\n"
-        "\nUsage: dmtools validate -i input.dm [--verbose]\n"
+        "\nUsage: dmtools validate -i input.dm [--verbose] [--region chr:start-end]\n"
         "\t [validate] required\n"
         "\t-i|--input           input DM file to check\n"
         "\t [validate] options\n"
         "\t--verbose            print additional index block details\n"
+        "\t--region             region to query for records (default: chr1:1-1000000)\n"
         "\t-h|--help";
 
 int dm_validate_main(int argc, char **argv){
     char *input = NULL;
     int verbose = 0;
+    const char *region = NULL;
     for(int i = 1; i < argc; ++i){
         if(strcmp(argv[i], "-i") == 0 || strcmp(argv[i], "--input") == 0){
             if(i + 1 < argc){
@@ -198,6 +200,13 @@ int dm_validate_main(int argc, char **argv){
             }
         }else if(strcmp(argv[i], "--verbose") == 0){
             verbose = 1;
+        }else if(strcmp(argv[i], "--region") == 0){
+            if(i + 1 < argc){
+                region = argv[++i];
+            }else{
+                fprintf(stderr, "%s\n", Help_String_validate);
+                return 1;
+            }
         }else if(strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0){
             fprintf(stderr, "%s\n", Help_String_validate);
             return 0;
@@ -225,20 +234,69 @@ int dm_validate_main(int argc, char **argv){
         bmClose(fp);
         return 1;
     }
+    if(!(fp->hdr->version & BM_MAGIC)){
+        fprintf(stderr, "[dmtools validate] header version missing BM_MAGIC bit in %s\n", input);
+        bmClose(fp);
+        return 1;
+    }
 
-    uint32_t tid = 0;
+    const char *queryChrom = NULL;
     uint32_t start = 0;
-    uint32_t end = fp->cl->len[tid];
-    if(end > 100000) end = 100000;
-    bmOverlappingIntervals_t *hits = bmGetOverlappingIntervals(fp, fp->cl->chrom[tid], start, end);
+    uint32_t end = 0;
+    if(region){
+        const char *colon = strchr(region, ':');
+        const char *dash = colon ? strchr(colon + 1, '-') : NULL;
+        if(!colon || !dash){
+            fprintf(stderr, "[dmtools validate] invalid region format: %s\n", region);
+            bmClose(fp);
+            return 1;
+        }
+        size_t chromLen = (size_t)(colon - region);
+        char *chrom = (char*)calloc(chromLen + 1, 1);
+        if(!chrom){
+            fprintf(stderr, "[dmtools validate] out of memory parsing region\n");
+            bmClose(fp);
+            return 1;
+        }
+        memcpy(chrom, region, chromLen);
+        queryChrom = chrom;
+        start = (uint32_t)strtoul(colon + 1, NULL, 10);
+        end = (uint32_t)strtoul(dash + 1, NULL, 10);
+        if(start > 0) start -= 1;
+    }else{
+        uint32_t tid = 0;
+        for(uint32_t i = 0; i < fp->cl->nKeys; ++i){
+            if(strcmp(fp->cl->chrom[i], "chr1") == 0){
+                tid = i;
+                break;
+            }
+        }
+        queryChrom = fp->cl->chrom[tid];
+        end = fp->cl->len[tid];
+        if(end > 1000000) end = 1000000;
+    }
+    if(end <= start){
+        fprintf(stderr, "[dmtools validate] invalid region range: %u-%u\n", start, end);
+        if(region) free((void*)queryChrom);
+        bmClose(fp);
+        return 1;
+    }
+    bmOverlappingIntervals_t *hits = bmGetOverlappingIntervals(fp, queryChrom, start, end);
     if(!hits){
-        fprintf(stderr, "[dmtools validate] failed to read data from %s\n", input);
+        fprintf(stderr, "[dmtools validate] failed to read data from %s (region %s:%u-%u)\n",
+                input, queryChrom, start + 1, end);
+        if(region) free((void*)queryChrom);
         bmClose(fp);
         return 1;
     }
     if(hits->l == 0){
-        fprintf(stderr, "[dmtools validate] no records returned for %s\n", input);
+        fprintf(stderr, "[dmtools validate] no records returned for %s (region %s:%u-%u)\n",
+                input, queryChrom, start + 1, end);
         bmDestroyOverlappingIntervals(hits);
+        if(region) free((void*)queryChrom);
+        if(fp->idx->nItems > 0){
+            fprintf(stderr, "[dmtools validate] indexed records exist but query returned 0; write/index param or chrom mapping issue\n");
+        }
         bmClose(fp);
         return 1;
     }
@@ -248,6 +306,7 @@ int dm_validate_main(int argc, char **argv){
     }
 
     bmDestroyOverlappingIntervals(hits);
+    if(region) free((void*)queryChrom);
     bmClose(fp);
     fprintf(stderr, "[dmtools validate] OK: %s\n", input);
     return 0;
