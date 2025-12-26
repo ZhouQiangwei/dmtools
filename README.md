@@ -21,6 +21,13 @@ DM format stores methylation ratios with optional coverage, context, strand, and
 
 DMtools provides file format conversion, quick view, methylation level calculation, differential methylation analysis, and other DM-specific utilities.
 
+## Documentation
+
+- [Install](docs/install.md)
+- [Quickstart](docs/quickstart.md)
+- [FAQ](docs/faq.md)
+- [Changelog](CHANGELOG.md)
+
 For more information, please see https://dmtools-docs.rtfd.io
 
 And calmeth in batmeth2-dm can convert align bs bam file to dm file, https://dmtools-docs.readthedocs.io/en/latest/function/bam2dm.html
