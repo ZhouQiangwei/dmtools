@@ -980,9 +980,10 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
             size_t offset = 0;
             while(offset < recs.size()) {
                 size_t chunk = std::min(static_cast<size_t>(MAX_LINE_PRINT), recs.size() - offset);
+                char* chromName = chroms[fastaTid];
                 for(size_t i = 0; i < chunk; ++i) {
                     const BinPartRecord &r = recs[offset + i];
-                    chromBuf[i] = chroms[fastaTid];
+                    chromBuf[i] = chromName;
                     startBuf[i] = r.pos;
                     endBuf[i] = r.end;
                     valueBuf[i] = r.value;
@@ -994,7 +995,7 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
                                               covBuf.data(), strandBuf.data(), contextBuf.data(), entryBuf.data(),
                                               static_cast<uint32_t>(chunk));
                 if(response != 0) {
-                    fprintf(stderr, "[bin] bmAddIntervals failed for %s (code %d)\n", chroms[fastaTid], response);
+                    fprintf(stderr, "[bin] bmAddIntervals failed for %s (code %d)\n", chromName, response);
                     fclose(in);
                     bmClose(out);
                     fai_destroy(fai);
