@@ -253,6 +253,7 @@ const char* Help_String_scmatrix="Command Format :  dmtools sc-matrix [options] 
         "\t--sparse             write sparse Matrix Market output (default)\n"
         "\t--dense              write dense TSV matrix\n"
         "\t--eb                 enable empirical Bayes shrinkage (outputs eb_mean + var/CI files)\n"
+        "\t--prior-strength     prior strength M (alpha+beta) for EB (default: 50)\n"
         "\t-h|--help";
 
 const char* Help_String_scaggregate="Command Format :  dmtools sc-aggregate [options] -i <dm> --groups <mapping.tsv> -o <out prefix> --bed <regions.bed> | --binsize <N>\n"

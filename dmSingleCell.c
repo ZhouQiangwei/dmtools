@@ -315,6 +315,41 @@ typedef struct {
     int valid;
 } dm_eb_prior_t;
 
+static double dm_sc_clamp_prob(double p) {
+    const double eps = 1e-6;
+    if (p < eps) return eps;
+    if (p > 1.0 - eps) return 1.0 - eps;
+    return p;
+}
+
+static double dm_sc_posterior_mean(double alpha, double beta, double k, double n) {
+    double denom = alpha + beta + n;
+    if (denom == 0.0) return 0.0;
+    return (alpha + k) / denom;
+}
+
+static double dm_sc_posterior_var(double alpha, double beta, double k, double n) {
+    double a = alpha + k;
+    double b = beta + (n - k);
+    double denom = (alpha + beta + n);
+    if (denom == 0.0) return 0.0;
+    double denom2 = denom * denom * (denom + 1.0);
+    if (denom2 == 0.0) return 0.0;
+    return (a * b) / denom2;
+}
+
+static void dm_sc_posterior_ci(double alpha, double beta, double k, double n, double *low, double *high) {
+    double mean = dm_sc_posterior_mean(alpha, beta, k, n);
+    double var = dm_sc_posterior_var(alpha, beta, k, n);
+    double sd = var > 0.0 ? sqrt(var) : 0.0;
+    double l = mean - 1.96 * sd;
+    double h = mean + 1.96 * sd;
+    if (l < 0.0) l = 0.0;
+    if (h > 1.0) h = 1.0;
+    if (low) *low = l;
+    if (high) *high = h;
+}
+
 typedef struct {
     char *chrom;
     int *idx;
@@ -650,70 +685,6 @@ static int dm_read_mtx(const char *path, int *nRows, int *nCols, dm_mtx_entry_t 
     return 0;
 }
 
-static dm_eb_prior_t dm_sc_matrix_estimate_prior(dm_matrix_accum_t *acc, size_t nAcc) {
-    dm_eb_prior_t prior = {0.0, 0.0, 0};
-    if (!acc || nAcc == 0) return prior;
-    double sum_p = 0.0;
-    double sum_p2 = 0.0;
-    double sum_noise = 0.0;
-    size_t n = 0;
-    for (size_t i = 0; i < nAcc; i++) {
-        if (acc[i].sum_cov == 0) continue;
-        double p = acc[i].sum_meth_weighted / (double)acc[i].sum_cov;
-        sum_p += p;
-        sum_p2 += p * p;
-        sum_noise += (p * (1.0 - p)) / (double)acc[i].sum_cov;
-        n++;
-    }
-    if (n == 0) return prior;
-    double mean_p = sum_p / (double)n;
-    double var_p = (sum_p2 / (double)n) - (mean_p * mean_p);
-    if (var_p < 0.0) var_p = 0.0;
-    double noise = sum_noise / (double)n;
-    double denom = var_p - noise;
-    if (denom <= 0.0 || mean_p <= 0.0 || mean_p >= 1.0) {
-        double k = 50.0;
-        prior.alpha = mean_p * k;
-        prior.beta = (1.0 - mean_p) * k;
-        prior.valid = 1;
-        return prior;
-    }
-    double k = (mean_p * (1.0 - mean_p) / denom) - 1.0;
-    if (k < 1.0) k = 1.0;
-    prior.alpha = mean_p * k;
-    prior.beta = (1.0 - mean_p) * k;
-    prior.valid = 1;
-    return prior;
-}
-
-static double dm_sc_matrix_eb_mean(dm_matrix_accum_t *a, const dm_eb_prior_t *prior) {
-    if (!prior || !prior->valid) return dm_sc_matrix_value(a, "mean-meth", "mean");
-    double alpha = prior->alpha + a->sum_meth_weighted;
-    double beta = prior->beta + ((double)a->sum_cov - a->sum_meth_weighted);
-    if (alpha + beta == 0.0) return 0.0;
-    return alpha / (alpha + beta);
-}
-
-static double dm_sc_matrix_eb_var(dm_matrix_accum_t *a, const dm_eb_prior_t *prior) {
-    if (!prior || !prior->valid) return 0.0;
-    double alpha = prior->alpha + a->sum_meth_weighted;
-    double beta = prior->beta + ((double)a->sum_cov - a->sum_meth_weighted);
-    double denom = (alpha + beta) * (alpha + beta) * (alpha + beta + 1.0);
-    if (denom == 0.0) return 0.0;
-    return (alpha * beta) / denom;
-}
-
-static void dm_sc_matrix_eb_ci(dm_matrix_accum_t *a, const dm_eb_prior_t *prior, double *low, double *high) {
-    double mean = dm_sc_matrix_eb_mean(a, prior);
-    double var = dm_sc_matrix_eb_var(a, prior);
-    double sd = var > 0.0 ? sqrt(var) : 0.0;
-    double l = mean - 1.96 * sd;
-    double h = mean + 1.96 * sd;
-    if (l < 0.0) l = 0.0;
-    if (h > 1.0) h = 1.0;
-    if (low) *low = l;
-    if (high) *high = h;
-}
 
 static void dm_sc_matrix_usage() {
     fprintf(stderr,
@@ -731,6 +702,7 @@ static void dm_sc_matrix_usage() {
             "      --sparse             Write sparse Matrix Market output (default)\n"
             "      --dense              Write dense TSV matrix\n"
             "      --eb                 Enable empirical Bayes shrinkage (outputs eb_mean + var/CI)\n"
+            "      --prior-strength <M> Prior strength M (alpha+beta) for EB (default: 50)\n"
             "  -h, --help               Show this help message\n");
 }
 
@@ -746,6 +718,7 @@ int dm_sc_matrix_main(int argc, char **argv) {
     int dense = 0; int sparse = 1;
     int ebEnabled = 0;
     int emitCounts = 0;
+    double priorStrength = 50.0;
 
     if (!valueType || !aggMethod) goto error;
 
@@ -762,6 +735,7 @@ int dm_sc_matrix_main(int argc, char **argv) {
         {"dense", no_argument, 0, 8},
         {"eb", no_argument, 0, 9},
         {"emit-counts", no_argument, 0, 10},
+        {"prior-strength", required_argument, 0, 11},
         {"help", no_argument, 0, 'h'},
         {0,0,0,0}
     };
@@ -822,6 +796,13 @@ int dm_sc_matrix_main(int argc, char **argv) {
                 break;
             case 10:
                 emitCounts = 1;
+                break;
+            case 11:
+                priorStrength = atof(optarg);
+                if (priorStrength <= 0.0) {
+                    fprintf(stderr, "Error: --prior-strength must be positive.\n");
+                    goto error;
+                }
                 break;
             case 'h':
                 dm_sc_matrix_usage();
@@ -945,13 +926,28 @@ int dm_sc_matrix_main(int argc, char **argv) {
 
     if (!dense && !sparse) sparse = 1;
 
-    dm_eb_prior_t ebPrior = {0};
+    double *priorAlpha = NULL;
+    double *priorBeta = NULL;
     if (ebEnabled) {
-        ebPrior = dm_sc_matrix_estimate_prior(acc, nAcc);
-        if (!ebPrior.valid) {
-            fprintf(stderr, "Warning: EB prior estimation failed; falling back to mean-meth.\n");
-            ebEnabled = 0;
+        priorAlpha = calloc(nRegions, sizeof(double));
+        priorBeta = calloc(nRegions, sizeof(double));
+        if (!priorAlpha || !priorBeta) goto error_all;
+        double *sumCov = calloc(nRegions, sizeof(double));
+        double *sumMc = calloc(nRegions, sizeof(double));
+        if (!sumCov || !sumMc) { free(sumCov); free(sumMc); goto error_all; }
+        for (size_t i = 0; i < nAcc; i++) {
+            sumCov[acc[i].col] += (double)acc[i].sum_cov;
+            sumMc[acc[i].col] += acc[i].sum_meth_weighted;
         }
+        for (size_t c = 0; c < nRegions; c++) {
+            if (sumCov[c] > 0.0) {
+                double pbar = dm_sc_clamp_prob(sumMc[c] / sumCov[c]);
+                priorAlpha[c] = pbar * priorStrength;
+                priorBeta[c] = (1.0 - pbar) * priorStrength;
+            }
+        }
+        free(sumCov);
+        free(sumMc);
     }
 
     if (dm_sc_matrix_write_features(outputPrefix, regions, nRegions) != 0) {
@@ -991,8 +987,10 @@ int dm_sc_matrix_main(int argc, char **argv) {
         fprintf(f, "%%MatrixMarket matrix coordinate real general\n");
         fprintf(f, "%zu %zu %zu\n", nCells, nRegions, nAcc);
         for (size_t i = 0; i < nAcc; i++) {
-            double val = ebEnabled ? dm_sc_matrix_eb_mean(&acc[i], &ebPrior)
-                                   : dm_sc_matrix_value(&acc[i], valueType, aggMethod);
+            double val = ebEnabled
+                ? dm_sc_posterior_mean(priorAlpha[acc[i].col], priorBeta[acc[i].col],
+                                       acc[i].sum_meth_weighted, (double)acc[i].sum_cov)
+                : dm_sc_matrix_value(&acc[i], valueType, aggMethod);
             fprintf(f, "%d %d %.6f\n", acc[i].row + 1, acc[i].col + 1, val);
         }
         fclose(f);
@@ -1039,7 +1037,8 @@ int dm_sc_matrix_main(int argc, char **argv) {
         fprintf(f, "%%MatrixMarket matrix coordinate real general\n");
         fprintf(f, "%zu %zu %zu\n", nCells, nRegions, nAcc);
         for (size_t i = 0; i < nAcc; i++) {
-            double val = dm_sc_matrix_eb_var(&acc[i], &ebPrior);
+            double val = dm_sc_posterior_var(priorAlpha[acc[i].col], priorBeta[acc[i].col],
+                                             acc[i].sum_meth_weighted, (double)acc[i].sum_cov);
             fprintf(f, "%d %d %.6f\n", acc[i].row + 1, acc[i].col + 1, val);
         }
         fclose(f);
@@ -1055,7 +1054,8 @@ int dm_sc_matrix_main(int argc, char **argv) {
         fprintf(f, "%zu %zu %zu\n", nCells, nRegions, nAcc);
         for (size_t i = 0; i < nAcc; i++) {
             double low = 0.0, high = 0.0;
-            dm_sc_matrix_eb_ci(&acc[i], &ebPrior, &low, &high);
+            dm_sc_posterior_ci(priorAlpha[acc[i].col], priorBeta[acc[i].col],
+                               acc[i].sum_meth_weighted, (double)acc[i].sum_cov, &low, &high);
             fprintf(f, "%d %d %.6f\n", acc[i].row + 1, acc[i].col + 1, low);
         }
         fclose(f);
@@ -1071,7 +1071,8 @@ int dm_sc_matrix_main(int argc, char **argv) {
         fprintf(f, "%zu %zu %zu\n", nCells, nRegions, nAcc);
         for (size_t i = 0; i < nAcc; i++) {
             double low = 0.0, high = 0.0;
-            dm_sc_matrix_eb_ci(&acc[i], &ebPrior, &low, &high);
+            dm_sc_posterior_ci(priorAlpha[acc[i].col], priorBeta[acc[i].col],
+                               acc[i].sum_meth_weighted, (double)acc[i].sum_cov, &low, &high);
             fprintf(f, "%d %d %.6f\n", acc[i].row + 1, acc[i].col + 1, high);
         }
         fclose(f);
@@ -1091,8 +1092,10 @@ int dm_sc_matrix_main(int argc, char **argv) {
         double *matrix = calloc(nCells * nRegions, sizeof(double));
         if (!matrix) { fclose(f); goto error_all; }
         for (size_t i = 0; i < nAcc; i++) {
-            double val = ebEnabled ? dm_sc_matrix_eb_mean(&acc[i], &ebPrior)
-                                   : dm_sc_matrix_value(&acc[i], valueType, aggMethod);
+            double val = ebEnabled
+                ? dm_sc_posterior_mean(priorAlpha[acc[i].col], priorBeta[acc[i].col],
+                                       acc[i].sum_meth_weighted, (double)acc[i].sum_cov)
+                : dm_sc_matrix_value(&acc[i], valueType, aggMethod);
             matrix[((size_t)acc[i].row * nRegions) + acc[i].col] = val;
         }
         for (size_t r = 0; r < nCells; r++) {
@@ -1118,7 +1121,8 @@ int dm_sc_matrix_main(int argc, char **argv) {
         double *matrix = calloc(nCells * nRegions, sizeof(double));
         if (!matrix) { fclose(f); goto error_all; }
         for (size_t i = 0; i < nAcc; i++) {
-            double val = dm_sc_matrix_eb_var(&acc[i], &ebPrior);
+            double val = dm_sc_posterior_var(priorAlpha[acc[i].col], priorBeta[acc[i].col],
+                                             acc[i].sum_meth_weighted, (double)acc[i].sum_cov);
             matrix[((size_t)acc[i].row * nRegions) + acc[i].col] = val;
         }
         for (size_t r = 0; r < nCells; r++) {
@@ -1143,7 +1147,8 @@ int dm_sc_matrix_main(int argc, char **argv) {
         if (!matrix) { fclose(f); goto error_all; }
         for (size_t i = 0; i < nAcc; i++) {
             double low = 0.0, high = 0.0;
-            dm_sc_matrix_eb_ci(&acc[i], &ebPrior, &low, &high);
+            dm_sc_posterior_ci(priorAlpha[acc[i].col], priorBeta[acc[i].col],
+                               acc[i].sum_meth_weighted, (double)acc[i].sum_cov, &low, &high);
             matrix[((size_t)acc[i].row * nRegions) + acc[i].col] = low;
         }
         for (size_t r = 0; r < nCells; r++) {
@@ -1168,7 +1173,8 @@ int dm_sc_matrix_main(int argc, char **argv) {
         if (!matrix) { fclose(f); goto error_all; }
         for (size_t i = 0; i < nAcc; i++) {
             double low = 0.0, high = 0.0;
-            dm_sc_matrix_eb_ci(&acc[i], &ebPrior, &low, &high);
+            dm_sc_posterior_ci(priorAlpha[acc[i].col], priorBeta[acc[i].col],
+                               acc[i].sum_meth_weighted, (double)acc[i].sum_cov, &low, &high);
             matrix[((size_t)acc[i].row * nRegions) + acc[i].col] = high;
         }
         for (size_t r = 0; r < nCells; r++) {
@@ -1194,6 +1200,8 @@ error_all:
     free(cellCov);
     free(cellMeth);
     free(acc);
+    free(priorAlpha);
+    free(priorBeta);
 error:
     for (size_t i = 0; i < nInputs; i++) free(inputs[i]);
     free(inputs);
@@ -1217,6 +1225,8 @@ success:
     free(cellCov);
     free(cellMeth);
     free(acc);
+    free(priorAlpha);
+    free(priorBeta);
     free(valueType); free(aggMethod);
     return 0;
 }
@@ -1835,6 +1845,7 @@ static void dm_sc_shrinkage_usage() {
             "  --features <tsv>       Region features\n"
             "  --out <prefix>         Output prefix\n"
             "  --var                 Write posterior variance matrix\n"
+            "  --prior-strength <M>  Prior strength M (alpha+beta) (default: 50)\n"
             "  --to h5ad             Export to h5ad with layers if available\n"
             "  --h5ad-script <path>  Override h5ad export script\n"
             "  -h, --help            Show this help message\n");
@@ -1849,6 +1860,7 @@ int dm_sc_shrinkage_main(int argc, char **argv) {
     char *toFmt = NULL;
     char *h5adScript = NULL;
     int writeVar = 0;
+    double priorStrength = 50.0;
 
     static struct option long_opts[] = {
         {"mtx", required_argument, 0, 1},
@@ -1859,6 +1871,7 @@ int dm_sc_shrinkage_main(int argc, char **argv) {
         {"var", no_argument, 0, 6},
         {"to", required_argument, 0, 7},
         {"h5ad-script", required_argument, 0, 8},
+        {"prior-strength", required_argument, 0, 9},
         {"help", no_argument, 0, 'h'},
         {0,0,0,0}
     };
@@ -1874,6 +1887,13 @@ int dm_sc_shrinkage_main(int argc, char **argv) {
             case 6: writeVar = 1; break;
             case 7: toFmt = strdup(optarg); break;
             case 8: h5adScript = strdup(optarg); break;
+            case 9:
+                priorStrength = atof(optarg);
+                if (priorStrength <= 0.0) {
+                    fprintf(stderr, "Error: --prior-strength must be positive.\n");
+                    goto error;
+                }
+                break;
             case 'h':
                 dm_sc_shrinkage_usage();
                 goto cleanup;
@@ -1926,18 +1946,21 @@ int dm_sc_shrinkage_main(int argc, char **argv) {
         }
     }
 
-    dm_matrix_accum_t *acc = calloc(nCounts, sizeof(dm_matrix_accum_t));
-    if (!acc) goto error;
+    double *priorAlpha = calloc(nColsMc, sizeof(double));
+    double *priorBeta = calloc(nColsMc, sizeof(double));
+    double *sumCov = calloc(nColsMc, sizeof(double));
+    double *sumMc = calloc(nColsMc, sizeof(double));
+    if (!priorAlpha || !priorBeta || !sumCov || !sumMc) goto error;
     for (size_t k = 0; k < nCounts; k++) {
-        acc[k].row = counts[k].row;
-        acc[k].col = counts[k].col;
-        acc[k].sum_cov = (uint64_t)counts[k].cov;
-        acc[k].sum_meth_weighted = counts[k].mc;
-        acc[k].n_sites = 1;
+        sumCov[counts[k].col] += counts[k].cov;
+        sumMc[counts[k].col] += counts[k].mc;
     }
-    dm_eb_prior_t prior = dm_sc_matrix_estimate_prior(acc, nCounts);
-    if (!prior.valid) {
-        fprintf(stderr, "Warning: EB prior estimation failed; using unshrunk ratios.\n");
+    for (int c = 0; c < nColsMc; c++) {
+        if (sumCov[c] > 0.0) {
+            double pbar = dm_sc_clamp_prob(sumMc[c] / sumCov[c]);
+            priorAlpha[c] = pbar * priorStrength;
+            priorBeta[c] = (1.0 - pbar) * priorStrength;
+        }
     }
 
     size_t len = strlen(outPrefix) + 12;
@@ -1950,8 +1973,8 @@ int dm_sc_shrinkage_main(int argc, char **argv) {
     fprintf(f, "%%MatrixMarket matrix coordinate real general\n");
     fprintf(f, "%d %d %zu\n", nRowsMc, nColsMc, nCounts);
     for (size_t k = 0; k < nCounts; k++) {
-        double mean = prior.valid ? dm_sc_matrix_eb_mean(&acc[k], &prior)
-                                  : (counts[k].mc / counts[k].cov);
+        double mean = dm_sc_posterior_mean(priorAlpha[counts[k].col], priorBeta[counts[k].col],
+                                           counts[k].mc, counts[k].cov);
         fprintf(f, "%d %d %.6f\n", counts[k].row + 1, counts[k].col + 1, mean);
     }
     fclose(f);
@@ -1967,7 +1990,8 @@ int dm_sc_shrinkage_main(int argc, char **argv) {
         fprintf(f, "%%MatrixMarket matrix coordinate real general\n");
         fprintf(f, "%d %d %zu\n", nRowsMc, nColsMc, nCounts);
         for (size_t k = 0; k < nCounts; k++) {
-            double var = prior.valid ? dm_sc_matrix_eb_var(&acc[k], &prior) : 0.0;
+            double var = dm_sc_posterior_var(priorAlpha[counts[k].col], priorBeta[counts[k].col],
+                                             counts[k].mc, counts[k].cov);
             fprintf(f, "%d %d %.6f\n", counts[k].row + 1, counts[k].col + 1, var);
         }
         fclose(f);
@@ -2074,14 +2098,20 @@ int dm_sc_shrinkage_main(int argc, char **argv) {
     free(mcEntries);
     free(covEntries);
     free(counts);
-    free(acc);
+    free(priorAlpha);
+    free(priorBeta);
+    free(sumCov);
+    free(sumMc);
     goto cleanup;
 
 error:
     free(mcEntries);
     free(covEntries);
     free(counts);
-    free(acc);
+    free(priorAlpha);
+    free(priorBeta);
+    free(sumCov);
+    free(sumMc);
     return 1;
 
 cleanup:
