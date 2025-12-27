@@ -489,7 +489,7 @@ int main(int argc, char *argv[]) {
         uint32_t type = BMtype(outbmfile, NULL);
         bigWigFile_t *ifp = NULL;
         ifp = bwOpen(outbmfile, NULL, "r");
-        ifp->type = ifp->hdr->version;
+        bmApplyHeaderType(ifp);
         if(!region[0] && !bedfile[0]){
             main_view_all(ifp);
         }else if(region[0]){
@@ -624,7 +624,7 @@ int calchromstats(char *outbmfile, char *method, int chromstep, int stepoverlap,
     uint32_t type = BMtype(outbmfile, NULL);
     bigWigFile_t *fp = NULL;
     fp = bwOpen(outbmfile, NULL, "r");
-    fp->type = fp->hdr->version;
+    bmApplyHeaderType(fp);
 
     int i = 0, j = 0, start = 0, end = chromstep;
     char* region = malloc(sizeof(char)*1000);
@@ -664,7 +664,7 @@ int calprofile_gtf(char *outbmfile, int upstream, int downstream, double profile
     uint32_t type = BMtype(outbmfile, NULL);
     bigWigFile_t *fp = NULL;
     fp = bwOpen(outbmfile, NULL, "r");
-    fp->type = fp->hdr->version;
+    bmApplyHeaderType(fp);
 
     FILE* Fgtffile=File_Open(gtffile,"r");
     char *PerLine = malloc(200);
@@ -730,7 +730,7 @@ int calprofile(char *outbmfile, int upstream, int downstream, double profilestep
     uint32_t type = BMtype(outbmfile, NULL);
     bigWigFile_t *fp = NULL;
     fp = bwOpen(outbmfile, NULL, "r");
-    fp->type = fp->hdr->version;
+    bmApplyHeaderType(fp);
 
     FILE* Fbedfile=File_Open(bedfile,"r");
     char *PerLine = malloc(200);
@@ -788,7 +788,7 @@ int calregionstats_file(char *outbmfile, char *method, char *bedfile, int format
     uint32_t type = BMtype(outbmfile, NULL);
     bigWigFile_t *fp = NULL;
     fp = bwOpen(outbmfile, NULL, "r");
-    fp->type = fp->hdr->version;
+    bmApplyHeaderType(fp);
 
     FILE* Fbedfile=File_Open(bedfile,"r");
     char *PerLine = malloc(200);
@@ -847,7 +847,7 @@ int calregionstats(char *outbmfile, char *method, char *region, uint8_t pstrand)
     uint32_t type = BMtype(outbmfile, NULL);
     bigWigFile_t *fp = NULL;
     fp = bwOpen(outbmfile, NULL, "r");
-    fp->type = fp->hdr->version;
+    bmApplyHeaderType(fp);
 
     char *substr= strtok(region, ",");
     char regions[1000][200] = {""};
@@ -1097,7 +1097,7 @@ int bw_overlap_all_mul(char *inbmFs, uint8_t pstrand){
         uint32_t type1 = BMtype(infiles[i], NULL);
         bigWigFile_t *ifp1 = NULL;
         ifp1 = bwOpen(infiles[i], NULL, "r");
-        ifp1->type = ifp1->hdr->version;
+        bmApplyHeaderType(ifp1);
         ifps[i] = ifp1;
     }
 
@@ -1131,12 +1131,12 @@ int bw_overlap_file_mul(char *inbmFs, char *bedfile){
     uint32_t type1 = BMtype(inbmF1, NULL);
     bigWigFile_t *ifp1 = NULL;
     ifp1 = bwOpen(inbmF1, NULL, "r");
-    ifp1->type = ifp1->hdr->version;
+    bmApplyHeaderType(ifp1);
     //file2
     uint32_t type2 = BMtype(inbmF2, NULL);
     bigWigFile_t *ifp2 = NULL;
     ifp2 = bwOpen(inbmF2, NULL, "r");
-    ifp2->type = ifp2->hdr->version;
+    bmApplyHeaderType(ifp2);
     */
 
 
@@ -1155,7 +1155,7 @@ int bw_overlap_file_mul(char *inbmFs, char *bedfile){
         uint32_t type1 = BMtype(infiles[i], NULL);
         bigWigFile_t *ifp1 = NULL;
         ifp1 = bwOpen(infiles[i], NULL, "r");
-        ifp1->type = ifp1->hdr->version;
+        bmApplyHeaderType(ifp1);
         ifps[i] = ifp1;
     }
     
@@ -1197,12 +1197,12 @@ int bw_overlap_file(char *inbmF1, char *inbmF2, char *bedfile){
     uint32_t type1 = BMtype(inbmF1, NULL);
     bigWigFile_t *ifp1 = NULL;
     ifp1 = bwOpen(inbmF1, NULL, "r");
-    ifp1->type = ifp1->hdr->version;
+    bmApplyHeaderType(ifp1);
     //file2
     uint32_t type2 = BMtype(inbmF2, NULL);
     bigWigFile_t *ifp2 = NULL;
     ifp2 = bwOpen(inbmF2, NULL, "r");
-    ifp2->type = ifp2->hdr->version;
+    bmApplyHeaderType(ifp2);
 
     
     FILE* Fbedfile=File_Open(bedfile,"r");
@@ -1246,7 +1246,7 @@ int bw_overlap_region_mul(char *inbmFs, char *region, uint8_t pstrand){
         uint32_t type1 = BMtype(infiles[i], NULL);
         bigWigFile_t *ifp1 = NULL;
         ifp1 = bwOpen(infiles[i], NULL, "r");
-        ifp1->type = ifp1->hdr->version;
+        bmApplyHeaderType(ifp1);
         ifps[i] = ifp1;
     }
 
@@ -1288,12 +1288,12 @@ int bw_overlap_region(char *inbmF1, char *inbmF2, char *region, uint8_t pstrand)
     uint32_t type1 = BMtype(inbmF1, NULL);
     bigWigFile_t *ifp1 = NULL;
     ifp1 = bwOpen(inbmF1, NULL, "r");
-    ifp1->type = ifp1->hdr->version;
+    bmApplyHeaderType(ifp1);
     //file2
     uint32_t type2 = BMtype(inbmF2, NULL);
     bigWigFile_t *ifp2 = NULL;
     ifp2 = bwOpen(inbmF2, NULL, "r");
-    ifp2->type = ifp2->hdr->version;
+    bmApplyHeaderType(ifp2);
 
     char *substr= strtok(region, ",");
     char regions[1000][200] = {""};
@@ -1326,12 +1326,12 @@ int bw_overlap_all(char *inbmF1, char *inbmF2, int n1, int n2, uint8_t pstrand){
     uint32_t type1 = BMtype(inbmF1, NULL);
     bigWigFile_t *ifp1 = NULL;
     ifp1 = bwOpen(inbmF1, NULL, "r");
-    ifp1->type = ifp1->hdr->version;
+    bmApplyHeaderType(ifp1);
     //file2
     uint32_t type2 = BMtype(inbmF2, NULL);
     bigWigFile_t *ifp2 = NULL;
     ifp2 = bwOpen(inbmF2, NULL, "r");
-    ifp2->type = ifp2->hdr->version;
+    bmApplyHeaderType(ifp2);
 
     int SEGlen = 1000000;
     int start = 0, end = SEGlen-1;

@@ -642,7 +642,8 @@ static int runBinTasksToParts(const std::string &bamPath, const std::string &gen
 static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<BinTask> &tasks,
                              const std::vector<BinPartLocator> &locators, int shardCount,
                              const std::string &partDir, const std::string &dmPath, int zoomlevel,
-                             bool debugMode, bool validateOutput);
+                             bool debugMode, bool validateOutput, uint32_t writeType,
+                             uint32_t valScale, uint8_t valEncoding);
 
 unsigned Total_Reads_all;
 uint64_t Total_Reads=0, Total_mapped = 0, forward_mapped = 0, reverse_mapped = 0;
@@ -1301,7 +1302,8 @@ static int runBinTasksToParts(const std::string &bamPath, const std::string &gen
 static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<BinTask> &tasks,
                              const std::vector<BinPartLocator> &locators, int shardCount,
                              const std::string &partDir, const std::string &dmPath, int zoomlevel,
-                             bool debugMode, bool validateOutput) {
+                             bool debugMode, bool validateOutput, uint32_t writeType,
+                             uint32_t valScale, uint8_t valEncoding) {
     uint64_t recordsTotal = 0;
     uint64_t recordsWritten = 0;
     uint64_t filteredChromMissing = 0;
@@ -1365,6 +1367,9 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
         fai_destroy(fai);
         return 1;
     }
+    out->type = writeType;
+    out->valScale = valScale;
+    out->valEncoding = valEncoding;
     if(bmCreateHdr(out, zoomlevel)) {
         fprintf(stderr, "[bin] failed to create dm header for %s\n", dmPath.c_str());
         bmClose(out);
@@ -1827,6 +1832,9 @@ int main(int argc, char* argv[])
         "\t--write-bufsize <INT> set DM write buffer size (default: 32768)\n"
         "\t--block-size <INT>    set DM index block size (default: 256)\n"
         "\t--cleanup-parts       delete .parts temp files after bin merge (default: off)\n"
+        "\t--quantize-ml         store values as uint16 (default: off)\n"
+        "\t--quantize-scale <INT>  scale for quantization (default: 10000)\n"
+        "\t--pack-sc             pack strand+context into 1 byte (default: off)\n"
         "\t--debug               verbose logging of parsed options and progress\n"
         "\t--check <dm>          validate an existing dm file and exit\n"
         "\t--validate-output     validate dm after writing (structural check)\n"
@@ -1890,6 +1898,9 @@ int main(int argc, char* argv[])
     uint32_t writeBufSize = 0;
     uint32_t writeBlockSize = 0;
     bool cleanupParts = false;
+    bool quantizeML = false;
+    uint32_t quantizeScale = 10000;
+    bool packStrandContext = false;
 
 	for(int i=1;i<argc;i++)
 	{
@@ -1982,6 +1993,26 @@ int main(int argc, char* argv[])
         else if(!strcmp(argv[i], "--cleanup-parts"))
         {
             cleanupParts = true;
+        }
+        else if(!strcmp(argv[i], "--quantize-ml"))
+        {
+            quantizeML = true;
+        }
+        else if(!strcmp(argv[i], "--quantize-scale"))
+        {
+            if(i + 1 >= argc) {
+                fprintf(stderr, "--quantize-scale requires an integer\n");
+                return 1;
+            }
+            quantizeScale = static_cast<uint32_t>(strtoul(argv[++i], nullptr, 10));
+            if(quantizeScale == 0 || quantizeScale > UINT16_MAX) {
+                fprintf(stderr, "--quantize-scale must be in [1, %u]\n", UINT16_MAX);
+                return 1;
+            }
+        }
+        else if(!strcmp(argv[i], "--pack-sc"))
+        {
+            packStrandContext = true;
         }
         else if(!strcmp(argv[i],"--cf")){
             contextfilter = argv[++i];
@@ -2138,6 +2169,12 @@ int main(int argc, char* argv[])
     if(writeBlockSize > 0) {
         bmSetWriteBlockSize(writeBlockSize);
     }
+    if(quantizeML) {
+        write_type |= BM_VAL_U16;
+    }
+    if(packStrandContext) {
+        write_type |= BM_PACK_SC;
+    }
 
     gDebugMode = debugMode;
     gDmRecordsWritten = 0;
@@ -2253,7 +2290,9 @@ int main(int argc, char* argv[])
         std::vector<BinPartLocator> locators;
         rc = runBinTasksToParts(bamPath, Geno, tasks, NTHREADS, partDir, debugMode, locators);
         if(rc == 0) {
-            rc = mergeBinPartsToDm(Geno, tasks, locators, std::max(1, NTHREADS), partDir, dmOutPath, zoomlevel, debugMode, validateOutput);
+            rc = mergeBinPartsToDm(Geno, tasks, locators, std::max(1, NTHREADS), partDir, dmOutPath, zoomlevel,
+                                   debugMode, validateOutput, write_type, quantizeML ? quantizeScale : 0,
+                                   quantizeML ? 1 : 0);
         }
         if(cleanupParts) {
             for(int t = 0; t < std::max(1, NTHREADS); ++t) {
@@ -2532,6 +2571,8 @@ int main(int argc, char* argv[])
                                         return 1;
                                 }
                                 fp->type = write_type;
+                                fp->valScale = quantizeML ? quantizeScale : 0;
+                                fp->valEncoding = quantizeML ? 1 : 0;
 
                 if(tech=="NoMe"){
                     fp_gch = NULL;
@@ -2547,6 +2588,8 @@ int main(int argc, char* argv[])
                         return 1;
                     }
                     fp_gch->type = write_type;
+                    fp_gch->valScale = quantizeML ? quantizeScale : 0;
+                    fp_gch->valEncoding = quantizeML ? 1 : 0;
                 }
 
 			}

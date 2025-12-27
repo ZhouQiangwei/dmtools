@@ -270,7 +270,7 @@ int bm_overlap_all_mul_sep(char *inbmFs1, char *inbmFs2, uint8_t pstrand, vector
     for(i=0;i<sizeifp;i++){
         binaMethFile_t *ifp1 = NULL;
         ifp1 = bmOpen(infiles[i], NULL, "r");
-        ifp1->type = ifp1->hdr->version;
+        bmApplyHeaderType(ifp1);
         ifps[i] = ifp1;
     }
 
@@ -321,7 +321,7 @@ int bm_overlap_all_mul(char *inbmFs, uint8_t pstrand){
     for(i=0;i<sizeifp;i++){
         binaMethFile_t *ifp1 = NULL;
         ifp1 = bmOpen(infiles[i], NULL, "r");
-        ifp1->type = ifp1->hdr->version;
+        bmApplyHeaderType(ifp1);
         ifps[i] = ifp1;
     }
 
@@ -359,11 +359,11 @@ int bm_overlap_all(char *inbmF1, char *inbmF2, int n1, int n2, uint8_t pstrand, 
     //open file1
     binaMethFile_t *ifp1 = NULL;
     ifp1 = bmOpen(inbmF1, NULL, "r");
-    ifp1->type = ifp1->hdr->version;
+    bmApplyHeaderType(ifp1);
     //file2
     binaMethFile_t *ifp2 = NULL;
     ifp2 = bmOpen(inbmF2, NULL, "r");
-    ifp2->type = ifp2->hdr->version;
+    bmApplyHeaderType(ifp2);
 
     int SEGlen = 1000000;
     int start = 0, end = SEGlen-1;

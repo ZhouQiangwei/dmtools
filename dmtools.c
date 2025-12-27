@@ -473,6 +473,9 @@ const char* Help_String_bam2dm="Command Format :  dmtools bam2dm [options] -g ge
         "\t--Cx                  print context in DM file\n"
         "\t-E                    print end in DM file\n"
         "\t--Id                  print ID in DM file\n"
+        "\t--quantize-ml         store values as uint16 (default: off)\n"
+        "\t--quantize-scale <INT>  scale for quantization (default: 10000)\n"
+        "\t--pack-sc             pack strand+context into 1 byte (default: off)\n"
         "\t--check <dm>          validate an existing dm file and exit\n"
         "\t--validate-output     validate dm after writing (structural check)\n"
         "\t-h|--help";
@@ -510,6 +513,9 @@ const char* Help_String_mr2dm="Command Format :  dmtools mr2dm [opnions] -g geno
         "\t--Cx                  print context\n"
         "\t-E                    print end\n"
         "\t--Id                  print ID\n"
+        "\t--quantize-ml         store values as uint16 (default: off)\n"
+        "\t--quantize-scale <INT>  scale for quantization (default: 10000)\n"
+        "\t--pack-sc             pack strand+context into 1 byte (default: off)\n"
         "\t--CF                  coverage filter, >=[int], default 4.\n"
         "\t--sort Y/N            make chromsize file and meth file in same coordinate, default Y\n"
         "\t--zl                  The maximum number of zoom levels. [0-10]\n"
@@ -782,6 +788,8 @@ int main(int argc, char *argv[]) {
     unsigned long totalCG = 0;
     int i = 0;
     uint32_t write_type = 0x8000;
+    int quantize_ml = 0;
+    uint32_t quantize_scale = 10000;
     char methfile[100]; char *outbmfile = NULL;
     char *inbmfile = malloc(10000);
     char *bmfile2 = malloc(1000);
@@ -930,6 +938,21 @@ int main(int argc, char *argv[]) {
                 write_type |= BM_CONTEXT;
             }else if(strcmp(argv[i], "--Id") == 0){
                 write_type |= BM_ID;
+            }else if(strcmp(argv[i], "--quantize-ml") == 0){
+                quantize_ml = 1;
+                write_type |= BM_VAL_U16;
+            }else if(strcmp(argv[i], "--quantize-scale") == 0){
+                if(i + 1 >= argc) {
+                    fprintf(stderr, "--quantize-scale requires an integer\n");
+                    exit(1);
+                }
+                quantize_scale = (uint32_t)strtoul(argv[++i], NULL, 10);
+                if(quantize_scale == 0 || quantize_scale > UINT16_MAX) {
+                    fprintf(stderr, "--quantize-scale must be in [1, %u]\n", UINT16_MAX);
+                    exit(1);
+                }
+            }else if(strcmp(argv[i], "--pack-sc") == 0){
+                write_type |= BM_PACK_SC;
             }else if(strcmp(argv[i], "-E") == 0){
                 write_type |= BM_END;
             }else if(strcmp(argv[i], "-m") == 0){
@@ -1489,6 +1512,8 @@ int main(int argc, char *argv[]) {
             return 1;
         }
         fp->type = write_type;
+        fp->valScale = quantize_ml ? quantize_scale : 0;
+        fp->valEncoding = quantize_ml ? 1 : 0;
         
         //Allow up to 10 zoom levels, though fewer will be used in practice
         if(bmCreateHdr(fp, zoomlevel)) {
@@ -1825,7 +1850,7 @@ int main(int argc, char *argv[]) {
         uint32_t type = BMtype(inbmfile, NULL);
         binaMethFile_t *ifp = NULL;
         ifp = bmOpen(inbmfile, NULL, "r");
-        ifp->type = ifp->hdr->version;
+        bmApplyHeaderType(ifp);
         if(ifp->hdr->version & BM_ID) {
             dm_idmap_load(inbmfile, &gViewIdmap);
         }
@@ -1999,7 +2024,7 @@ int main(int argc, char *argv[]) {
         uint32_t type = BMtype(inbmfile, NULL);
         binaMethFile_t *ifp = NULL;
         ifp = bmOpen(inbmfile, NULL, "r");
-        ifp->type = ifp->hdr->version;
+        bmApplyHeaderType(ifp);
         bmPrintHdr(ifp);
         //bmPrintIndexTree(ifp);
         free(inbmfile);
@@ -2026,7 +2051,7 @@ int main(int argc, char *argv[]) {
         uint32_t type = BMtype(inbmfile, NULL);
         binaMethFile_t *ifp = NULL;
         ifp = bmOpen(inbmfile, NULL, "r");
-        ifp->type = ifp->hdr->version;
+        bmApplyHeaderType(ifp);
         if(strcmp(mode, "ebsrate") == 0) {
             float bsrate = 0; int bscount = 0;
             fprintf(outfp_mean, "##bs rate calculated by %s\n", bsrmode);
@@ -2516,7 +2541,7 @@ int calchromstats(char *inbmfile, char *method, int chromstep, int stepoverlap, 
     uint32_t type = BMtype(inbmfile, NULL);
     binaMethFile_t *fp = NULL;
     fp = bmOpen(inbmfile, NULL, "r");
-    fp->type = fp->hdr->version;
+    bmApplyHeaderType(fp);
 
     int i = 0, start = 0, end = chromstep; //, j = 0
     char* region = malloc(sizeof(char)*1000);
@@ -3347,7 +3372,7 @@ int calprofile_gtf(char *inbmfile, int upstream, int downstream, double profiles
     uint32_t type = BMtype(inbmfile, NULL);
     binaMethFile_t *fp = NULL;
     fp = bmOpen(inbmfile, NULL, "r");
-    fp->type = fp->hdr->version;
+    bmApplyHeaderType(fp);
 
     FILE* Fgtffile=File_Open(gtffile,"r");
     char *PerLine = malloc(2000);
@@ -3394,7 +3419,7 @@ int calprofile_gtf(char *inbmfile, int upstream, int downstream, double profiles
         profileArgs[ithread].method = "weighted";
         profileArgs[ithread].fp = NULL;
         profileArgs[ithread].fp = bmOpen(inbmfile, NULL, "r");
-        profileArgs[ithread].fp->type = profileArgs[ithread].fp->hdr->version;
+        bmApplyHeaderType(profileArgs[ithread].fp);
         profileArgs[ithread].printbuffer_c = malloc(sizeof(char)*MAX_BUFF_PRINT);
         profileArgs[ithread].printbuffer_cg = malloc(sizeof(char)*MAX_BUFF_PRINT);
         profileArgs[ithread].printbuffer_chg = malloc(sizeof(char)*MAX_BUFF_PRINT);
@@ -3566,7 +3591,7 @@ int calprofile(char *inbmfile, int upstream, int downstream, double profilestep,
     uint32_t type = BMtype(inbmfile, NULL);
     binaMethFile_t *fp = NULL;
     fp = bmOpen(inbmfile, NULL, "r");
-    fp->type = fp->hdr->version;
+    bmApplyHeaderType(fp);
 
     FILE* Fbedfile=File_Open(bedfile,"r");
     char *PerLine = malloc(2000);
@@ -3609,7 +3634,7 @@ int calprofile(char *inbmfile, int upstream, int downstream, double profilestep,
         profileArgs[ithread].method = "weighted";
         profileArgs[ithread].fp = NULL;
         profileArgs[ithread].fp = bmOpen(inbmfile, NULL, "r");
-        profileArgs[ithread].fp->type = profileArgs[ithread].fp->hdr->version;
+        bmApplyHeaderType(profileArgs[ithread].fp);
         profileArgs[ithread].printbuffer_c = malloc(sizeof(char)*MAX_BUFF_PRINT);
         profileArgs[ithread].printbuffer_cg = malloc(sizeof(char)*MAX_BUFF_PRINT);
         profileArgs[ithread].printbuffer_chg = malloc(sizeof(char)*MAX_BUFF_PRINT);
@@ -3991,7 +4016,7 @@ int calregionstats_file(char *inbmfile, char *method, char *bedfile, int format,
     uint32_t type = BMtype(inbmfile, NULL);
     binaMethFile_t *fp = NULL;
     fp = bmOpen(inbmfile, NULL, "r");
-    fp->type = fp->hdr->version;
+    bmApplyHeaderType(fp);
 
     FILE* Fbedfile=File_Open(bedfile,"r");
     char *PerLine = malloc(2000);
@@ -4054,7 +4079,7 @@ int calregionstats(char *inbmfile, char *method, char *region, uint8_t pstrand, 
     uint32_t type = BMtype(inbmfile, NULL);
     binaMethFile_t *fp = NULL;
     fp = bmOpen(inbmfile, NULL, "r");
-    fp->type = fp->hdr->version;
+    bmApplyHeaderType(fp);
 
     char *substr= strtok(region, ";");
     char regions[1000][200] = {""};
@@ -4136,7 +4161,7 @@ int calbodystats_file(char *inbmfile, char *method, char *bedfile, int format, u
     uint32_t type = BMtype(inbmfile, NULL);
     binaMethFile_t *fp = NULL;
     fp = bmOpen(inbmfile, NULL, "r");
-    fp->type = fp->hdr->version;
+    bmApplyHeaderType(fp);
 
     FILE* Fbedfile=File_Open(bedfile,"r");
     char *PerLine = malloc(2000);
@@ -4202,7 +4227,7 @@ int calbodystats(char *inbmfile, char *method, char *region, uint8_t pstrand, ui
     uint32_t type = BMtype(inbmfile, NULL);
     binaMethFile_t *fp = NULL;
     fp = bmOpen(inbmfile, NULL, "r");
-    fp->type = fp->hdr->version;
+    bmApplyHeaderType(fp);
 
     char *substr= strtok(region, ";");
     char regions[1000][200] = {""};
@@ -4871,7 +4896,7 @@ int bm_merge_all_mul(char *inbmFs, char *outfile, uint8_t pstrand, int m_method,
         uint32_t type1 = BMtype(infiles[i], NULL);
         binaMethFile_t *ifp1 = NULL;
         ifp1 = bmOpen(infiles[i], NULL, "r");
-        ifp1->type = ifp1->hdr->version;
+        bmApplyHeaderType(ifp1);
         ifps[i] = ifp1;
     }
 
@@ -5009,7 +5034,7 @@ int bm_overlap_all_mul(char *inbmFs, uint8_t pstrand){
         uint32_t type1 = BMtype(infiles[i], NULL);
         binaMethFile_t *ifp1 = NULL;
         ifp1 = bmOpen(infiles[i], NULL, "r");
-        ifp1->type = ifp1->hdr->version;
+        bmApplyHeaderType(ifp1);
         ifps[i] = ifp1;
     }
 
@@ -5043,12 +5068,12 @@ int bm_overlap_file_mul(char *inbmFs, char *bedfile){
     uint32_t type1 = BMtype(inbmF1, NULL);
     binaMethFile_t *ifp1 = NULL;
     ifp1 = bmOpen(inbmF1, NULL, "r");
-    ifp1->type = ifp1->hdr->version;
+    bmApplyHeaderType(ifp1);
     //file2
     uint32_t type2 = BMtype(inbmF2, NULL);
     binaMethFile_t *ifp2 = NULL;
     ifp2 = bmOpen(inbmF2, NULL, "r");
-    ifp2->type = ifp2->hdr->version;
+    bmApplyHeaderType(ifp2);
     */
 
 
@@ -5067,7 +5092,7 @@ int bm_overlap_file_mul(char *inbmFs, char *bedfile){
         uint32_t type1 = BMtype(infiles[i], NULL);
         binaMethFile_t *ifp1 = NULL;
         ifp1 = bmOpen(infiles[i], NULL, "r");
-        ifp1->type = ifp1->hdr->version;
+        bmApplyHeaderType(ifp1);
         ifps[i] = ifp1;
     }
     
@@ -5117,12 +5142,12 @@ int bm_overlap_file(char *inbmF1, char *inbmF2, char *bedfile){
     uint32_t type1 = BMtype(inbmF1, NULL);
     binaMethFile_t *ifp1 = NULL;
     ifp1 = bmOpen(inbmF1, NULL, "r");
-    ifp1->type = ifp1->hdr->version;
+    bmApplyHeaderType(ifp1);
     //file2
     uint32_t type2 = BMtype(inbmF2, NULL);
     binaMethFile_t *ifp2 = NULL;
     ifp2 = bmOpen(inbmF2, NULL, "r");
-    ifp2->type = ifp2->hdr->version;
+    bmApplyHeaderType(ifp2);
 
     
     FILE* Fbedfile=File_Open(bedfile,"r");
@@ -5174,7 +5199,7 @@ int bm_overlap_region_mul(char *inbmFs, char *region, uint8_t pstrand){
         uint32_t type1 = BMtype(infiles[i], NULL);
         binaMethFile_t *ifp1 = NULL;
         ifp1 = bmOpen(infiles[i], NULL, "r");
-        ifp1->type = ifp1->hdr->version;
+        bmApplyHeaderType(ifp1);
         ifps[i] = ifp1;
     }
 
@@ -5227,12 +5252,12 @@ int bm_overlap_region(char *inbmF1, char *inbmF2, char *region, uint8_t pstrand)
     uint32_t type1 = BMtype(inbmF1, NULL);
     binaMethFile_t *ifp1 = NULL;
     ifp1 = bmOpen(inbmF1, NULL, "r");
-    ifp1->type = ifp1->hdr->version;
+    bmApplyHeaderType(ifp1);
     //file2
     uint32_t type2 = BMtype(inbmF2, NULL);
     binaMethFile_t *ifp2 = NULL;
     ifp2 = bmOpen(inbmF2, NULL, "r");
-    ifp2->type = ifp2->hdr->version;
+    bmApplyHeaderType(ifp2);
 
     char *substr= strtok(region, ",");
     char regions[1000][200] = {""};
@@ -5265,12 +5290,12 @@ int bm_overlap_all(char *inbmF1, char *inbmF2, int n1, int n2, uint8_t pstrand){
     uint32_t type1 = BMtype(inbmF1, NULL);
     binaMethFile_t *ifp1 = NULL;
     ifp1 = bmOpen(inbmF1, NULL, "r");
-    ifp1->type = ifp1->hdr->version;
+    bmApplyHeaderType(ifp1);
     //file2
     uint32_t type2 = BMtype(inbmF2, NULL);
     binaMethFile_t *ifp2 = NULL;
     ifp2 = bmOpen(inbmF2, NULL, "r");
-    ifp2->type = ifp2->hdr->version;
+    bmApplyHeaderType(ifp2);
 
     int SEGlen = 1000000;
     int start = 0, end = SEGlen-1;

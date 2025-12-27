@@ -14,14 +14,14 @@ Each data record is written in the following order. Optional fields are included
 Required:
 
 - `start` (`uint32_t`)
-- `value` (`float`, methylation ratio)
+- `value` (`float` methylation ratio, or `uint16_t` when quantized)
 
 Optional (in order):
 
 - `end` (`uint32_t`, `BM_END`)
 - `coverage` (`uint16_t`, `BM_COVER`)
-- `strand` (`uint8_t`, `BM_STRAND`, encoded as `0` for `+`, `1` for `-`)
-- `context` (`uint8_t`, `BM_CONTEXT`, encoded as `1=CG`, `2=CHG`, `3=CHH`, `0=NA`)
+- `strand` (`uint8_t`, `BM_STRAND`, encoded as `0` for `+`, `1` for `-`; can be packed with context)
+- `context` (`uint8_t`, `BM_CONTEXT`, encoded as `1=CG`, `2=CHG`, `3=CHH`, `0=NA`; can be packed with strand)
 - `id` (`uint32_t`, `BM_ID`, numeric-only cell ID)
 
 ## Data blocks and index
@@ -42,11 +42,14 @@ Optional (in order):
 If `extensionOffset` is non-zero, dmtools writes a small extension describing write parameters (to aid reproduction and debugging):
 
 - `magic = 0x44574d50` ("DWMP")
-- `version = 2` (numeric-only ID encoding)
+- `version = 3` (numeric-only ID encoding + value encoding metadata)
 - `size = sizeof(struct)`
 - `bufSize` and `blockSize` used by the writer
+- `valScale` and `valEncoding` (value quantization metadata)
+- `packSc` (strand/context packing flag)
 
 Readers that do not recognize the extension can safely ignore it.
+Readers that do recognize it should treat `valEncoding=1` as the `BM_VAL_U16` flag and `packSc=1` as the `BM_PACK_SC` flag when decoding records.
 
 ## ID mapping (.idmap.tsv)
 

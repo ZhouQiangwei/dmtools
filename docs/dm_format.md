@@ -58,10 +58,10 @@
 2. **记录列表**（`nItems` 条）。字段顺序由 `version/type_mask` 中的 `BM_*` 位决定：
    - `uint32_t start`（必选；**当前 dmtools 写入 1-based 坐标**）。
    - `uint32_t end`（当 `BM_END` 置位时写入；end 为半开区间的右端点）。
-   - `float value`（必选；甲基化比例）。
+   - `float value`（必选；甲基化比例，或启用量化时写入 `uint16_t`）。
    - `uint16_t coverage`（当 `BM_COVER` 置位时写入；测序覆盖度）。
-   - `uint8_t strand`（当 `BM_STRAND` 置位时写入；`'+'`/`'-'` 以 `0/1` 表示）。
-   - `uint8_t context`（当 `BM_CONTEXT` 置位时写入；碱基上下文编码）。
+   - `uint8_t strand`（当 `BM_STRAND` 置位时写入；`'+'`/`'-'` 以 `0/1` 表示；若启用打包则与 `context` 共用 1 字节）。
+   - `uint8_t context`（当 `BM_CONTEXT` 置位时写入；碱基上下文编码；若启用打包则与 `strand` 共用 1 字节）。
    - `uint32_t entryid`（当 `BM_ID` 置位时写入；numeric-only ID）。
 
 记录在文件内按 `tid`、`start` 的写入顺序保存；索引假定这种单调性以支持区间查询。`bufSize` 非 0 时，块（含块头+记录）经 zlib 压缩写入，索引保存压缩后块的偏移与大小。
@@ -71,10 +71,15 @@
 若 `extensionOffset` 非 0，dmtools 会写入一个可选扩展结构记录写入参数，便于重现和排障。当前扩展版本包含：
 
 - `uint32_t magic`：`0x44574d50`（"DWMP"）
-- `uint16_t version`：`2`（numeric-only ID encoding）
+- `uint16_t version`：`3`（numeric-only ID encoding + value encoding metadata）
 - `uint16_t size`：结构体字节数
 - `uint32_t bufSize`：写入时使用的压缩缓冲区大小
 - `uint32_t blockSize`：索引节点最大子节点数
+- `uint32_t valScale`：量化 scale（0 表示未量化）
+- `uint8_t valEncoding`：`0=float32`，`1=uint16`
+- `uint8_t packSc`：`1` 表示 strand/context 打包为 1 字节
+
+当 `valEncoding=1` 时，读端应按 `uint16_t` 解码 value 并使用 `valScale` 还原为浮点；当 `packSc=1` 时，读端应将该字节按 `(strand & 1) | ((context & 7) << 1)` 解包。
 
 ## 索引结构（Index）
 

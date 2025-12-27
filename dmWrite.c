@@ -87,6 +87,52 @@ error:
 static uint32_t gWriteBufSize = 32768;
 static uint32_t gWriteBlockSize = 256;
 
+static inline size_t bmValueSize(const binaMethFile_t *fp) {
+    return (fp->type & BM_VAL_U16) ? sizeof(uint16_t) : sizeof(float);
+}
+
+static inline uint16_t bmQuantizeValue(float value, uint32_t scale) {
+    float clamped = value;
+    if(clamped < 0.0f) clamped = 0.0f;
+    if(clamped > 1.0f) clamped = 1.0f;
+    if(scale == 0) scale = 1;
+    uint32_t q = (uint32_t) lrintf(clamped * (float)scale);
+    if(q > UINT16_MAX) q = UINT16_MAX;
+    return (uint16_t) q;
+}
+
+static inline void bmWriteValue(void *dest, const binaMethFile_t *fp, float value) {
+    if(fp->type & BM_VAL_U16) {
+        uint16_t q = bmQuantizeValue(value, fp->valScale);
+        memcpy(dest, &q, sizeof(uint16_t));
+    } else {
+        memcpy(dest, &value, sizeof(float));
+    }
+}
+
+static inline size_t bmStrandContextSize(const binaMethFile_t *fp) {
+    if((fp->type & BM_PACK_SC) && (fp->type & BM_STRAND) && (fp->type & BM_CONTEXT)) return 1;
+    size_t size = 0;
+    if(fp->type & BM_STRAND) size += 1;
+    if(fp->type & BM_CONTEXT) size += 1;
+    return size;
+}
+
+static inline void bmWriteStrandContext(uint8_t *dest, const binaMethFile_t *fp, uint8_t strand, uint8_t context) {
+    if((fp->type & BM_PACK_SC) && (fp->type & BM_STRAND) && (fp->type & BM_CONTEXT)) {
+        uint8_t packed = (strand & 0x1) | ((context & 0x7) << 1);
+        *dest = packed;
+        return;
+    }
+    size_t offset = 0;
+    if(fp->type & BM_STRAND) {
+        dest[offset++] = strand;
+    }
+    if(fp->type & BM_CONTEXT) {
+        dest[offset] = context;
+    }
+}
+
 void bmSetWriteBufSize(uint32_t bufSize) {
     if(bufSize < 4096) bufSize = 4096;
     gWriteBufSize = bufSize;
@@ -256,6 +302,10 @@ typedef struct {
     uint16_t size;
     uint32_t bufSize;
     uint32_t blockSize;
+    uint32_t valScale;
+    uint8_t valEncoding;
+    uint8_t packSc;
+    uint8_t padding[2];
 } bmWriteParams_t;
 
 #define BM_WRITE_PARAMS_MAGIC 0x44574d50 /* "DWMP" */
@@ -307,10 +357,15 @@ int bmWriteHdr(binaMethFile_t *bm) {
     bm->hdr->extensionOffset = ftell(fp);
     bmWriteParams_t params;
     params.magic = BM_WRITE_PARAMS_MAGIC;
-    params.version = 2;
+    params.version = 3;
     params.size = sizeof(bmWriteParams_t);
     params.bufSize = bm->hdr->bufSize;
     params.blockSize = bm->writeBuffer->blockSize;
+    params.valScale = (bm->type & BM_VAL_U16) ? bm->valScale : 0;
+    params.valEncoding = (bm->type & BM_VAL_U16) ? 1 : 0;
+    params.packSc = (bm->type & BM_PACK_SC) ? 1 : 0;
+    params.padding[0] = 0;
+    params.padding[1] = 0;
     if(fwrite(&params, sizeof(params), 1, fp) != 1) return 12;
     if(writeAtPos(&(bm->hdr->extensionOffset), sizeof(uint64_t), 1, 0x38, fp)) return 12;
 
@@ -487,12 +542,13 @@ int bmAddIntervals(binaMethFile_t *fp, char **chrom, uint32_t *start, uint32_t *
     if(DEBUG>1) fprintf(stderr, "fp->hdr->bufSize %d %d\n", wb->l, fp->hdr->bufSize);
 
     size_t slen = (fp->type & BM_ID) ? sizeof(uint32_t) : 0;
+    size_t valueBytes = bmValueSize(fp);
+    size_t scBytes = bmStrandContextSize(fp);
     size_t needed = 4; // start
     if(fp->type & BM_END) needed += 4;
-    needed += 4; // value
+    needed += valueBytes; // value
     if(fp->type & BM_COVER) needed += 2;
-    if(fp->type & BM_STRAND) needed += 1;
-    if(fp->type & BM_CONTEXT) needed += 1;
+    needed += scBytes;
     needed += slen;
 
     if(needed > fp->hdr->bufSize) return 4;
@@ -521,19 +577,15 @@ int bmAddIntervals(binaMethFile_t *fp, char **chrom, uint32_t *start, uint32_t *
         memcpy(wb->p+wb->l+elen, end, sizeof(uint32_t));
         elen += 4;
     }
-    memcpy(wb->p+wb->l+elen, values, sizeof(float));
-    elen += 4;
+    bmWriteValue(wb->p+wb->l+elen, fp, values[0]);
+    elen += valueBytes;
     if(fp->type & BM_COVER){
         memcpy(wb->p+wb->l+elen, coverage, sizeof(uint16_t));
         elen += 2;
     }
-    if(fp->type & BM_STRAND){
-        memcpy(wb->p+wb->l+elen, strand, sizeof(uint8_t));
-        elen += 1;
-    }
-    if(fp->type & BM_CONTEXT){
-        memcpy(wb->p+wb->l+elen, context, sizeof(uint8_t));
-        elen += 1;
+    if(scBytes) {
+        bmWriteStrandContext((uint8_t *)wb->p+wb->l+elen, fp, strand[0], context[0]);
+        elen += scBytes;
     }
     if(fp->type & BM_ID){
         uint32_t id0 = entryid ? entryid[0] : 0;
@@ -615,19 +667,15 @@ int bmAddIntervals(binaMethFile_t *fp, char **chrom, uint32_t *start, uint32_t *
             memcpy(wb->p+wb->l+elen, &(end[i]), sizeof(uint32_t));
             elen += 4;
         }
-        memcpy(wb->p+wb->l+elen, &(values[i]), sizeof(float));
-        elen += 4;
+        bmWriteValue(wb->p+wb->l+elen, fp, values[i]);
+        elen += valueBytes;
         if(fp->type & BM_COVER){
             memcpy(wb->p+wb->l+elen, &(coverage[i]), sizeof(uint16_t));
             elen += 2;
         }
-        if(fp->type & BM_STRAND){
-            memcpy(wb->p+wb->l+elen, &(strand[i]), sizeof(uint8_t));
-            elen += 1;
-        }
-        if(fp->type & BM_CONTEXT){
-            memcpy(wb->p+wb->l+elen, &(context[i]), sizeof(uint8_t));
-            elen += 1;
+        if(scBytes) {
+            bmWriteStrandContext((uint8_t *)wb->p+wb->l+elen, fp, strand[i], context[i]);
+            elen += scBytes;
         }
         if(fp->type & BM_ID){
             uint32_t idv = entryid ? entryid[i] : 0;
@@ -708,12 +756,13 @@ int bmAppendIntervals(binaMethFile_t *fp, uint32_t *start, uint32_t *end, float 
 
     for(i=0; i<n; i++) {
         size_t slen = (fp->type & BM_ID) ? sizeof(uint32_t) : 0;
+        size_t valueBytes = bmValueSize(fp);
+        size_t scBytes = bmStrandContextSize(fp);
         size_t needed = 4; //start
         if(fp->type & BM_END) needed += 4;
-        needed += 4; //value
+        needed += valueBytes; //value
         if(fp->type & BM_COVER) needed += 2;
-        if(fp->type & BM_STRAND) needed += 1;
-        if(fp->type & BM_CONTEXT) needed += 1;
+        needed += scBytes;
         needed += slen;
 
         if(needed > fp->hdr->bufSize) return 4;
@@ -732,19 +781,15 @@ int bmAppendIntervals(binaMethFile_t *fp, uint32_t *start, uint32_t *end, float 
             memcpy(wb->p+wb->l+elen, &(end[i]), sizeof(uint32_t));
             elen += 4;
         }
-        memcpy(wb->p+wb->l+elen, &(values[i]), sizeof(float));
-        elen += 4;
+        bmWriteValue(wb->p+wb->l+elen, fp, values[i]);
+        elen += valueBytes;
         if(fp->type & BM_COVER){
             memcpy(wb->p+wb->l+elen, &(coverage[i]), sizeof(uint16_t));
             elen += 2;
         }
-        if(fp->type & BM_STRAND){
-            memcpy(wb->p+wb->l+elen, &(strand[i]), sizeof(uint8_t));
-            elen += 1;
-        }
-        if(fp->type & BM_CONTEXT){
-            memcpy(wb->p+wb->l+elen, &(context[i]), sizeof(uint8_t));
-            elen += 1;
+        if(scBytes) {
+            bmWriteStrandContext((uint8_t *)wb->p+wb->l+elen, fp, strand[i], context[i]);
+            elen += scBytes;
         }
         if(fp->type & BM_ID){
             uint32_t idv = entryid ? entryid[i] : 0;
@@ -810,6 +855,8 @@ int bmAppendIntervals(binaMethFile_t *fp, uint32_t *start, uint32_t *end, float 
 int bmAddIntervalSpans(binaMethFile_t *fp, char *chrom, uint32_t *start, uint32_t span, float *values, uint32_t n) {
     uint32_t i, tid;
     bmWriteBuffer_t *wb = fp->writeBuffer;
+    size_t valueBytes = bmValueSize(fp);
+    size_t entryBytes = sizeof(uint32_t) + valueBytes;
     if(!n) return 0;
     if(!fp->isWrite) return 1;
     if(!wb) return 2;
@@ -825,15 +872,15 @@ int bmAddIntervalSpans(binaMethFile_t *fp, char *chrom, uint32_t *start, uint32_
     wb->ltype = 2;
 
     for(i=0; i<n; i++) {
-        if(wb->l + 8 >= fp->hdr->bufSize) { //8 bytes/entry
+        if(wb->l + entryBytes >= fp->hdr->bufSize) {
             if(i) wb->end = start[i-1]+span;
             flushBuffer(fp);
             wb->start = start[i];
         }
         if(!memcpy(wb->p+wb->l, &(start[i]), sizeof(uint32_t))) return 5;
-        if(!memcpy(wb->p+wb->l+4, &(values[i]), sizeof(float))) return 6;
+        bmWriteValue(wb->p+wb->l+4, fp, values[i]);
         updateStats(fp, span, values[i]);
-        wb->l += 8;
+        wb->l += entryBytes;
     }
     wb->end = start[n-1] + span;
 
@@ -843,21 +890,23 @@ int bmAddIntervalSpans(binaMethFile_t *fp, char *chrom, uint32_t *start, uint32_
 int bmAppendIntervalSpans(binaMethFile_t *fp, uint32_t *start, float *values, uint32_t n) {
     uint32_t i;
     bmWriteBuffer_t *wb = fp->writeBuffer;
+    size_t valueBytes = bmValueSize(fp);
+    size_t entryBytes = sizeof(uint32_t) + valueBytes;
     if(!n) return 0;
     if(!fp->isWrite) return 1;
     if(!wb) return 2;
     if(wb->ltype != 2) return 3;
 
     for(i=0; i<n; i++) {
-        if(wb->l + 8 >= fp->hdr->bufSize) {
+        if(wb->l + entryBytes >= fp->hdr->bufSize) {
             if(i) wb->end = start[i-1]+wb->span;
             flushBuffer(fp);
             wb->start = start[i];
         }
         if(!memcpy(wb->p+wb->l, &(start[i]), sizeof(uint32_t))) return 4;
-        if(!memcpy(wb->p+wb->l+4, &(values[i]), sizeof(float))) return 5;
+        bmWriteValue(wb->p+wb->l+4, fp, values[i]);
         updateStats(fp, wb->span, values[i]);
-        wb->l += 8;
+        wb->l += entryBytes;
     }
     wb->end = start[n-1] + wb->span;
 
@@ -868,6 +917,7 @@ int bmAppendIntervalSpans(binaMethFile_t *fp, uint32_t *start, float *values, ui
 int bmAddIntervalSpanSteps(binaMethFile_t *fp, char *chrom, uint32_t start, uint32_t span, uint32_t step, float *values, uint32_t n) {
     uint32_t i, tid;
     bmWriteBuffer_t *wb = fp->writeBuffer;
+    size_t valueBytes = bmValueSize(fp);
     if(!n) return 0;
     if(!fp->isWrite) return 1;
     if(!wb) return 2;
@@ -883,16 +933,16 @@ int bmAddIntervalSpanSteps(binaMethFile_t *fp, char *chrom, uint32_t start, uint
     wb->ltype = 3;
 
     for(i=0; i<n; i++) {
-        if(wb->l + 4 >= fp->hdr->bufSize) {
-            wb->end = wb->start + ((wb->l-24)>>2) * step;
+        if(wb->l + valueBytes >= fp->hdr->bufSize) {
+            wb->end = wb->start + ((wb->l-24)/valueBytes) * step;
             flushBuffer(fp);
             wb->start = wb->end;
         }
-        if(!memcpy(wb->p+wb->l, &(values[i]), sizeof(float))) return 5;
+        bmWriteValue(wb->p+wb->l, fp, values[i]);
         updateStats(fp, wb->span, values[i]);
-        wb->l += 4;
+        wb->l += valueBytes;
     }
-    wb->end = wb->start + (wb->l>>2) * step;
+    wb->end = wb->start + ((wb->l-24)/valueBytes) * step;
 
     return 0;
 }
@@ -900,22 +950,23 @@ int bmAddIntervalSpanSteps(binaMethFile_t *fp, char *chrom, uint32_t start, uint
 int bmAppendIntervalSpanSteps(binaMethFile_t *fp, float *values, uint32_t n) {
     uint32_t i;
     bmWriteBuffer_t *wb = fp->writeBuffer;
+    size_t valueBytes = bmValueSize(fp);
     if(!n) return 0;
     if(!fp->isWrite) return 1;
     if(!wb) return 2;
     if(wb->ltype != 3) return 3;
 
     for(i=0; i<n; i++) {
-        if(wb->l + 4 >= fp->hdr->bufSize) {
-            wb->end = wb->start + ((wb->l-24)>>2) * wb->step;
+        if(wb->l + valueBytes >= fp->hdr->bufSize) {
+            wb->end = wb->start + ((wb->l-24)/valueBytes) * wb->step;
             flushBuffer(fp);
             wb->start = wb->end;
         }
-        if(!memcpy(wb->p+wb->l, &(values[i]), sizeof(float))) return 4;
+        bmWriteValue(wb->p+wb->l, fp, values[i]);
         updateStats(fp, wb->span, values[i]);
-        wb->l += 4;
+        wb->l += valueBytes;
     }
-    wb->end = wb->start + (wb->l>>2) * wb->step;
+    wb->end = wb->start + ((wb->l-24)/valueBytes) * wb->step;
 
     return 0;
 }

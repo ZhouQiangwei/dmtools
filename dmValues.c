@@ -17,6 +17,47 @@ static uint32_t roundup(uint32_t v) {
     return v;
 }
 
+static inline size_t bmValueSize(const binaMethFile_t *fp) {
+    return (fp->type & BM_VAL_U16) ? sizeof(uint16_t) : sizeof(float);
+}
+
+static inline float bmDecodeValue(const binaMethFile_t *fp, const uint8_t *src) {
+    if(fp->type & BM_VAL_U16) {
+        uint16_t q;
+        memcpy(&q, src, sizeof(q));
+        uint32_t scale = fp->valScale ? fp->valScale : 1;
+        return (float) q / (float) scale;
+    }
+    float value;
+    memcpy(&value, src, sizeof(value));
+    return value;
+}
+
+static inline size_t bmStrandContextSize(const binaMethFile_t *fp) {
+    if((fp->type & BM_PACK_SC) && (fp->type & BM_STRAND) && (fp->type & BM_CONTEXT)) return 1;
+    size_t size = 0;
+    if(fp->type & BM_STRAND) size += 1;
+    if(fp->type & BM_CONTEXT) size += 1;
+    return size;
+}
+
+static inline void bmDecodeStrandContext(const binaMethFile_t *fp, const uint8_t *src, uint8_t *strand, uint8_t *context) {
+    if((fp->type & BM_PACK_SC) && (fp->type & BM_STRAND) && (fp->type & BM_CONTEXT)) {
+        uint8_t packed = *src;
+        if(strand) *strand = packed & 0x1;
+        if(context) *context = (packed >> 1) & 0x7;
+        return;
+    }
+    size_t offset = 0;
+    if(fp->type & BM_STRAND) {
+        if(strand) *strand = src[offset];
+        offset += 1;
+    }
+    if(fp->type & BM_CONTEXT) {
+        if(context) *context = src[offset];
+    }
+}
+
 //Returns the root node on success and NULL on error
 static bmRTree_t *readRTreeIdx(binaMethFile_t *fp, uint64_t offset) {
     uint32_t magic;
@@ -483,7 +524,7 @@ bmOverlappingIntervals_t *bmGetOverlappingIntervalsCore(binaMethFile_t *fp, bmOv
     int compressed = 0, rv;
     uLongf sz = fp->hdr->bufSize, tmp;
     void *buf = NULL, *compBuf = NULL;
-    uint32_t start = 0, end = 0 , *p, temp;
+    uint32_t start = 0, end = 0;
     uint8_t strand = 0, context = 0; uint16_t coverage = 0;
     float value;
     bmDataHeader_t hdr;
@@ -502,7 +543,6 @@ bmOverlappingIntervals_t *bmGetOverlappingIntervalsCore(binaMethFile_t *fp, bmOv
     }
     sz = 0; //This is now the size of the compressed buffer
 
-    int slen = 0;
     for(i=0; i<o->n; i++) {
         if(bmSetPos(fp, o->offset[i])) goto error;
 
@@ -526,57 +566,56 @@ bmOverlappingIntervals_t *bmGetOverlappingIntervalsCore(binaMethFile_t *fp, bmOv
 
         //TODO: ensure that tmp is large enough!
         bmFillDataHdr(&hdr, buf);
-
-        p = ((uint32_t*) buf);
-        p += 6;
+        uint8_t *cursor = (uint8_t *)buf + (6 * sizeof(uint32_t));
         if(hdr.tid != tid) continue;
 
         if(hdr.type == 3) start = hdr.start - hdr.step;
+        size_t valueBytes = bmValueSize(fp);
+        size_t scBytes = bmStrandContextSize(fp);
         
         if(DEBUG>1) printf("EEEE %d %d\n", fp->type, hdr.nItems);
         //FIXME: We should ensure that sz is large enough to hold nItems of the given type
         for(j=0; j<hdr.nItems; j++) {
             switch(hdr.type) {
             case 1: // print all value
-                start = *p;
-                p++;
-                if(fp->type & BM_END){
-                    end = *p;
-                    p++;
+                memcpy(&start, cursor, sizeof(uint32_t));
+                cursor += sizeof(uint32_t);
+                if(fp->type & BM_END) {
+                    memcpy(&end, cursor, sizeof(uint32_t));
+                    cursor += sizeof(uint32_t);
                     if(DEBUG>1) printf("\nOOOOOOOO %d\n", end);
-                }else{
+                } else {
                     if(DEBUG>1) printf("\nHHHHAAAA\n");
-                    end = start+1;
+                    end = start + 1;
                 }
-                value = *((float *)p);
-                p++;
-                // 2 1 1
-                temp = *p;
-                p++;
-                //fprintf(stderr, "\ntemp %ld\n", temp);
-                // cause uint32_t binary format is reverse
-                // strand context coverage, 8 8 16
+                value = bmDecodeValue(fp, cursor);
+                cursor += valueBytes;
                 if(fp->type & BM_COVER){
-                    coverage = (uint16_t) (temp);
-                    slen = 16;
-                }else{
-                    slen = 0;
+                    memcpy(&coverage, cursor, sizeof(uint16_t));
+                    cursor += sizeof(uint16_t);
+                } else {
+                    coverage = 0;
                 }
-                if(fp->type & BM_STRAND){
-                    strand = (uint8_t)(temp>>slen & 0xf); //16
-                    slen += 8;
+                if(scBytes) {
+                    bmDecodeStrandContext(fp, cursor, &strand, &context);
+                    cursor += scBytes;
+                } else {
+                    strand = 0;
+                    context = 0;
                 }
-                if(fp->type & BM_CONTEXT){
-                    context = (uint8_t)(temp>>slen); //24
+                if(fp->type & BM_ID) {
+                    uint32_t entryid;
+                    memcpy(&entryid, cursor, sizeof(uint32_t));
+                    cursor += sizeof(uint32_t);
                 }
                 break;
             case 2: // only print end with value
-                start = *p;
-                p++;
-                end = *p;
-                p++;
-                value = *((float *)p);
-                p++;
+                memcpy(&start, cursor, sizeof(uint32_t));
+                cursor += sizeof(uint32_t);
+                memcpy(&end, cursor, sizeof(uint32_t));
+                cursor += sizeof(uint32_t);
+                value = bmDecodeValue(fp, cursor);
+                cursor += valueBytes;
                 break;
             default :
                 goto error;
@@ -609,7 +648,7 @@ bmOverlappingIntervals_t *bmGetOverlappingIntervalsCore_string(binaMethFile_t *f
     int compressed = 0, rv;
     uLongf sz = fp->hdr->bufSize, tmp;
     void *buf = NULL, *tmpbuf = NULL, *compBuf = NULL;
-    uint32_t start = 0, end = 0 , *p = NULL;
+    uint32_t start = 0, end = 0;
     uint8_t strand = 0, context = 0; uint16_t coverage = 0;
     uint32_t entryid = 0;
     float value;
@@ -649,12 +688,9 @@ bmOverlappingIntervals_t *bmGetOverlappingIntervalsCore_string(binaMethFile_t *f
         //TODO: ensure that tmp is large enough!
         bmFillDataHdr(&hdr, buf);
         if(DEBUG>1) fprintf(stderr, "\ntsssss11111sssss\n");
-        //p = ((uint32_t*) buf);
-        //p += 6;
         tmpbuf = buf;
-        buf += (6*sizeof(uint32_t));
+        uint8_t *cursor = (uint8_t *)buf + (6 * sizeof(uint32_t));
         if(hdr.tid != tid) continue;
-        uint8_t elen = 0, Nelement = 0;
         int withString = 0;
         if(fp->type & BM_ID){
             withString = 1;
@@ -665,53 +701,50 @@ bmOverlappingIntervals_t *bmGetOverlappingIntervalsCore_string(binaMethFile_t *f
 
         if(DEBUG>1) fprintf(stderr, "hdr.nItems %d %d %d\n", hdr.nItems, fp->type, output->l);
         //FIXME: We should ensure that sz is large enough to hold nItems of the given type
+        size_t valueBytes = bmValueSize(fp);
+        size_t scBytes = bmStrandContextSize(fp);
         for(j=0; j<hdr.nItems; j++) {
             switch(hdr.type) {
             case 1: // print all value
-                start = ((uint32_t*)buf)[0];
-                Nelement = 1;
+                memcpy(&start, cursor, sizeof(uint32_t));
+                cursor += sizeof(uint32_t);
                 if(fp->type & BM_END){
-                    end = ((uint32_t*)buf)[Nelement]; //1
-                    Nelement += 1;
-                }else{
+                    memcpy(&end, cursor, sizeof(uint32_t));
+                    cursor += sizeof(uint32_t);
+                } else {
                     end = start + 1;
                 }
-                value = ((float*)buf)[Nelement];
-                Nelement += 1;
-                elen = Nelement * 4;
-                Nelement = Nelement*2;
-                // 2 1 1
+                value = bmDecodeValue(fp, cursor);
+                cursor += valueBytes;
                 if(fp->type & BM_COVER){
-                    coverage = ((uint16_t*)buf)[Nelement]; //6
-                    elen += 2;
-                    Nelement += 1;
+                    memcpy(&coverage, cursor, sizeof(uint16_t));
+                    cursor += sizeof(uint16_t);
+                } else {
+                    coverage = 0;
                 }
-                Nelement = Nelement*2;
-                if(fp->type & BM_STRAND){
-                    strand = ((uint8_t*)buf)[Nelement]; //14
-                    elen+=1;
-                    Nelement += 1;
+                if(scBytes) {
+                    bmDecodeStrandContext(fp, cursor, &strand, &context);
+                    cursor += scBytes;
+                } else {
+                    strand = 0;
+                    context = 0;
                 }
-                if(fp->type & BM_CONTEXT){
-                    context = ((uint8_t*)buf)[Nelement]; //15
-                    elen+=1;
-                    Nelement += 1;
-                }
-                buf += elen;
 
                 if(fp->type & BM_ID){
-                    entryid = *((uint32_t*)buf);
-                    buf += sizeof(uint32_t);
+                    memcpy(&entryid, cursor, sizeof(uint32_t));
+                    cursor += sizeof(uint32_t);
+                } else {
+                    entryid = 0;
                 }
                 //if(DEBUG>1) fprintf(stderr, "\nNtemp %d %f %d , ss, %d %d\n", coverage, value, tmp, start, end);
                 break;
             case 2: // only print end with value
-                start = *p;
-                p++;
-                end = *p;
-                p++;
-                value = *((float *)p);
-                p++;
+                memcpy(&start, cursor, sizeof(uint32_t));
+                cursor += sizeof(uint32_t);
+                memcpy(&end, cursor, sizeof(uint32_t));
+                cursor += sizeof(uint32_t);
+                value = bmDecodeValue(fp, cursor);
+                cursor += valueBytes;
                 break;
             default :
                 goto error;
