@@ -159,6 +159,7 @@ int dm_sc_export_main(int argc, char **argv);
 int dm_sc_shrinkage_main(int argc, char **argv);
 int dm_sc_pseudobulk_main(int argc, char **argv);
 int dm_validate_main(int argc, char **argv);
+int dm_dmr_bb_main(int argc, char **argv);
 
 struct ARGS{
     char* runCMD;
@@ -183,7 +184,7 @@ struct Threading
 #define MAX_BUFF_PRINT 20000000
 const char* Help_String_main="Command Format :  dmtools <mode> [opnions]\n"
                 "\nUsage:\n"
-        "\t  [mode]         index align bam2dm mr2dm view ebsrate viewheader overlap regionstats bodystats profile chromstats sc-qc sc-matrix sc-aggregate sc-export sc-shrinkage sc-pseudobulk validate\n\n"
+        "\t  [mode]         index align bam2dm mr2dm view ebsrate viewheader overlap regionstats bodystats profile chromstats sc-qc sc-matrix sc-aggregate sc-export sc-shrinkage sc-pseudobulk dmr-bb validate\n\n"
         "\t  index          build index for genome\n"
         "\t  align          alignment fastq\n"
         "\t  bam2dm         calculate DNA methylation (DM format) with BAM file\n"
@@ -207,7 +208,8 @@ const char* Help_String_main="Command Format :  dmtools <mode> [opnions]\n"
         "\t  sc-aggregate   aggregate single-cell methylation into group-level profiles (ID as cell_id)\n"
         "\t  sc-export      export sc-matrix output bundle (optionally to h5ad)\n"
         "\t  sc-shrinkage   empirical Bayes shrinkage on sc-matrix count bundles\n"
-        "\t  sc-pseudobulk  build per-group pseudobulk dm files from single-cell DM\n";
+        "\t  sc-pseudobulk  build per-group pseudobulk dm files from single-cell DM\n"
+        "\t  dmr-bb         beta-binomial style DMR test on region counts\n";
 
 static int dm_idmap_find_or_add(char ***names, size_t *n, size_t *cap, const char *name) {
     if(!names || !n || !cap || !name) return -1;
@@ -310,6 +312,15 @@ const char* Help_String_scpseudobulk="Command Format :  dmtools sc-pseudobulk [o
         "\t--context            context filter: C, CG, CHG, CHH (default: no filter)\n"
         "\t-h|--help";
 
+const char* Help_String_dmrbb="Command Format :  dmtools dmr-bb --input <counts.tsv> [options]\n"
+        "\nUsage: dmtools dmr-bb --input counts.tsv --out dmr.tsv [--rho 0.0]\n"
+        "\t [dmr-bb] required\n"
+        "\t--input              TSV with columns: chr start end k1 n1 k2 n2\n"
+        "\t [dmr-bb] options\n"
+        "\t--out                output TSV (default: stdout)\n"
+        "\t--rho                beta-binomial overdispersion (default: 0.0)\n"
+        "\t-h|--help";
+
 const char* Help_String_validate="Command Format :  dmtools validate -i <dm file> [--verbose]\n"
         "\nUsage: dmtools validate -i input.dm [--verbose] [--region chr:start-end]\n"
         "\t [validate] required\n"
@@ -318,6 +329,173 @@ const char* Help_String_validate="Command Format :  dmtools validate -i <dm file
         "\t--verbose            print additional index block details\n"
         "\t--region             region to query for records (default: chr1:1-1000000)\n"
         "\t-h|--help";
+
+typedef struct {
+    char *chrom;
+    uint32_t start;
+    uint32_t end;
+    double k1;
+    double n1;
+    double k2;
+    double n2;
+    double pval;
+    double qval;
+    double delta;
+    double p1;
+    double p2;
+} dm_dmr_bb_row_t;
+
+static int dm_dmr_bb_row_cmp(const void *a, const void *b) {
+    const dm_dmr_bb_row_t *ra = *(const dm_dmr_bb_row_t * const *)a;
+    const dm_dmr_bb_row_t *rb = *(const dm_dmr_bb_row_t * const *)b;
+    if (ra->pval < rb->pval) return -1;
+    if (ra->pval > rb->pval) return 1;
+    return 0;
+}
+
+int dm_dmr_bb_main(int argc, char **argv) {
+    char *input = NULL;
+    char *output = NULL;
+    double rho = 0.0;
+
+    for (int i = 1; i < argc; ++i) {
+        if ((strcmp(argv[i], "-i") == 0 || strcmp(argv[i], "--input") == 0) && i + 1 < argc) {
+            input = argv[++i];
+        } else if ((strcmp(argv[i], "-o") == 0 || strcmp(argv[i], "--out") == 0) && i + 1 < argc) {
+            output = argv[++i];
+        } else if (strcmp(argv[i], "--rho") == 0 && i + 1 < argc) {
+            rho = atof(argv[++i]);
+            if (rho < 0.0) {
+                fprintf(stderr, "Error: --rho must be >= 0.\n");
+                return 1;
+            }
+        } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
+            fprintf(stderr, "%s\n", Help_String_dmrbb);
+            return 0;
+        } else {
+            fprintf(stderr, "%s\n", Help_String_dmrbb);
+            return 1;
+        }
+    }
+
+    if (!input) {
+        fprintf(stderr, "%s\n", Help_String_dmrbb);
+        return 1;
+    }
+
+    FILE *in = fopen(input, "r");
+    if (!in) {
+        fprintf(stderr, "Error: cannot open input %s\n", input);
+        return 1;
+    }
+    FILE *out = output ? fopen(output, "w") : stdout;
+    if (!out) {
+        fclose(in);
+        fprintf(stderr, "Error: cannot open output %s\n", output);
+        return 1;
+    }
+
+    dm_dmr_bb_row_t *rows = NULL;
+    size_t nRows = 0;
+    size_t capRows = 0;
+    char line[4096];
+    while (fgets(line, sizeof(line), in)) {
+        if (line[0] == '#' || line[0] == '\n') continue;
+        char chrom[256];
+        uint32_t start = 0, end = 0;
+        double k1 = 0.0, n1 = 0.0, k2 = 0.0, n2 = 0.0;
+        int parsed = sscanf(line, "%255s%u%u%lf%lf%lf%lf", chrom, &start, &end, &k1, &n1, &k2, &n2);
+        if (parsed != 7) continue;
+
+        if (nRows == capRows) {
+            size_t newCap = capRows ? capRows * 2 : 256;
+            dm_dmr_bb_row_t *tmp = realloc(rows, newCap * sizeof(dm_dmr_bb_row_t));
+            if (!tmp) {
+                fprintf(stderr, "Error: out of memory.\n");
+                fclose(in);
+                if (out != stdout) fclose(out);
+                free(rows);
+                return 1;
+            }
+            rows = tmp;
+            capRows = newCap;
+        }
+
+        double p1 = (n1 > 0.0) ? k1 / n1 : 0.0;
+        double p2 = (n2 > 0.0) ? k2 / n2 : 0.0;
+        double var1 = (n1 > 0.0) ? (p1 * (1.0 - p1) / n1) * (1.0 + (n1 - 1.0) * rho) : 0.0;
+        double var2 = (n2 > 0.0) ? (p2 * (1.0 - p2) / n2) * (1.0 + (n2 - 1.0) * rho) : 0.0;
+        double denom = sqrt(var1 + var2);
+        double z = (denom > 0.0) ? (p1 - p2) / denom : 0.0;
+        double pval = (denom > 0.0) ? erfc(fabs(z) / sqrt(2.0)) : 1.0;
+
+        rows[nRows].chrom = strdup(chrom);
+        rows[nRows].start = start;
+        rows[nRows].end = end;
+        rows[nRows].k1 = k1;
+        rows[nRows].n1 = n1;
+        rows[nRows].k2 = k2;
+        rows[nRows].n2 = n2;
+        rows[nRows].pval = pval;
+        rows[nRows].qval = 1.0;
+        rows[nRows].delta = p1 - p2;
+        rows[nRows].p1 = p1;
+        rows[nRows].p2 = p2;
+        nRows++;
+    }
+    fclose(in);
+
+    if (nRows == 0) {
+        fprintf(stderr, "Warning: no valid rows in %s\n", input);
+    }
+
+    dm_dmr_bb_row_t **order = NULL;
+    if (nRows > 0) {
+        order = malloc(nRows * sizeof(dm_dmr_bb_row_t *));
+        if (!order) {
+            fprintf(stderr, "Error: out of memory.\n");
+            if (out != stdout) fclose(out);
+            for (size_t i = 0; i < nRows; i++) free(rows[i].chrom);
+            free(rows);
+            return 1;
+        }
+        for (size_t i = 0; i < nRows; i++) order[i] = &rows[i];
+        qsort(order, nRows, sizeof(dm_dmr_bb_row_t *), dm_dmr_bb_row_cmp);
+        for (size_t i = 0; i < nRows; i++) {
+            double q = order[i]->pval * (double)nRows / (double)(i + 1);
+            if (q > 1.0) q = 1.0;
+            order[i]->qval = q;
+        }
+        for (size_t i = nRows; i-- > 1;) {
+            if (order[i - 1]->qval > order[i]->qval) {
+                order[i - 1]->qval = order[i]->qval;
+            }
+        }
+    }
+
+    fprintf(out, "chrom\tstart\tend\tdelta\tp_value\tq_value\tk1\tn1\tk2\tn2\tp1\tp2\n");
+    for (size_t i = 0; i < nRows; i++) {
+        fprintf(out, "%s\t%u\t%u\t%.6f\t%.6g\t%.6g\t%.0f\t%.0f\t%.0f\t%.0f\t%.6f\t%.6f\n",
+                rows[i].chrom,
+                rows[i].start,
+                rows[i].end,
+                rows[i].delta,
+                rows[i].pval,
+                rows[i].qval,
+                rows[i].k1,
+                rows[i].n1,
+                rows[i].k2,
+                rows[i].n2,
+                rows[i].p1,
+                rows[i].p2);
+    }
+
+    if (out != stdout) fclose(out);
+    for (size_t i = 0; i < nRows; i++) free(rows[i].chrom);
+    free(rows);
+    free(order);
+    return 0;
+}
 
 int dm_validate_main(int argc, char **argv){
     char *input = NULL;
@@ -783,6 +961,8 @@ int main(int argc, char *argv[]) {
         return dm_sc_shrinkage_main(argc-1, argv+1);
     } else if(argc>1 && strcmp(argv[1], "sc-pseudobulk") == 0){
         return dm_sc_pseudobulk_main(argc-1, argv+1);
+    } else if(argc>1 && strcmp(argv[1], "dmr-bb") == 0){
+        return dm_dmr_bb_main(argc-1, argv+1);
     } else if(argc>1 && strcmp(argv[1], "validate") == 0){
         return dm_validate_main(argc-1, argv+1);
     }

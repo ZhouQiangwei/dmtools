@@ -36,6 +36,9 @@ jobs:
         run: |
           ./test/test_sc_shrinkage_toy.py
           ./test/test_sc_shrinkage_integration.py
+      - name: dmr-bb test
+        run: |
+          ./test/test_dmr_bb_toy.py
 
   build-macos:
     runs-on: macos-latest

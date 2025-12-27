@@ -199,6 +199,7 @@ test: test/testLocal test/testRemote test/testWrite test/testLocal dmtools bam2d
 	./test/test_id_roundtrip
 	./test/test_sc_shrinkage_toy.py
 	./test/test_sc_shrinkage_integration.py
+	./test/test_dmr_bb_toy.py
 
 clean:
 	rm -f *.o libBinaMeth.a libBinaMeth.so *.pico test/testLocal test/testRemote test/testWrite dmtools dmDMR bam2dm bam2motif dmalign test/exampleWrite test/testRemoteManyContigs test/testIterator genome2cg genomebinLen dmalign
