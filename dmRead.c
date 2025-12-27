@@ -175,6 +175,25 @@ error:
     bm->hdr = NULL;
 }
 
+typedef struct {
+    uint32_t magic;
+    uint16_t version;
+    uint16_t size;
+    uint32_t bufSize;
+    uint32_t blockSize;
+} bmWriteParams_t;
+
+#define BM_WRITE_PARAMS_MAGIC 0x44574d50 /* "DWMP" */
+
+static int bmReadWriteParams(binaMethFile_t *bm, bmWriteParams_t *params) {
+    if(!bm || !bm->hdr || !params) return 1;
+    if(!bm->hdr->extensionOffset) return 1;
+    if(bmSetPos(bm, bm->hdr->extensionOffset)) return 1;
+    if(bmRead(params, sizeof(*params), 1, bm) != 1) return 1;
+    if(params->magic != BM_WRITE_PARAMS_MAGIC) return 1;
+    return 0;
+}
+
 static void destroyChromList(chromList_t *cl) {
     uint32_t i;
     if(!cl) return;
@@ -388,6 +407,13 @@ binaMethFile_t *bmOpen(char *fname, CURLcode (*callBack) (CURL*), const char *mo
         if(!bmg->hdr) {
             fprintf(stderr, "[bmOpen] bmg->hdr is NULL!\n");
             goto error;
+        }
+        if(bmg->hdr->version & BM_ID) {
+            bmWriteParams_t params;
+            if(bmReadWriteParams(bmg, &params) != 0 || params.version < 2) {
+                fprintf(stderr, "[bmOpen] legacy string-ID DM detected in %s; regenerate with new dmtools\n", fname);
+                goto error;
+            }
         }
 
         //Read in the chromosome list

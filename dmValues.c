@@ -331,7 +331,9 @@ void bmDestroyOverlappingIntervals(bmOverlappingIntervals_t *o) {
     if(o->coverage) free(o->coverage);
     if(o->strand) free(o->strand);
     if(o->context) free(o->context);
-    if(o->entryid) free(o->entryid);
+    if(o->entryid) {
+        free(o->entryid);
+    }
 
     free(o);
 }
@@ -400,7 +402,7 @@ error:
 }
 
 //Returns NULL on error, in which case o has been free()d
-static bmOverlappingIntervals_t *pushIntervals_string(bmOverlappingIntervals_t *o, uint32_t start, uint32_t end, float value, uint16_t coverage, uint8_t strand, uint8_t context, char *entryid, int withString, int ptype) {
+static bmOverlappingIntervals_t *pushIntervals_string(bmOverlappingIntervals_t *o, uint32_t start, uint32_t end, float value, uint16_t coverage, uint8_t strand, uint8_t context, uint32_t entryid, int withString, int ptype) {
     //fprintf(stderr, "len %d %d", o->l, o->m);
     if(o->l+1 >= o->m) {
         o->m = roundup(o->l+1);
@@ -423,7 +425,7 @@ static bmOverlappingIntervals_t *pushIntervals_string(bmOverlappingIntervals_t *
             if(!o->context) goto error;
         }
         if(withString) {
-            o->entryid = realloc(o->entryid, o->m * sizeof(char*));
+            o->entryid = realloc(o->entryid, o->m * sizeof(uint32_t));
             if(!o->entryid) goto error;
         }
     }
@@ -439,7 +441,7 @@ static bmOverlappingIntervals_t *pushIntervals_string(bmOverlappingIntervals_t *
     if(ptype & BM_CONTEXT){
         o->context[o->l] = context;
     }
-    if(withString) o->entryid[o->l] = strdup(entryid);
+    if(withString) o->entryid[o->l] = entryid;
     o->l++;
     //fprintf(stderr, "len2---- %d %d %d %d", o->l, o->m, start, end);
     //if(start == 75878) exit(0);
@@ -609,7 +611,7 @@ bmOverlappingIntervals_t *bmGetOverlappingIntervalsCore_string(binaMethFile_t *f
     void *buf = NULL, *tmpbuf = NULL, *compBuf = NULL;
     uint32_t start = 0, end = 0 , *p = NULL;
     uint8_t strand = 0, context = 0; uint16_t coverage = 0;
-    char *entryid = NULL;
+    uint32_t entryid = 0;
     float value;
     bmDataHeader_t hdr;
     bmOverlappingIntervals_t *output = calloc(1, sizeof(bmOverlappingIntervals_t));
@@ -652,7 +654,7 @@ bmOverlappingIntervals_t *bmGetOverlappingIntervalsCore_string(binaMethFile_t *f
         tmpbuf = buf;
         buf += (6*sizeof(uint32_t));
         if(hdr.tid != tid) continue;
-        uint8_t slen = 0, elen = 0, Nelement = 0;
+        uint8_t elen = 0, Nelement = 0;
         int withString = 0;
         if(fp->type & BM_ID){
             withString = 1;
@@ -698,10 +700,8 @@ bmOverlappingIntervals_t *bmGetOverlappingIntervalsCore_string(binaMethFile_t *f
                 buf += elen;
 
                 if(fp->type & BM_ID){
-                    entryid = (char*)buf;
-                    slen = strlen(entryid) + 1;
-                    buf += slen;
-                    //if(DEBUG>1) fprintf(stderr, "\nNtemp11 %s ,%d %f %d , ss, %d %d\n", entryid, coverage, value, tmp, start, end);
+                    entryid = *((uint32_t*)buf);
+                    buf += sizeof(uint32_t);
                 }
                 //if(DEBUG>1) fprintf(stderr, "\nNtemp %d %f %d , ss, %d %d\n", coverage, value, tmp, start, end);
                 break;

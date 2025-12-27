@@ -2,48 +2,81 @@
 #include "dmCommon.h"
 #include <errno.h>
 #include <getopt.h>
+#include <limits.h>
+#include <limits.h>
 #include <stdint.h>
 #include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 extern const char* Help_String_scaggregate;
 
 typedef struct {
-    char *id;
+    char **names;
+    size_t n;
+} dm_sc_idmap_t;
+
+typedef struct {
     uint64_t n_sites;
     uint64_t total_cov;
     double sum_meth_weighted;
 } dm_sc_qc_entry_t;
 
-static void dm_sc_qc_free_entries(dm_sc_qc_entry_t *entries, size_t n) {
-    if (!entries) return;
-    for (size_t i = 0; i < n; i++) {
-        free(entries[i].id);
-    }
-    free(entries);
+static void dm_sc_free_idmap(dm_sc_idmap_t *map) {
+    if (!map || !map->names) return;
+    for (size_t i = 0; i < map->n; i++) free(map->names[i]);
+    free(map->names);
+    map->names = NULL;
+    map->n = 0;
 }
 
-static int dm_sc_qc_find_or_add(dm_sc_qc_entry_t **entries, size_t *n, size_t *cap, const char *id) {
-    for (size_t i = 0; i < *n; i++) {
-        if (strcmp((*entries)[i].id, id) == 0) return (int)i;
+static int dm_sc_load_idmap(const char *dmPath, dm_sc_idmap_t *map) {
+    char path[PATH_MAX];
+    snprintf(path, sizeof(path), "%s.idmap.tsv", dmPath);
+    FILE *f = fopen(path, "r");
+    if (!f) {
+        snprintf(path, sizeof(path), "%s.idmap", dmPath);
+        f = fopen(path, "r");
     }
-    if (*n == *cap) {
-        size_t newCap = (*cap == 0) ? 16 : (*cap * 2);
-        dm_sc_qc_entry_t *tmp = realloc(*entries, newCap * sizeof(dm_sc_qc_entry_t));
-        if (!tmp) return -1;
-        *entries = tmp;
-        *cap = newCap;
+    if (!f) {
+        fprintf(stderr, "Error: missing idmap for %s (expected %s.idmap.tsv)\n", dmPath, dmPath);
+        return 1;
     }
-    (*entries)[*n].id = strdup(id);
-    if (!(*entries)[*n].id) return -1;
-    (*entries)[*n].n_sites = 0;
-    (*entries)[*n].total_cov = 0;
-    (*entries)[*n].sum_meth_weighted = 0.0;
-    (*n)++;
-    return (int)(*n - 1);
+    char line[4096];
+    size_t cap = 0;
+    while (fgets(line, sizeof(line), f)) {
+        if (line[0] == '#' || line[0] == '\n') continue;
+        char *idStr = strtok(line, "\t\n");
+        char *name = strtok(NULL, "\t\n");
+        if (!idStr || !name) continue;
+        uint32_t id = (uint32_t)strtoul(idStr, NULL, 10);
+        if (id == 0) continue;
+        if (id >= map->n) {
+            size_t newN = id + 1;
+            if (newN > cap) {
+                cap = cap ? cap * 2 : 64;
+                if (cap < newN) cap = newN;
+                char **tmp = realloc(map->names, cap * sizeof(char *));
+                if (!tmp) { fclose(f); return 1; }
+                for (size_t i = map->n; i < cap; i++) tmp[i] = NULL;
+                map->names = tmp;
+            }
+            map->n = newN;
+        }
+        if (!map->names[id]) map->names[id] = strdup(name);
+    }
+    fclose(f);
+    if (map->n == 0) return 1;
+    return 0;
+}
+
+static void dm_sc_qc_free_entries(dm_sc_qc_entry_t *entries) {
+    if (!entries) return;
+    free(entries);
 }
 
 static int dm_sc_qc_parse_context(const char *ctx, uint8_t *val) {
@@ -62,6 +95,7 @@ static int dm_sc_qc_parse_context(const char *ctx, uint8_t *val) {
     }
     return -1;
 }
+
 
 static void dm_sc_qc_usage() {
     fprintf(stderr,
@@ -146,8 +180,8 @@ int dm_sc_qc_main(int argc, char **argv) {
         goto error;
     }
 
+    dm_sc_idmap_t idmap = {0};
     dm_sc_qc_entry_t *entries = NULL;
-    size_t nEntries = 0, capEntries = 0;
 
     for (size_t fi = 0; fi < nInputs; fi++) {
         binaMethFile_t *fp = bmOpen(inputs[fi], NULL, "r");
@@ -171,6 +205,15 @@ int dm_sc_qc_main(int argc, char **argv) {
             goto error_entries;
         }
 
+        if (idmap.n == 0) {
+            if (dm_sc_load_idmap(inputs[fi], &idmap) != 0) {
+                bmClose(fp);
+                goto error_entries;
+            }
+            entries = calloc(idmap.n, sizeof(dm_sc_qc_entry_t));
+            if (!entries) { bmClose(fp); goto error_entries; }
+        }
+
         for (uint64_t ci = 0; ci < fp->cl->nKeys; ci++) {
             char *chrom = fp->cl->chrom[ci];
             uint32_t chromLen = fp->cl->len[ci];
@@ -183,17 +226,13 @@ int dm_sc_qc_main(int argc, char **argv) {
             for (uint64_t j = 0; j < o->l; j++) {
                 if (contextFilterSet && o->context[j] != contextFilter) continue;
                 if (o->coverage[j] < minCoverage) continue;
-                const char *id = o->entryid ? o->entryid[j] : NULL;
-                if (!id) continue;
-                int idx = dm_sc_qc_find_or_add(&entries, &nEntries, &capEntries, id);
-                if (idx < 0) {
-                    bmDestroyOverlappingIntervals(o);
-                    bmClose(fp);
-                    goto error_entries;
-                }
-                entries[idx].n_sites++;
-                entries[idx].total_cov += o->coverage[j];
-                entries[idx].sum_meth_weighted += ((double)o->value[j]) * o->coverage[j];
+                if (!o->entryid) continue;
+                uint32_t id = o->entryid[j];
+                if (id == 0) continue;
+                if (id >= idmap.n || !idmap.names[id]) continue;
+                entries[id].n_sites++;
+                entries[id].total_cov += o->coverage[j];
+                entries[id].sum_meth_weighted += ((double)o->value[j]) * o->coverage[j];
             }
             bmDestroyOverlappingIntervals(o);
         }
@@ -206,11 +245,12 @@ int dm_sc_qc_main(int argc, char **argv) {
         goto error_entries;
     }
     fprintf(out, "cell_id\tn_sites\ttotal_coverage\tmean_coverage\tmean_meth\n");
-    for (size_t i = 0; i < nEntries; i++) {
+    for (size_t i = 1; i < idmap.n; i++) {
+        if (!idmap.names[i]) continue;
         double mean_cov = entries[i].n_sites ? (double)entries[i].total_cov / (double)entries[i].n_sites : 0.0;
         double mean_meth = entries[i].total_cov ? entries[i].sum_meth_weighted / (double)entries[i].total_cov : 0.0;
         fprintf(out, "%s\t%" PRIu64 "\t%" PRIu64 "\t%.6f\t%.6f\n",
-                entries[i].id,
+                idmap.names[i],
                 entries[i].n_sites,
                 entries[i].total_cov,
                 mean_cov,
@@ -220,7 +260,8 @@ int dm_sc_qc_main(int argc, char **argv) {
     goto success;
 
 error_entries:
-    dm_sc_qc_free_entries(entries, nEntries);
+    dm_sc_qc_free_entries(entries);
+    dm_sc_free_idmap(&idmap);
 error:
     for (size_t i = 0; i < nInputs; i++) free(inputs[i]);
     free(inputs);
@@ -229,7 +270,8 @@ cleanup:
     return 1;
 
 success:
-    dm_sc_qc_free_entries(entries, nEntries);
+    dm_sc_qc_free_entries(entries);
+    dm_sc_free_idmap(&idmap);
     for (size_t i = 0; i < nInputs; i++) free(inputs[i]);
     free(inputs);
     free(outputPath);
@@ -627,7 +669,12 @@ int dm_sc_matrix_main(int argc, char **argv) {
     dm_region_t *regions = NULL; size_t nRegions = 0;
     dm_region_index_t *regionGroups = NULL; size_t nGroups = 0;
     dm_bin_index_t *binIndex = NULL; size_t nBinChrom = 0;
-    char **cellIds = NULL; size_t nCells = 0, capCells = 0;
+    dm_sc_idmap_t idmap = {0};
+    char **cellIds = NULL; size_t nCells = 0;
+    int *idToRow = NULL;
+    uint64_t *cellSites = NULL;
+    uint64_t *cellCov = NULL;
+    double *cellMeth = NULL;
     dm_matrix_accum_t *acc = NULL; size_t nAcc = 0, capAcc = 0;
 
     // Prepare regions
@@ -659,6 +706,27 @@ int dm_sc_matrix_main(int argc, char **argv) {
             if (!binIndex) { fprintf(stderr, "Error: failed to generate bins.\n"); bmClose(fp); goto error_all; }
         }
 
+        if (idmap.n == 0) {
+            if (dm_sc_load_idmap(inputs[fi], &idmap) != 0) { bmClose(fp); goto error_all; }
+            idToRow = calloc(idmap.n, sizeof(int));
+            if (!idToRow) { bmClose(fp); goto error_all; }
+            for (size_t i = 0; i < idmap.n; i++) idToRow[i] = -1;
+            for (size_t i = 1; i < idmap.n; i++) {
+                if (!idmap.names[i]) continue;
+                idToRow[i] = (int)nCells;
+                nCells++;
+            }
+            cellIds = calloc(nCells, sizeof(char *));
+            cellSites = calloc(nCells, sizeof(uint64_t));
+            cellCov = calloc(nCells, sizeof(uint64_t));
+            cellMeth = calloc(nCells, sizeof(double));
+            if (!cellIds || !cellSites || !cellCov || !cellMeth) { bmClose(fp); goto error_all; }
+            for (size_t i = 1, row = 0; i < idmap.n; i++) {
+                if (!idmap.names[i]) continue;
+                cellIds[row++] = strdup(idmap.names[i]);
+            }
+        }
+
         for (uint64_t ci = 0; ci < fp->cl->nKeys; ci++) {
             char *chrom = fp->cl->chrom[ci];
             uint32_t chromLen = fp->cl->len[ci];
@@ -667,10 +735,12 @@ int dm_sc_matrix_main(int argc, char **argv) {
             for (uint64_t j = 0; j < o->l; j++) {
                 if (contextSet && o->context[j] != contextFilter) continue;
                 if (o->coverage[j] < minCoverage) continue;
-                const char *id = o->entryid ? o->entryid[j] : NULL;
-                if (!id) continue;
-                int row = dm_sc_matrix_find_or_add_id(&cellIds, &nCells, &capCells, id);
-                if (row < 0) { bmDestroyOverlappingIntervals(o); bmClose(fp); goto error_all; }
+                if (!o->entryid) continue;
+                uint32_t id = o->entryid[j];
+                if (id == 0) continue;
+                if (id >= idmap.n) continue;
+                int row = idToRow[id];
+                if (row < 0) continue;
                 int col = -1;
                 if (bedPath) {
                     col = dm_sc_matrix_region_lookup_bed(regionGroups, nGroups, regions, chrom, o->start[j]);
@@ -684,6 +754,9 @@ int dm_sc_matrix_main(int argc, char **argv) {
                 acc[accIdx].n_sites++;
                 acc[accIdx].sum_cov += o->coverage[j];
                 acc[accIdx].sum_meth_weighted += ((double)o->value[j]) * o->coverage[j];
+                cellSites[row]++;
+                cellCov[row] += o->coverage[j];
+                cellMeth[row] += ((double)o->value[j]) * o->coverage[j];
             }
             bmDestroyOverlappingIntervals(o);
         }
@@ -700,12 +773,29 @@ int dm_sc_matrix_main(int argc, char **argv) {
         fprintf(stderr, "Error: failed to write barcodes.tsv\n");
         goto error_all;
     }
+    {
+        size_t len = strlen(outputPrefix) + 16;
+        char *path = malloc(len);
+        if (!path) goto error_all;
+        snprintf(path, len, "%s.obs_qc.tsv", outputPrefix);
+        FILE *f = fopen(path, "w");
+        free(path);
+        if (!f) goto error_all;
+        fprintf(f, "cell_id\tn_sites\ttotal_coverage\tmean_coverage\tmean_meth\n");
+        for (size_t i = 0; i < nCells; i++) {
+            double mean_cov = cellSites[i] ? (double)cellCov[i] / (double)cellSites[i] : 0.0;
+            double mean_meth = cellCov[i] ? cellMeth[i] / (double)cellCov[i] : 0.0;
+            fprintf(f, "%s\t%" PRIu64 "\t%" PRIu64 "\t%.6f\t%.6f\n",
+                    cellIds[i], cellSites[i], cellCov[i], mean_cov, mean_meth);
+        }
+        fclose(f);
+    }
 
     if (sparse) {
         size_t len = strlen(outputPrefix) + 5;
         char *path = malloc(len);
         if (!path) goto error_all;
-        snprintf(path, len, "%s.mtx", outputPrefix);
+        snprintf(path, len, "%s.matrix.mtx", outputPrefix);
         FILE *f = fopen(path, "w");
         free(path);
         if (!f) goto error_all;
@@ -752,6 +842,11 @@ error_all:
     dm_sc_matrix_free_bins(binIndex, nBinChrom);
     for (size_t i = 0; i < nCells; i++) free(cellIds[i]);
     free(cellIds);
+    free(idToRow);
+    dm_sc_free_idmap(&idmap);
+    free(cellSites);
+    free(cellCov);
+    free(cellMeth);
     free(acc);
 error:
     for (size_t i = 0; i < nInputs; i++) free(inputs[i]);
@@ -770,6 +865,11 @@ success:
     free(outputPrefix); free(bedPath);
     for (size_t i = 0; i < nCells; i++) free(cellIds[i]);
     free(cellIds);
+    free(idToRow);
+    dm_sc_free_idmap(&idmap);
+    free(cellSites);
+    free(cellCov);
+    free(cellMeth);
     free(acc);
     free(valueType); free(aggMethod);
     return 0;
@@ -913,9 +1013,10 @@ static int dm_sc_group_parse_map(const char *path, dm_sc_group_map_t **map, size
     return 0;
 }
 
-static int dm_sc_group_lookup(dm_sc_group_map_t *map, size_t nMap, const char *cell) {
-    for (size_t i = 0; i < nMap; i++) {
-        if (strcmp(map[i].cell, cell) == 0) return map[i].group_idx;
+static int dm_sc_idmap_find(const dm_sc_idmap_t *map, const char *name) {
+    if (!map || !map->names) return -1;
+    for (size_t i = 1; i < map->n; i++) {
+        if (map->names[i] && strcmp(map->names[i], name) == 0) return (int)i;
     }
     return -1;
 }
@@ -1040,7 +1141,10 @@ int dm_sc_aggregate_main(int argc, char **argv) {
 
     dm_sc_group_accum_t *acc = NULL;
     size_t nAcc = 0, capAcc = 0;
-    char **cellIds = NULL; size_t nCells = 0, capCells = 0;
+    dm_sc_idmap_t idmap = {0};
+    char **cellIds = NULL; size_t nCells = 0;
+    int *idToRow = NULL;
+    int *idToGroup = NULL;
 
     for (size_t fi = 0; fi < nInputs; fi++) {
         binaMethFile_t *fp = bmOpen(inputs[fi], NULL, "r");
@@ -1048,6 +1152,31 @@ int dm_sc_aggregate_main(int argc, char **argv) {
         if (!(fp->hdr->version & BM_ID)) { fprintf(stderr, "Error: sc-aggregate requires dm files with ID (BM_ID set). File %s has no ID field.\n", inputs[fi]); bmClose(fp); goto error_all; }
         if (!(fp->hdr->version & BM_COVER)) { fprintf(stderr, "Error: sc-aggregate requires coverage information. File %s lacks BM_COVER.\n", inputs[fi]); bmClose(fp); goto error_all; }
         if (contextSet && !(fp->hdr->version & BM_CONTEXT)) { fprintf(stderr, "Error: context filter requested but file %s lacks BM_CONTEXT.\n", inputs[fi]); bmClose(fp); goto error_all; }
+
+        if (idmap.n == 0) {
+            if (dm_sc_load_idmap(inputs[fi], &idmap) != 0) { bmClose(fp); goto error_all; }
+            idToRow = calloc(idmap.n, sizeof(int));
+            idToGroup = calloc(idmap.n, sizeof(int));
+            if (!idToRow || !idToGroup) { bmClose(fp); goto error_all; }
+            for (size_t i = 0; i < idmap.n; i++) { idToRow[i] = -1; idToGroup[i] = -1; }
+            for (size_t i = 1; i < idmap.n; i++) {
+                if (!idmap.names[i]) continue;
+                idToRow[i] = (int)nCells;
+                nCells++;
+            }
+            cellIds = calloc(nCells, sizeof(char *));
+            if (!cellIds) { bmClose(fp); goto error_all; }
+            for (size_t i = 1, row = 0; i < idmap.n; i++) {
+                if (!idmap.names[i]) continue;
+                cellIds[row++] = strdup(idmap.names[i]);
+            }
+            for (size_t i = 0; i < nMap; i++) {
+                int id = dm_sc_idmap_find(&idmap, mapping[i].cell);
+                if (id > 0 && (size_t)id < idmap.n) {
+                    idToGroup[id] = mapping[i].group_idx;
+                }
+            }
+        }
 
         if (fi == 0) {
             if (bedPath) {
@@ -1067,17 +1196,19 @@ int dm_sc_aggregate_main(int argc, char **argv) {
             for (uint64_t j = 0; j < o->l; j++) {
                 if (contextSet && o->context[j] != contextFilter) continue;
                 if (o->coverage[j] < minCoverage) continue;
-                const char *id = o->entryid ? o->entryid[j] : NULL;
-                if (!id) continue;
-                int gidx = dm_sc_group_lookup(mapping, nMap, id);
+                if (!o->entryid) continue;
+                uint32_t id = o->entryid[j];
+                if (id == 0) continue;
+                if (id >= idmap.n) continue;
+                int gidx = idToGroup[id];
                 if (gidx < 0) {
                     if (!missing_warned) {
-                        fprintf(stderr, "Warning: cell_id %s not found in groups mapping, skipping (further warnings suppressed)\n", id);
+                        fprintf(stderr, "Warning: cell_id %u not found in groups mapping, skipping (further warnings suppressed)\n", id);
                         missing_warned = 1;
                     }
                     continue;
                 }
-                int rowCell = dm_sc_find_or_add_string(&cellIds, &nCells, &capCells, id);
+                int rowCell = idToRow[id];
                 if (rowCell < 0) { bmDestroyOverlappingIntervals(o); bmClose(fp); goto error_all; }
                 int col = -1;
                 if (bedPath) {
@@ -1172,6 +1303,9 @@ error_all:
     free(groups);
     for (size_t i = 0; i < nCells; i++) free(cellIds[i]);
     free(cellIds);
+    free(idToRow);
+    free(idToGroup);
+    dm_sc_free_idmap(&idmap);
     dm_sc_group_free_accum(acc, nAcc);
     goto cleanup;
 
@@ -1197,7 +1331,374 @@ success:
     free(groups);
     for (size_t i = 0; i < nCells; i++) free(cellIds[i]);
     free(cellIds);
+    free(idToRow);
+    free(idToGroup);
+    dm_sc_free_idmap(&idmap);
     dm_sc_group_free_accum(acc, nAcc);
     return 0;
 }
 
+static void dm_sc_export_usage() {
+    fprintf(stderr,
+            "Usage: dmtools sc-export -i <input.dm> -o <output_prefix> (--bed regions.bed | --binsize N) [--context CG] [--min-coverage 1] [--to h5ad] [--h5ad-script path]\n"
+            "Notes:\n"
+            "  - Outputs MatrixMarket bundle (matrix.mtx, barcodes.tsv, features.tsv, obs_qc.tsv).\n"
+            "  - --to h5ad calls scripts/sc_export_h5ad.py (requires python3, anndata, scipy, pandas).\n");
+}
+
+static int dm_sc_resolve_h5ad_script(const char *argv0, const char *override, char *outPath, size_t outSize) {
+    if (!outPath || outSize == 0) return 1;
+    outPath[0] = '\0';
+    if (override && override[0] != '\0') {
+        snprintf(outPath, outSize, "%s", override);
+        return access(outPath, R_OK) == 0 ? 0 : 1;
+    }
+
+    char exePath[PATH_MAX];
+    ssize_t n = readlink("/proc/self/exe", exePath, sizeof(exePath) - 1);
+    if (n > 0) {
+        exePath[n] = '\0';
+        char *slash = strrchr(exePath, '/');
+        if (slash) {
+            *slash = '\0';
+            snprintf(outPath, outSize, "%s/scripts/sc_export_h5ad.py", exePath);
+            if (access(outPath, R_OK) == 0) return 0;
+        }
+    }
+
+    if (argv0 && argv0[0] != '\0' && strchr(argv0, '/')) {
+        char resolved[PATH_MAX];
+        if (realpath(argv0, resolved)) {
+            char *slash = strrchr(resolved, '/');
+            if (slash) {
+                *slash = '\0';
+                snprintf(outPath, outSize, "%s/scripts/sc_export_h5ad.py", resolved);
+                if (access(outPath, R_OK) == 0) return 0;
+            }
+        }
+    }
+
+    snprintf(outPath, outSize, "scripts/sc_export_h5ad.py");
+    return access(outPath, R_OK) == 0 ? 0 : 1;
+}
+
+int dm_sc_export_main(int argc, char **argv) {
+    char *input = NULL;
+    char *outputPrefix = NULL;
+    char *bedPath = NULL;
+    char *binsize = NULL;
+    char *context = NULL;
+    char *minCov = NULL;
+    char *toFmt = NULL;
+    char *h5adScript = NULL;
+
+    static struct option long_opts[] = {
+        {"input", required_argument, 0, 'i'},
+        {"output", required_argument, 0, 'o'},
+        {"bed", required_argument, 0, 1},
+        {"binsize", required_argument, 0, 2},
+        {"context", required_argument, 0, 3},
+        {"min-coverage", required_argument, 0, 4},
+        {"to", required_argument, 0, 5},
+        {"h5ad-script", required_argument, 0, 6},
+        {"help", no_argument, 0, 'h'},
+        {0, 0, 0, 0}
+    };
+
+    int opt, long_idx = 0;
+    int rc = 0;
+    while ((opt = getopt_long(argc, argv, "hi:o:", long_opts, &long_idx)) != -1) {
+        switch (opt) {
+            case 'i': input = strdup(optarg); break;
+            case 'o': outputPrefix = strdup(optarg); break;
+            case 1: bedPath = strdup(optarg); break;
+            case 2: binsize = strdup(optarg); break;
+            case 3: context = strdup(optarg); break;
+            case 4: minCov = strdup(optarg); break;
+            case 5: toFmt = strdup(optarg); break;
+            case 6: h5adScript = strdup(optarg); break;
+            case 'h': dm_sc_export_usage(); rc = 0; goto cleanup;
+            default: dm_sc_export_usage(); rc = 1; goto cleanup;
+        }
+    }
+
+    if (!input || !outputPrefix || ((bedPath == NULL) == (binsize == NULL))) {
+        dm_sc_export_usage();
+        rc = 1;
+        goto cleanup;
+    }
+
+    char *argv_sc[32];
+    int idx = 0;
+    argv_sc[idx++] = "sc-matrix";
+    argv_sc[idx++] = "-i"; argv_sc[idx++] = input;
+    argv_sc[idx++] = "-o"; argv_sc[idx++] = outputPrefix;
+    if (bedPath) { argv_sc[idx++] = "--bed"; argv_sc[idx++] = bedPath; }
+    if (binsize) { argv_sc[idx++] = "--binsize"; argv_sc[idx++] = binsize; }
+    if (context) { argv_sc[idx++] = "--context"; argv_sc[idx++] = context; }
+    if (minCov) { argv_sc[idx++] = "--min-coverage"; argv_sc[idx++] = minCov; }
+    argv_sc[idx++] = "--sparse";
+    argv_sc[idx] = NULL;
+
+    rc = dm_sc_matrix_main(idx, argv_sc);
+    if (rc != 0) goto cleanup;
+
+    if (toFmt && strcasecmp(toFmt, "h5ad") == 0) {
+        char scriptPath[PATH_MAX];
+        if (dm_sc_resolve_h5ad_script(argv[0], h5adScript, scriptPath, sizeof(scriptPath)) != 0) {
+            fprintf(stderr, "Error: unable to locate sc_export_h5ad.py. Provide --h5ad-script.\n");
+            rc = 1;
+            goto cleanup;
+        }
+        char cmd[PATH_MAX * 2];
+        snprintf(cmd, sizeof(cmd),
+                 "python3 %s --prefix %s --output %s.h5ad",
+                 scriptPath, outputPrefix, outputPrefix);
+        int sysrc = system(cmd);
+        if (sysrc != 0) {
+            int exitCode = -1;
+            if (sysrc != -1 && WIFEXITED(sysrc)) exitCode = WEXITSTATUS(sysrc);
+            if (exitCode == 2 || exitCode == 127) {
+                fprintf(stderr, "Warning: sc-export --to h5ad skipped. Install python3, anndata, scipy, pandas to enable h5ad export.\n");
+            } else {
+                fprintf(stderr, "Error: sc-export --to h5ad failed (exit code %d).\n", exitCode);
+                rc = 1;
+                goto cleanup;
+            }
+        }
+    }
+cleanup:
+    free(input);
+    free(outputPrefix);
+    free(bedPath);
+    free(binsize);
+    free(context);
+    free(minCov);
+    free(toFmt);
+    free(h5adScript);
+    return rc;
+}
+
+typedef struct {
+    uint32_t *start;
+    uint32_t *end;
+    uint16_t *cov;
+    double *meth;
+    uint8_t *strand;
+    uint8_t *context;
+    size_t n;
+    size_t cap;
+    uint32_t last_pos;
+} dm_pb_buf_t;
+
+static int dm_pb_buf_append(dm_pb_buf_t *buf, uint32_t pos, uint16_t cov, double meth, uint8_t strand, uint8_t context) {
+    if (buf->n > 0 && buf->last_pos == pos) {
+        buf->cov[buf->n - 1] += cov;
+        buf->meth[buf->n - 1] += meth;
+        return 0;
+    }
+    if (buf->n == buf->cap) {
+        size_t newCap = buf->cap ? buf->cap * 2 : 1024;
+        uint32_t *ns = realloc(buf->start, newCap * sizeof(uint32_t));
+        uint32_t *ne = realloc(buf->end, newCap * sizeof(uint32_t));
+        uint16_t *nc = realloc(buf->cov, newCap * sizeof(uint16_t));
+        double *nm = realloc(buf->meth, newCap * sizeof(double));
+        uint8_t *nstrand = realloc(buf->strand, newCap * sizeof(uint8_t));
+        uint8_t *ncontext = realloc(buf->context, newCap * sizeof(uint8_t));
+        if (!ns || !ne || !nc || !nm || !nstrand || !ncontext) return 1;
+        buf->start = ns; buf->end = ne; buf->cov = nc; buf->meth = nm; buf->strand = nstrand; buf->context = ncontext;
+        buf->cap = newCap;
+    }
+    buf->start[buf->n] = pos;
+    buf->end[buf->n] = pos + 1;
+    buf->cov[buf->n] = cov;
+    buf->meth[buf->n] = meth;
+    buf->strand[buf->n] = strand;
+    buf->context[buf->n] = context;
+    buf->last_pos = pos;
+    buf->n++;
+    return 0;
+}
+
+static void dm_pb_buf_reset(dm_pb_buf_t *buf) {
+    buf->n = 0;
+    buf->last_pos = (uint32_t)-1;
+}
+
+static void dm_pb_buf_free(dm_pb_buf_t *buf) {
+    free(buf->start);
+    free(buf->end);
+    free(buf->cov);
+    free(buf->meth);
+    free(buf->strand);
+    free(buf->context);
+}
+
+static void dm_sc_pseudobulk_usage() {
+    fprintf(stderr,
+            "Usage: dmtools sc-pseudobulk -i <input.dm> -o <out_prefix> --groups <mapping.tsv> [--context CG]\n");
+}
+
+int dm_sc_pseudobulk_main(int argc, char **argv) {
+    char *input = NULL;
+    char *outputPrefix = NULL;
+    char *groupsPath = NULL;
+    int contextSet = 0;
+    uint8_t contextFilter = 0;
+
+    static struct option long_opts[] = {
+        {"input", required_argument, 0, 'i'},
+        {"output", required_argument, 0, 'o'},
+        {"groups", required_argument, 0, 1},
+        {"context", required_argument, 0, 2},
+        {"help", no_argument, 0, 'h'},
+        {0, 0, 0, 0}
+    };
+
+    int opt, long_idx = 0;
+    while ((opt = getopt_long(argc, argv, "hi:o:", long_opts, &long_idx)) != -1) {
+        switch (opt) {
+            case 'i': input = strdup(optarg); break;
+            case 'o': outputPrefix = strdup(optarg); break;
+            case 1: groupsPath = strdup(optarg); break;
+            case 2:
+                if (dm_sc_qc_parse_context(optarg, &contextFilter) != 0) {
+                    fprintf(stderr, "Error: invalid context '%s'. Use C, CG, CHG, or CHH.\n", optarg);
+                    return 1;
+                }
+                contextSet = 1;
+                break;
+            case 'h': dm_sc_pseudobulk_usage(); return 0;
+            default: dm_sc_pseudobulk_usage(); return 1;
+        }
+    }
+
+    if (!input || !outputPrefix || !groupsPath) {
+        dm_sc_pseudobulk_usage();
+        return 1;
+    }
+
+    dm_sc_group_map_t *mapping = NULL;
+    size_t nMap = 0;
+    char **groups = NULL;
+    size_t nGroups = 0, capGroups = 0;
+    if (dm_sc_group_parse_map(groupsPath, &mapping, &nMap, &groups, &nGroups) != 0) return 1;
+
+    binaMethFile_t *fp = bmOpen(input, NULL, "r");
+    if (!fp) { fprintf(stderr, "Error: cannot open input %s\n", input); return 1; }
+    if (!(fp->hdr->version & BM_ID)) {
+        fprintf(stderr, "Error: sc-pseudobulk requires DM with ID field.\n");
+        bmClose(fp);
+        return 1;
+    }
+
+    dm_sc_idmap_t idmap = {0};
+    if (dm_sc_load_idmap(input, &idmap) != 0) { bmClose(fp); return 1; }
+    int *idToGroup = calloc(idmap.n, sizeof(int));
+    if (!idToGroup) { bmClose(fp); dm_sc_free_idmap(&idmap); return 1; }
+    for (size_t i = 0; i < idmap.n; i++) idToGroup[i] = -1;
+    for (size_t i = 0; i < nMap; i++) {
+        int id = dm_sc_idmap_find(&idmap, mapping[i].cell);
+        if (id > 0 && (size_t)id < idmap.n) idToGroup[id] = mapping[i].group_idx;
+    }
+
+    binaMethFile_t **outs = calloc(nGroups, sizeof(binaMethFile_t*));
+    dm_pb_buf_t *buffers = calloc(nGroups, sizeof(dm_pb_buf_t));
+    if (!outs || !buffers) { bmClose(fp); dm_sc_free_idmap(&idmap); free(idToGroup); return 1; }
+
+    uint32_t write_type = BM_COVER | BM_END;
+    if (fp->hdr->version & BM_STRAND) write_type |= BM_STRAND;
+    if (fp->hdr->version & BM_CONTEXT) write_type |= BM_CONTEXT;
+
+    for (size_t g = 0; g < nGroups; g++) {
+        char path[PATH_MAX];
+        snprintf(path, sizeof(path), "%s.%s.dm", outputPrefix, groups[g]);
+        outs[g] = bmOpen(path, NULL, "w");
+        if (!outs[g]) { fprintf(stderr, "Error: cannot open output %s\n", path); goto error; }
+        outs[g]->type = write_type;
+        if (bmCreateHdr(outs[g], 0)) { fprintf(stderr, "Error: bmCreateHdr failed\n"); goto error; }
+        outs[g]->cl = bmCreateChromList(fp->cl->chrom, fp->cl->len, fp->cl->nKeys);
+        if (!outs[g]->cl) { fprintf(stderr, "Error: bmCreateChromList failed\n"); goto error; }
+        if (bmWriteHdr(outs[g])) { fprintf(stderr, "Error: bmWriteHdr failed\n"); goto error; }
+    }
+
+    for (uint64_t ci = 0; ci < fp->cl->nKeys; ci++) {
+        char *chrom = fp->cl->chrom[ci];
+        uint32_t chromLen = fp->cl->len[ci];
+        bmOverlappingIntervals_t *o = bmGetOverlappingIntervals(fp, chrom, 0, chromLen);
+        if (!o) { fprintf(stderr, "Error: failed to read intervals for %s\n", chrom); goto error; }
+        for (size_t g = 0; g < nGroups; g++) dm_pb_buf_reset(&buffers[g]);
+        for (uint64_t j = 0; j < o->l; j++) {
+            if (contextSet && o->context[j] != contextFilter) continue;
+            if (!o->entryid) continue;
+            uint32_t id = o->entryid[j];
+            if (id == 0) continue;
+            if (id >= idmap.n) continue;
+            int gidx = idToGroup[id];
+            if (gidx < 0) continue;
+            uint16_t cov = (fp->hdr->version & BM_COVER) ? o->coverage[j] : 1;
+            double meth = ((double)o->value[j]) * cov;
+            uint8_t strand = (fp->hdr->version & BM_STRAND) ? o->strand[j] : 0;
+            uint8_t context = (fp->hdr->version & BM_CONTEXT) ? o->context[j] : 0;
+            if (dm_pb_buf_append(&buffers[gidx], o->start[j], cov, meth, strand, context) != 0) {
+                bmDestroyOverlappingIntervals(o);
+                goto error;
+            }
+        }
+        bmDestroyOverlappingIntervals(o);
+        for (size_t g = 0; g < nGroups; g++) {
+            if (buffers[g].n == 0) continue;
+            float *vals = calloc(buffers[g].n, sizeof(float));
+            if (!vals) goto error;
+            for (size_t i = 0; i < buffers[g].n; i++) {
+                if (buffers[g].cov[i] == 0) vals[i] = 0.0f;
+                else vals[i] = (float)(buffers[g].meth[i] / (double)buffers[g].cov[i]);
+            }
+            char **chroms = calloc(buffers[g].n, sizeof(char*));
+            if (!chroms) { free(vals); goto error; }
+            for (size_t i = 0; i < buffers[g].n; i++) chroms[i] = chrom;
+            int rc = bmAddIntervals(outs[g], chroms, buffers[g].start, buffers[g].end, vals, buffers[g].cov,
+                                    buffers[g].strand, buffers[g].context, NULL, (uint32_t)buffers[g].n);
+            free(vals);
+            free(chroms);
+            if (rc != 0) { fprintf(stderr, "Error: bmAddIntervals failed for group %s\n", groups[g]); goto error; }
+        }
+    }
+
+    bmClose(fp);
+    for (size_t g = 0; g < nGroups; g++) {
+        if (outs[g]) bmClose(outs[g]);
+        dm_pb_buf_free(&buffers[g]);
+    }
+    dm_sc_free_idmap(&idmap);
+    free(idToGroup);
+    free(outs);
+    free(buffers);
+    for (size_t i = 0; i < nMap; i++) free(mapping[i].cell);
+    free(mapping);
+    for (size_t i = 0; i < nGroups; i++) free(groups[i]);
+    free(groups);
+    free(input);
+    free(outputPrefix);
+    free(groupsPath);
+    return 0;
+
+error:
+    bmClose(fp);
+    for (size_t g = 0; g < nGroups; g++) {
+        if (outs && outs[g]) bmClose(outs[g]);
+        if (buffers) dm_pb_buf_free(&buffers[g]);
+    }
+    dm_sc_free_idmap(&idmap);
+    free(idToGroup);
+    free(outs);
+    free(buffers);
+    for (size_t i = 0; i < nMap; i++) free(mapping[i].cell);
+    free(mapping);
+    for (size_t i = 0; i < nGroups; i++) free(groups[i]);
+    free(groups);
+    free(input);
+    free(outputPrefix);
+    free(groupsPath);
+    return 1;
+}

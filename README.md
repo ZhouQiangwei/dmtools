@@ -15,13 +15,18 @@
 
 # DM format and DMtools
 
-Package of C and C++ scripts for generation and procession of DNA Methylation (DM) files
+DM is a bigWig-like, genome-indexed methylation container designed for compact storage and fast random access. DMtools is a C/C++ toolkit for generating, validating, and analyzing DM files.
 
-We present a new and efficient design for storing DNA methylation (DM) data after mapping in compressed binary indexed DM format. Our format significantly reduces storage space by 80%-95% compared to commonly used file formats for DNA methylation data after mapping. To enhance the processing of DNA methylation data in DM format, we have developed DMtools, a comprehensive toolkit that offers utilities such as rapid and random access, computation of DNA methylation profiles across genes, and analysis of differential DNA methylation.
+DM format stores methylation ratios with optional coverage, context, strand, and ID fields (for single-cell datasets).
 
-DM format contains the coverage of DNA methylation sites, methylation context, positive and negative strand and cell ID (for single-cell DNA methylation data) information. 
+DMtools provides file format conversion, quick view, methylation level calculation, differential methylation analysis, and other DM-specific utilities.
 
-DMtools provide file format conversion, quick view, methylation level calculation, differential DNA methylation level calculation and other functions for dm format.
+## Documentation
+
+- [Install](docs/install.md)
+- [Quickstart](docs/quickstart.md)
+- [FAQ](docs/faq.md)
+- [Changelog](CHANGELOG.md)
 
 For more information, please see https://dmtools-docs.rtfd.io
 
@@ -80,7 +85,7 @@ sudo apt-get install -y build-essential zlib1g-dev libbz2-dev liblzma-dev libcur
 
 To include `dmDMR`, add `libgsl-dev` and rebuild with `make WITH_GSL=1`.
 
-The build outputs the `bam2dm` executable from `bam2dm.cpp`; `dmtools bam2dm` dispatches to that binary.
+The build outputs the `bam2dm` executable from `bam2dm.cpp`; `dmtools bam2dm` dispatches to that binary. Use `dmtools --help` and `dmtools <mode> --help` for consistent CLI documentation; standalone binaries mirror the same options.
 When you run `dmtools bam2dm`, the driver shells out to the compiled `bam2dm` in the same directory. Use `-p N` **or** `--threads N` to control how many chromosome-parallel workers the wrapper launches (default is 1). If you pass `-p/--threads N` with `N>1`, `dmtools` fans out by chromosome (`--chrom <name>`) and then merges the per-chromosome `-m <outfile>.<chrom>` shards back together with `dmtools merge`, matching the legacy behavior of the chromosome-parallel wrapper.
 
 
@@ -89,7 +94,7 @@ When you run `dmtools bam2dm`, the driver shells out to the compiled `bam2dm` in
 |                     | dmtools <mode> [opnions]                                                 |
 | [mode]              | index align mr2dm view overlap regionstats bodystats profile chromstats |
 | index               | build index for genome                                                  |
-| align               | alignment fastq                                                         |
+| align               | alignment wrapper (if built; see `dmtools --help`)                       |
 | mr2dm               | convert txt meth file to dm format                                      |
 | view                | dm format to txt meth                                                   |
 | ebsrate             | estimate bisulfite conversion rate                                      |
@@ -119,11 +124,11 @@ When you run `dmtools bam2dm`, the driver shells out to the compiled `bam2dm` in
 | -h|--help                                                                                      |
 
 
-This is a BS-Seq results dm format file view and process tool based on htslib and libBigWig.
+DMtools is a BS-Seq methylation file view/process tool based on htslib and libBigWig.
 
 ### Single-cell QC (sc-qc)
 
-dmtools supports an ID field in dm files for per-cell tagging. You can summarize basic QC metrics per cell with:
+dmtools supports a numeric ID field in dm files for per-cell tagging, with a required `<dm>.idmap.tsv` sidecar that maps numeric IDs to barcodes (`id<TAB>barcode`, no header). You can summarize basic QC metrics per cell with:
 
 ```
 dmtools sc-qc -i singlecell.dm -o sc_qc.tsv --context CG --min-coverage 3
@@ -133,13 +138,23 @@ The output table reports `cell_id`, `n_sites`, `total_coverage`, `mean_coverage`
 
 ### Single-cell matrix (sc-matrix)
 
-Build a cell × region matrix using the ID field as `cell_id`:
+Build a cell × region matrix using the numeric ID field as `cell_id` (requires `<dm>.idmap.tsv`):
 
 ```
 dmtools sc-matrix -i singlecell.dm --bed regions.bed -o sc_matrix --context CG --min-coverage 3 --sparse
 ```
 
-Provide regions via `--bed` (chrom start end [name]) or define fixed windows with `--binsize N`. Sparse Matrix Market output is written by default along with `barcodes.tsv` and `features.tsv`; pass `--dense` to write a dense TSV matrix instead.
+Provide regions via `--bed` (chrom start end [name]) or define fixed windows with `--binsize N`. Sparse Matrix Market output is written by default as `<prefix>.matrix.mtx` along with `barcodes.tsv`, `features.tsv`, and `obs_qc.tsv`; pass `--dense` to write a dense TSV matrix instead.
+
+### Single-cell export (sc-export)
+
+Convert the MatrixMarket bundle into an `.h5ad` file (requires Python with `anndata`, `scipy`, `pandas`):
+
+```
+dmtools sc-export -i singlecell.dm --bed regions.bed -o sc_matrix --to h5ad
+```
+
+If the Python dependencies are missing, the command still writes the MatrixMarket bundle and prints a warning about installing the missing packages.
 
 ### Single-cell aggregation (sc-aggregate)
 
@@ -151,7 +166,7 @@ dmtools sc-aggregate -i singlecell.dm --groups cell_to_group.tsv --bed regions.b
 
 This writes per-group region summaries and, with `--dense`, a group × region matrix alongside optional feature and group listings.
 
-For more information, please see https://dmtools-docs.rtfd.io/
+For more information, please see https://dmtools-docs.rtfd.io/ and the format spec in `docs/spec.md`.
 
 And calmeth in batmeth2-dm can convert align bs bam file to dm file, https://dmtools-docs.readthedocs.io/en/latest/function/bam2dm.html
 

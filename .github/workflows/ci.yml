@@ -1,0 +1,73 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential zlib1g-dev libbz2-dev liblzma-dev libcurl4-openssl-dev
+      - name: Build
+        run: |
+          make libs
+          make -j2
+      - name: Unit tests
+        run: |
+          make test
+      - name: Validate bundled DM
+        run: |
+          ./dmtools validate -i test/test.dm
+      - name: Single-cell smoke test
+        run: |
+          printf "chr1\t10\n" > /tmp/coords.len
+          printf "chr1\t1\t0.5\t10\t+\tCG\n" > /tmp/coords.simpleme
+          ./dmtools mr2dm -C -S --Cx --Id -g /tmp/coords.len -m /tmp/coords.simpleme -o /tmp/coords.dm -f simpleme --cell-name cell1 --idmap-out /tmp/coords.dm.idmap.tsv
+          ./dmtools sc-qc -i /tmp/coords.dm -o /tmp/coords.qc.tsv
+      - name: Single-cell export (bundle only)
+        run: |
+          ./dmtools sc-export -i /tmp/coords.dm -o /tmp/coords_export --binsize 5
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          brew update
+          brew install zlib bzip2 xz curl
+      - name: Build
+        run: |
+          make libs
+          make -j2
+
+  asan-ubsan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential zlib1g-dev libbz2-dev liblzma-dev libcurl4-openssl-dev
+      - name: Build with sanitizers
+        run: |
+          make clean
+          CFLAGS="-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer" \
+          CXXFLAGS="-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer" \
+          make libs
+          CFLAGS="-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer" \
+          CXXFLAGS="-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer" \
+          make -j2
+          CFLAGS="-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer" \
+          CXXFLAGS="-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer" \
+          make bam2dm-asan
+      - name: ASAN regressions
+        run: |
+          ./test/test_id_roundtrip
+          ./test/testBinOrder.sh
+          ./dmtools validate -i test/test.dm
