@@ -210,7 +210,8 @@ const char* Help_String_scexport="Command Format :  dmtools sc-export [options] 
         "\t [sc-export] mode parameters, options\n"
         "\t--context            context filter: C, CG, CHG, CHH (default: no filter)\n"
         "\t--min-coverage       minimum coverage per site (default: 1)\n"
-        "\t--to h5ad            convert bundle to h5ad (requires python3, anndata, scipy)\n"
+        "\t--to h5ad            convert bundle to h5ad (requires python3, anndata, scipy, pandas)\n"
+        "\t--h5ad-script        override path to sc_export_h5ad.py\n"
         "\t-h|--help";
 
 const char* Help_String_scpseudobulk="Command Format :  dmtools sc-pseudobulk [options] -i <dm> -o <out prefix> --groups <mapping.tsv>\n"
@@ -1693,7 +1694,7 @@ int main(int argc, char *argv[]) {
                 fprintf(stderr, "[mr2dm] failed to write idmap %s\n", idmapOut);
                 goto error;
             }
-            fprintf(idfp, "id\tname\n");
+            fprintf(idfp, "id\tbarcode\n");
             for(size_t k = 0; k < nIdmap; k++) {
                 fprintf(idfp, "%zu\t%s\n", k + 1, idmapNames[k]);
             }

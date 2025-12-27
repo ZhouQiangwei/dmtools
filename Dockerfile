@@ -13,6 +13,8 @@ RUN apt-get update \
         libbz2-dev \
         libcurl4-openssl-dev \
         libssl-dev \
+        python3 \
+        python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt/dmtools

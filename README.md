@@ -144,7 +144,17 @@ Build a cell × region matrix using the ID field as `cell_id`:
 dmtools sc-matrix -i singlecell.dm --bed regions.bed -o sc_matrix --context CG --min-coverage 3 --sparse
 ```
 
-Provide regions via `--bed` (chrom start end [name]) or define fixed windows with `--binsize N`. Sparse Matrix Market output is written by default along with `barcodes.tsv` and `features.tsv`; pass `--dense` to write a dense TSV matrix instead.
+Provide regions via `--bed` (chrom start end [name]) or define fixed windows with `--binsize N`. Sparse Matrix Market output is written by default as `<prefix>.matrix.mtx` along with `barcodes.tsv`, `features.tsv`, and `obs_qc.tsv`; pass `--dense` to write a dense TSV matrix instead.
+
+### Single-cell export (sc-export)
+
+Convert the MatrixMarket bundle into an `.h5ad` file (requires Python with `anndata`, `scipy`, `pandas`):
+
+```
+dmtools sc-export -i singlecell.dm --bed regions.bed -o sc_matrix --to h5ad
+```
+
+If the Python dependencies are missing, the command still writes the MatrixMarket bundle and prints a warning about installing the missing packages.
 
 ### Single-cell aggregation (sc-aggregate)
 

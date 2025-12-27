@@ -3,12 +3,15 @@
 #include <errno.h>
 #include <getopt.h>
 #include <limits.h>
+#include <limits.h>
 #include <stdint.h>
 #include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 extern const char* Help_String_scaggregate;
 
@@ -799,7 +802,7 @@ int dm_sc_matrix_main(int argc, char **argv) {
         size_t len = strlen(outputPrefix) + 5;
         char *path = malloc(len);
         if (!path) goto error_all;
-        snprintf(path, len, "%s.mtx", outputPrefix);
+        snprintf(path, len, "%s.matrix.mtx", outputPrefix);
         FILE *f = fopen(path, "w");
         free(path);
         if (!f) goto error_all;
@@ -1343,10 +1346,46 @@ success:
 
 static void dm_sc_export_usage() {
     fprintf(stderr,
-            "Usage: dmtools sc-export -i <input.dm> -o <output_prefix> (--bed regions.bed | --binsize N) [--context CG] [--min-coverage 1] [--to h5ad]\n"
+            "Usage: dmtools sc-export -i <input.dm> -o <output_prefix> (--bed regions.bed | --binsize N) [--context CG] [--min-coverage 1] [--to h5ad] [--h5ad-script path]\n"
             "Notes:\n"
             "  - Outputs MatrixMarket bundle (matrix.mtx, barcodes.tsv, features.tsv, obs_qc.tsv).\n"
-            "  - --to h5ad calls scripts/sc_export_h5ad.py (requires python3, anndata, scipy).\n");
+            "  - --to h5ad calls scripts/sc_export_h5ad.py (requires python3, anndata, scipy, pandas).\n");
+}
+
+static int dm_sc_resolve_h5ad_script(const char *argv0, const char *override, char *outPath, size_t outSize) {
+    if (!outPath || outSize == 0) return 1;
+    outPath[0] = '\0';
+    if (override && override[0] != '\0') {
+        snprintf(outPath, outSize, "%s", override);
+        return access(outPath, R_OK) == 0 ? 0 : 1;
+    }
+
+    char exePath[PATH_MAX];
+    ssize_t n = readlink("/proc/self/exe", exePath, sizeof(exePath) - 1);
+    if (n > 0) {
+        exePath[n] = '\0';
+        char *slash = strrchr(exePath, '/');
+        if (slash) {
+            *slash = '\0';
+            snprintf(outPath, outSize, "%s/scripts/sc_export_h5ad.py", exePath);
+            if (access(outPath, R_OK) == 0) return 0;
+        }
+    }
+
+    if (argv0 && argv0[0] != '\0' && strchr(argv0, '/')) {
+        char resolved[PATH_MAX];
+        if (realpath(argv0, resolved)) {
+            char *slash = strrchr(resolved, '/');
+            if (slash) {
+                *slash = '\0';
+                snprintf(outPath, outSize, "%s/scripts/sc_export_h5ad.py", resolved);
+                if (access(outPath, R_OK) == 0) return 0;
+            }
+        }
+    }
+
+    snprintf(outPath, outSize, "scripts/sc_export_h5ad.py");
+    return access(outPath, R_OK) == 0 ? 0 : 1;
 }
 
 int dm_sc_export_main(int argc, char **argv) {
@@ -1357,6 +1396,7 @@ int dm_sc_export_main(int argc, char **argv) {
     char *context = NULL;
     char *minCov = NULL;
     char *toFmt = NULL;
+    char *h5adScript = NULL;
 
     static struct option long_opts[] = {
         {"input", required_argument, 0, 'i'},
@@ -1366,6 +1406,7 @@ int dm_sc_export_main(int argc, char **argv) {
         {"context", required_argument, 0, 3},
         {"min-coverage", required_argument, 0, 4},
         {"to", required_argument, 0, 5},
+        {"h5ad-script", required_argument, 0, 6},
         {"help", no_argument, 0, 'h'},
         {0, 0, 0, 0}
     };
@@ -1381,6 +1422,7 @@ int dm_sc_export_main(int argc, char **argv) {
             case 3: context = strdup(optarg); break;
             case 4: minCov = strdup(optarg); break;
             case 5: toFmt = strdup(optarg); break;
+            case 6: h5adScript = strdup(optarg); break;
             case 'h': dm_sc_export_usage(); rc = 0; goto cleanup;
             default: dm_sc_export_usage(); rc = 1; goto cleanup;
         }
@@ -1408,15 +1450,27 @@ int dm_sc_export_main(int argc, char **argv) {
     if (rc != 0) goto cleanup;
 
     if (toFmt && strcasecmp(toFmt, "h5ad") == 0) {
-        char cmd[PATH_MAX * 2];
-        snprintf(cmd, sizeof(cmd),
-                 "python3 scripts/sc_export_h5ad.py --prefix %s --output %s.h5ad",
-                 outputPrefix, outputPrefix);
-        int sysrc = system(cmd);
-        if (sysrc != 0) {
-            fprintf(stderr, "Error: sc-export --to h5ad failed. Please install python3, anndata, scipy.\n");
+        char scriptPath[PATH_MAX];
+        if (dm_sc_resolve_h5ad_script(argv[0], h5adScript, scriptPath, sizeof(scriptPath)) != 0) {
+            fprintf(stderr, "Error: unable to locate sc_export_h5ad.py. Provide --h5ad-script.\n");
             rc = 1;
             goto cleanup;
+        }
+        char cmd[PATH_MAX * 2];
+        snprintf(cmd, sizeof(cmd),
+                 "python3 %s --prefix %s --output %s.h5ad",
+                 scriptPath, outputPrefix, outputPrefix);
+        int sysrc = system(cmd);
+        if (sysrc != 0) {
+            int exitCode = -1;
+            if (sysrc != -1 && WIFEXITED(sysrc)) exitCode = WEXITSTATUS(sysrc);
+            if (exitCode == 2 || exitCode == 127) {
+                fprintf(stderr, "Warning: sc-export --to h5ad skipped. Install python3, anndata, scipy, pandas to enable h5ad export.\n");
+            } else {
+                fprintf(stderr, "Error: sc-export --to h5ad failed (exit code %d).\n", exitCode);
+                rc = 1;
+                goto cleanup;
+            }
         }
     }
 cleanup:
@@ -1427,6 +1481,7 @@ cleanup:
     free(context);
     free(minCov);
     free(toFmt);
+    free(h5adScript);
     return rc;
 }
 

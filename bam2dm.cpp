@@ -103,6 +103,9 @@ static uint32_t gCellId = 0;
 static std::string gCellName;
 static std::string gIdmapOut;
 static std::string gCellIdStr;
+static std::string gCellTag;
+static std::atomic<bool> gRequireCellTag{false};
+static std::atomic<bool> gCellTagError{false};
 
 static int detect_cell_name_from_tag(const std::string &bamPath, const std::string &tag, std::string &name) {
     if(tag.size() != 2) return 2;
@@ -170,7 +173,7 @@ static int detect_cell_name_from_readname(const std::string &bamPath, char sep, 
 static int write_idmap(const std::string &path, uint32_t id, const std::string &name) {
     FILE *f = fopen(path.c_str(), "w");
     if(!f) return 1;
-    fprintf(f, "id\tname\n");
+    fprintf(f, "id\tbarcode\n");
     fprintf(f, "%u\t%s\n", id, name.c_str());
     fclose(f);
     return 0;
@@ -576,6 +579,7 @@ struct FilterStats {
     std::atomic<uint64_t> enterMethyl{0};
     std::atomic<uint64_t> methylCalls{0};
     std::atomic<uint64_t> iterNull{0};
+    std::atomic<uint64_t> cellTagMissing{0};
 };
 
 static FilterStats gFilterStats;
@@ -588,7 +592,7 @@ static void maybeLogFilterStats() {
         fprintf(stderr,
                 "[filter] reads=%" PRIu64 " accepted=%" PRIu64 " bamFiltered=%" PRIu64 " mapq=%" PRIu64
                 " hashMiss=%" PRIu64 " mismatch=%" PRIu64 " refOOB=%" PRIu64 " refNonACGT=%" PRIu64
-                " enterMethyl=%" PRIu64 " methylCalls=%" PRIu64 " iterNull=%" PRIu64 "\n",
+                " enterMethyl=%" PRIu64 " methylCalls=%" PRIu64 " iterNull=%" PRIu64 " missingCellTag=%" PRIu64 "\n",
                 cur,
                 gFilterStats.processReadAccepted.load(),
                 gFilterStats.bamFiltered.load(),
@@ -599,7 +603,8 @@ static void maybeLogFilterStats() {
                 gFilterStats.refNonACGT.load(),
                 gFilterStats.enterMethyl.load(),
                 gFilterStats.methylCalls.load(),
-                gFilterStats.iterNull.load());
+                gFilterStats.iterNull.load(),
+                gFilterStats.cellTagMissing.load());
     }
 }
 
@@ -1814,7 +1819,8 @@ int main(int argc, char* argv[])
         "\t--Id                  print ID\n"
         "\t--cell-id <INT>       numeric cell ID to store when --Id is enabled\n"
         "\t--cell-name <STR>     cell name for idmap (default: use detected or numeric ID)\n"
-        "\t--cell-tag <TAG>      BAM tag for cell name (e.g., CB, BX)\n"
+        "\t--cell-tag <TAG>      BAM tag for cell name (e.g., CB, BX; default: CB)\n"
+        "\t--require-cell-tag   fail if a read is missing the cell tag when --cell-tag is used\n"
         "\t--cell-readname-sep <CHAR>  split read name at CHAR to derive cell name\n"
         "\t--idmap-out <PATH>    write <dm>.idmap.tsv mapping numeric ID to cell name\n"
         "\t--zl                  The maximum number of zoom levels. [1-10], default: 2\n"
@@ -2017,6 +2023,8 @@ int main(int argc, char* argv[])
             cellNameArg = argv[++i];
         }else if(strcmp(argv[i], "--cell-tag") == 0){
             cellTagArg = argv[++i];
+        }else if(strcmp(argv[i], "--require-cell-tag") == 0){
+            gRequireCellTag.store(true);
         }else if(strcmp(argv[i], "--cell-readname-sep") == 0){
             cellReadnameSep = argv[++i][0];
         }else if(strcmp(argv[i], "--idmap-out") == 0){
@@ -2145,6 +2153,13 @@ int main(int argc, char* argv[])
             processRegion);
 
     if(write_type & BM_ID) {
+        if(cellTagArg.empty() && cellReadnameSep == '\0' && cellNameArg.empty() && bamformat) {
+            cellTagArg = "CB";
+        }
+        if(gRequireCellTag.load() && cellTagArg.empty()) {
+            fprintf(stderr, "[bam2dm] --require-cell-tag requires --cell-tag\n");
+            return 1;
+        }
         if(cellId == 0) cellId = 1;
         if(cellNameArg.empty()) {
             if(!cellTagArg.empty()) {
@@ -2188,6 +2203,7 @@ int main(int argc, char* argv[])
         gCellName = cellNameArg;
         gIdmapOut = idmapOutArg;
         gCellIdStr = std::to_string(gCellId);
+        gCellTag = cellTagArg;
     } else if(!idmapOutArg.empty()) {
         fprintf(stderr, "[bam2dm] --idmap-out requires --Id\n");
         return 1;
@@ -2663,7 +2679,12 @@ int main(int argc, char* argv[])
                 args.processChr=new char[1000];
                 strcpy(args.processChr, processRegion);
                 if(DEBUG>1) fprintf(stderr, "\nss000111\n");
-				Process_read(&args);
+                Process_read(&args);
+                if(gCellTagError.load()) {
+                    fprintf(stderr, "[bam2dm] missing required cell tag %s in BAM reads\n",
+                            gCellTag.empty() ? "(unknown)" : gCellTag.c_str());
+                    return 1;
+                }
 				if(!countreadC) Done_Progress();
 				if(!bamformat) fclose(args.samINFILE);
             	if(bamformat)
@@ -2773,7 +2794,7 @@ int main(int argc, char* argv[])
         fprintf(stderr, "[filter-summary] reads=%" PRIu64 " accepted=%" PRIu64 " bamFiltered=%" PRIu64
                         " mapq=%" PRIu64 " hashMiss=%" PRIu64 " mismatch=%" PRIu64
                         " refOOB=%" PRIu64 " refNonACGT=%" PRIu64 " enterMethyl=%" PRIu64
-                        " methylCalls=%" PRIu64 " iterNull=%" PRIu64 "\n",
+                        " methylCalls=%" PRIu64 " iterNull=%" PRIu64 " missingCellTag=%" PRIu64 "\n",
                 gFilterStats.totalReads.load(),
                 gFilterStats.processReadAccepted.load(),
                 gFilterStats.bamFiltered.load(),
@@ -2784,7 +2805,12 @@ int main(int argc, char* argv[])
                 gFilterStats.refNonACGT.load(),
                 gFilterStats.enterMethyl.load(),
                 gFilterStats.methylCalls.load(),
-                gFilterStats.iterNull.load());
+                gFilterStats.iterNull.load(),
+                gFilterStats.cellTagMissing.load());
+        if(!gCellTag.empty() && gFilterStats.cellTagMissing.load() > 0 && !gRequireCellTag.load()) {
+            fprintf(stderr, "[bam2dm] warning: %" PRIu64 " reads missing cell tag %s; use --require-cell-tag to fail fast\n",
+                    gFilterStats.cellTagMissing.load(), gCellTag.c_str());
+        }
 
                 time(&End_Time);fprintf(stderr, "[DM::calmeth] Time Taken  - %.0lf Seconds ..\n ",difftime(End_Time,Start_Time));
                 if(write_type & BM_ID) {
@@ -3813,6 +3839,7 @@ void *Process_read(void *arg)
 
 	while( (!bamformat && (samaddress = fgets(s2t,BATBUF,((ARGS *)arg)->samINFILE))!=NULL) || (bamformat && bamr>0 ))
 	{
+        if(gCellTagError.load()) break;
 
         left_end = -1;
 
@@ -3874,6 +3901,18 @@ void *Process_read(void *arg)
 		}
 
         if(mapQuality < QualCut) { gFilterStats.mapqFiltered.fetch_add(1); continue; }
+
+        if(bamformat && !gCellTag.empty()) {
+            uint8_t *aux = bam_aux_get(b, gCellTag.c_str());
+            const char *tagVal = aux ? bam_aux2Z(aux) : NULL;
+            if(!tagVal || *tagVal == '\0') {
+                gFilterStats.cellTagMissing.fetch_add(1);
+                if(gRequireCellTag.load()) {
+                    gCellTagError.store(true);
+                    break;
+                }
+            }
+        }
 
 		if(!bamformat){
  			if(mapQuality < QualCut || Flag==4 || (int)pos <= 0 ) continue;
@@ -3994,6 +4033,7 @@ void *Process_read(void *arg)
                                                              Dummy, Chrom, fPH, &read_Methyl_Info,
                                                              &rawReadBeforeBS, lens, Glens, RLens);
                         if(!ok) continue;
+                        if(gCellTagError.load()) break;
 
             if(skipOverlap == 1) {
                 if (Flag & 0x1) {
@@ -4051,6 +4091,7 @@ void *Process_read(void *arg)
                    if(markIdx2 < gGenomeSizeBases) ((ARGS *)arg)->Marked_Genome[markIdx2] |= Flag_rm; else gFilterStats.refOob.fetch_add(1);
                    if(markEndIdx2 < gGenomeSizeBases) ((ARGS *)arg)->Marked_GenomeE[markEndIdx2] |= Flag_rm; else gFilterStats.refOob.fetch_add(1);
 		}
+        if(gCellTagError.load()) break;
 	}
 
     if(((ARGS *)arg)->bedFILE == NULL || strcmp(((ARGS *)arg)->processChr, "NAN-mm") != 0 ) break;
