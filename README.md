@@ -120,6 +120,9 @@ Run single-cell utilities (examples):
   --bed regions.bed \
   --out sc_matrix \
   --sparse
+
+# optional: empirical Bayes shrinkage (outputs eb_mean + var/CI files)
+# ./dmtools sc-matrix -i sc.sample.dm --idmap sc.sample.dm.idmap.tsv --bed regions.bed --out sc_matrix --sparse --eb
 ```
 
 Export to h5ad (optional Python dependency):

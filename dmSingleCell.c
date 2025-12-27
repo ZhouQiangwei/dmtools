@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <math.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -295,6 +296,12 @@ typedef struct {
 } dm_matrix_accum_t;
 
 typedef struct {
+    double alpha;
+    double beta;
+    int valid;
+} dm_eb_prior_t;
+
+typedef struct {
     char *chrom;
     int *idx;
     size_t n;
@@ -550,6 +557,71 @@ static double dm_sc_matrix_value(dm_matrix_accum_t *a, const char *valueType, co
     return a->sum_meth_weighted / (double)a->sum_cov;
 }
 
+static dm_eb_prior_t dm_sc_matrix_estimate_prior(dm_matrix_accum_t *acc, size_t nAcc) {
+    dm_eb_prior_t prior = {0.0, 0.0, 0};
+    if (!acc || nAcc == 0) return prior;
+    double sum_p = 0.0;
+    double sum_p2 = 0.0;
+    double sum_noise = 0.0;
+    size_t n = 0;
+    for (size_t i = 0; i < nAcc; i++) {
+        if (acc[i].sum_cov == 0) continue;
+        double p = acc[i].sum_meth_weighted / (double)acc[i].sum_cov;
+        sum_p += p;
+        sum_p2 += p * p;
+        sum_noise += (p * (1.0 - p)) / (double)acc[i].sum_cov;
+        n++;
+    }
+    if (n == 0) return prior;
+    double mean_p = sum_p / (double)n;
+    double var_p = (sum_p2 / (double)n) - (mean_p * mean_p);
+    if (var_p < 0.0) var_p = 0.0;
+    double noise = sum_noise / (double)n;
+    double denom = var_p - noise;
+    if (denom <= 0.0 || mean_p <= 0.0 || mean_p >= 1.0) {
+        double k = 50.0;
+        prior.alpha = mean_p * k;
+        prior.beta = (1.0 - mean_p) * k;
+        prior.valid = 1;
+        return prior;
+    }
+    double k = (mean_p * (1.0 - mean_p) / denom) - 1.0;
+    if (k < 1.0) k = 1.0;
+    prior.alpha = mean_p * k;
+    prior.beta = (1.0 - mean_p) * k;
+    prior.valid = 1;
+    return prior;
+}
+
+static double dm_sc_matrix_eb_mean(dm_matrix_accum_t *a, const dm_eb_prior_t *prior) {
+    if (!prior || !prior->valid) return dm_sc_matrix_value(a, "mean-meth", "mean");
+    double alpha = prior->alpha + a->sum_meth_weighted;
+    double beta = prior->beta + ((double)a->sum_cov - a->sum_meth_weighted);
+    if (alpha + beta == 0.0) return 0.0;
+    return alpha / (alpha + beta);
+}
+
+static double dm_sc_matrix_eb_var(dm_matrix_accum_t *a, const dm_eb_prior_t *prior) {
+    if (!prior || !prior->valid) return 0.0;
+    double alpha = prior->alpha + a->sum_meth_weighted;
+    double beta = prior->beta + ((double)a->sum_cov - a->sum_meth_weighted);
+    double denom = (alpha + beta) * (alpha + beta) * (alpha + beta + 1.0);
+    if (denom == 0.0) return 0.0;
+    return (alpha * beta) / denom;
+}
+
+static void dm_sc_matrix_eb_ci(dm_matrix_accum_t *a, const dm_eb_prior_t *prior, double *low, double *high) {
+    double mean = dm_sc_matrix_eb_mean(a, prior);
+    double var = dm_sc_matrix_eb_var(a, prior);
+    double sd = var > 0.0 ? sqrt(var) : 0.0;
+    double l = mean - 1.96 * sd;
+    double h = mean + 1.96 * sd;
+    if (l < 0.0) l = 0.0;
+    if (h > 1.0) h = 1.0;
+    if (low) *low = l;
+    if (high) *high = h;
+}
+
 static void dm_sc_matrix_usage() {
     fprintf(stderr,
             "Usage: dmtools sc-matrix -i <input.dm> [-i <input2.dm> ...] -o <output_prefix> (--bed regions.bed | --binsize N) [options]\n"
@@ -564,6 +636,7 @@ static void dm_sc_matrix_usage() {
             "      --agg <METHOD>       mean (default) or sum (for coverage)\n"
             "      --sparse             Write sparse Matrix Market output (default)\n"
             "      --dense              Write dense TSV matrix\n"
+            "      --eb                 Enable empirical Bayes shrinkage (outputs eb_mean + var/CI)\n"
             "  -h, --help               Show this help message\n");
 }
 
@@ -577,6 +650,7 @@ int dm_sc_matrix_main(int argc, char **argv) {
     char *valueType = strdup("mean-meth");
     char *aggMethod = strdup("mean");
     int dense = 0; int sparse = 1;
+    int ebEnabled = 0;
 
     if (!valueType || !aggMethod) goto error;
 
@@ -591,6 +665,7 @@ int dm_sc_matrix_main(int argc, char **argv) {
         {"agg", required_argument, 0, 6},
         {"sparse", no_argument, 0, 7},
         {"dense", no_argument, 0, 8},
+        {"eb", no_argument, 0, 9},
         {"help", no_argument, 0, 'h'},
         {0,0,0,0}
     };
@@ -646,6 +721,9 @@ int dm_sc_matrix_main(int argc, char **argv) {
             case 8:
                 dense = 1; sparse = 0;
                 break;
+            case 9:
+                ebEnabled = 1;
+                break;
             case 'h':
                 dm_sc_matrix_usage();
                 goto cleanup;
@@ -664,6 +742,9 @@ int dm_sc_matrix_main(int argc, char **argv) {
         fprintf(stderr, "Error: specify exactly one of --bed or --binsize.\n");
         dm_sc_matrix_usage();
         goto error;
+    }
+    if (ebEnabled && strcasecmp(valueType, "mean-meth") != 0) {
+        fprintf(stderr, "Warning: --eb only applies to mean-meth; ignoring --value %s.\n", valueType);
     }
 
     dm_region_t *regions = NULL; size_t nRegions = 0;
@@ -765,6 +846,15 @@ int dm_sc_matrix_main(int argc, char **argv) {
 
     if (!dense && !sparse) sparse = 1;
 
+    dm_eb_prior_t ebPrior = {0};
+    if (ebEnabled) {
+        ebPrior = dm_sc_matrix_estimate_prior(acc, nAcc);
+        if (!ebPrior.valid) {
+            fprintf(stderr, "Warning: EB prior estimation failed; falling back to mean-meth.\n");
+            ebEnabled = 0;
+        }
+    }
+
     if (dm_sc_matrix_write_features(outputPrefix, regions, nRegions) != 0) {
         fprintf(stderr, "Error: failed to write features.tsv\n");
         goto error_all;
@@ -802,8 +892,58 @@ int dm_sc_matrix_main(int argc, char **argv) {
         fprintf(f, "%%MatrixMarket matrix coordinate real general\n");
         fprintf(f, "%zu %zu %zu\n", nCells, nRegions, nAcc);
         for (size_t i = 0; i < nAcc; i++) {
-            double val = dm_sc_matrix_value(&acc[i], valueType, aggMethod);
+            double val = ebEnabled ? dm_sc_matrix_eb_mean(&acc[i], &ebPrior)
+                                   : dm_sc_matrix_value(&acc[i], valueType, aggMethod);
             fprintf(f, "%d %d %.6f\n", acc[i].row + 1, acc[i].col + 1, val);
+        }
+        fclose(f);
+    }
+
+    if (sparse && ebEnabled) {
+        size_t len = strlen(outputPrefix) + 20;
+        char *path = malloc(len);
+        if (!path) goto error_all;
+        snprintf(path, len, "%s.matrix.eb_var.mtx", outputPrefix);
+        FILE *f = fopen(path, "w");
+        free(path);
+        if (!f) goto error_all;
+        fprintf(f, "%%MatrixMarket matrix coordinate real general\n");
+        fprintf(f, "%zu %zu %zu\n", nCells, nRegions, nAcc);
+        for (size_t i = 0; i < nAcc; i++) {
+            double val = dm_sc_matrix_eb_var(&acc[i], &ebPrior);
+            fprintf(f, "%d %d %.6f\n", acc[i].row + 1, acc[i].col + 1, val);
+        }
+        fclose(f);
+
+        len = strlen(outputPrefix) + 22;
+        path = malloc(len);
+        if (!path) goto error_all;
+        snprintf(path, len, "%s.matrix.eb_lower.mtx", outputPrefix);
+        f = fopen(path, "w");
+        free(path);
+        if (!f) goto error_all;
+        fprintf(f, "%%MatrixMarket matrix coordinate real general\n");
+        fprintf(f, "%zu %zu %zu\n", nCells, nRegions, nAcc);
+        for (size_t i = 0; i < nAcc; i++) {
+            double low = 0.0, high = 0.0;
+            dm_sc_matrix_eb_ci(&acc[i], &ebPrior, &low, &high);
+            fprintf(f, "%d %d %.6f\n", acc[i].row + 1, acc[i].col + 1, low);
+        }
+        fclose(f);
+
+        len = strlen(outputPrefix) + 22;
+        path = malloc(len);
+        if (!path) goto error_all;
+        snprintf(path, len, "%s.matrix.eb_upper.mtx", outputPrefix);
+        f = fopen(path, "w");
+        free(path);
+        if (!f) goto error_all;
+        fprintf(f, "%%MatrixMarket matrix coordinate real general\n");
+        fprintf(f, "%zu %zu %zu\n", nCells, nRegions, nAcc);
+        for (size_t i = 0; i < nAcc; i++) {
+            double low = 0.0, high = 0.0;
+            dm_sc_matrix_eb_ci(&acc[i], &ebPrior, &low, &high);
+            fprintf(f, "%d %d %.6f\n", acc[i].row + 1, acc[i].col + 1, high);
         }
         fclose(f);
     }
@@ -822,8 +962,85 @@ int dm_sc_matrix_main(int argc, char **argv) {
         double *matrix = calloc(nCells * nRegions, sizeof(double));
         if (!matrix) { fclose(f); goto error_all; }
         for (size_t i = 0; i < nAcc; i++) {
-            double val = dm_sc_matrix_value(&acc[i], valueType, aggMethod);
+            double val = ebEnabled ? dm_sc_matrix_eb_mean(&acc[i], &ebPrior)
+                                   : dm_sc_matrix_value(&acc[i], valueType, aggMethod);
             matrix[((size_t)acc[i].row * nRegions) + acc[i].col] = val;
+        }
+        for (size_t r = 0; r < nCells; r++) {
+            fprintf(f, "%s", cellIds[r]);
+            for (size_t c = 0; c < nRegions; c++) fprintf(f, "\t%.6f", matrix[r * nRegions + c]);
+            fprintf(f, "\n");
+        }
+        free(matrix);
+        fclose(f);
+    }
+
+    if (dense && ebEnabled) {
+        size_t len = strlen(outputPrefix) + 12;
+        char *path = malloc(len);
+        if (!path) goto error_all;
+        snprintf(path, len, "%s.eb_var.tsv", outputPrefix);
+        FILE *f = fopen(path, "w");
+        free(path);
+        if (!f) goto error_all;
+        fprintf(f, "cell_id");
+        for (size_t c = 0; c < nRegions; c++) fprintf(f, "\t%s", regions[c].name);
+        fprintf(f, "\n");
+        double *matrix = calloc(nCells * nRegions, sizeof(double));
+        if (!matrix) { fclose(f); goto error_all; }
+        for (size_t i = 0; i < nAcc; i++) {
+            double val = dm_sc_matrix_eb_var(&acc[i], &ebPrior);
+            matrix[((size_t)acc[i].row * nRegions) + acc[i].col] = val;
+        }
+        for (size_t r = 0; r < nCells; r++) {
+            fprintf(f, "%s", cellIds[r]);
+            for (size_t c = 0; c < nRegions; c++) fprintf(f, "\t%.6f", matrix[r * nRegions + c]);
+            fprintf(f, "\n");
+        }
+        free(matrix);
+        fclose(f);
+
+        len = strlen(outputPrefix) + 13;
+        path = malloc(len);
+        if (!path) goto error_all;
+        snprintf(path, len, "%s.eb_lower.tsv", outputPrefix);
+        f = fopen(path, "w");
+        free(path);
+        if (!f) goto error_all;
+        fprintf(f, "cell_id");
+        for (size_t c = 0; c < nRegions; c++) fprintf(f, "\t%s", regions[c].name);
+        fprintf(f, "\n");
+        matrix = calloc(nCells * nRegions, sizeof(double));
+        if (!matrix) { fclose(f); goto error_all; }
+        for (size_t i = 0; i < nAcc; i++) {
+            double low = 0.0, high = 0.0;
+            dm_sc_matrix_eb_ci(&acc[i], &ebPrior, &low, &high);
+            matrix[((size_t)acc[i].row * nRegions) + acc[i].col] = low;
+        }
+        for (size_t r = 0; r < nCells; r++) {
+            fprintf(f, "%s", cellIds[r]);
+            for (size_t c = 0; c < nRegions; c++) fprintf(f, "\t%.6f", matrix[r * nRegions + c]);
+            fprintf(f, "\n");
+        }
+        free(matrix);
+        fclose(f);
+
+        len = strlen(outputPrefix) + 13;
+        path = malloc(len);
+        if (!path) goto error_all;
+        snprintf(path, len, "%s.eb_upper.tsv", outputPrefix);
+        f = fopen(path, "w");
+        free(path);
+        if (!f) goto error_all;
+        fprintf(f, "cell_id");
+        for (size_t c = 0; c < nRegions; c++) fprintf(f, "\t%s", regions[c].name);
+        fprintf(f, "\n");
+        matrix = calloc(nCells * nRegions, sizeof(double));
+        if (!matrix) { fclose(f); goto error_all; }
+        for (size_t i = 0; i < nAcc; i++) {
+            double low = 0.0, high = 0.0;
+            dm_sc_matrix_eb_ci(&acc[i], &ebPrior, &low, &high);
+            matrix[((size_t)acc[i].row * nRegions) + acc[i].col] = high;
         }
         for (size_t r = 0; r < nCells; r++) {
             fprintf(f, "%s", cellIds[r]);
