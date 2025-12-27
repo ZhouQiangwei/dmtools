@@ -102,6 +102,7 @@ using namespace std;
 static uint32_t gCellId = 0;
 static std::string gCellName;
 static std::string gIdmapOut;
+static std::string gCellIdStr;
 
 static int detect_cell_name_from_tag(const std::string &bamPath, const std::string &tag, std::string &name) {
     if(tag.size() != 2) return 2;
@@ -1434,7 +1435,8 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
     std::vector<uint16_t> covBuf(MAX_LINE_PRINT, 0);
     std::vector<uint8_t> strandBuf(MAX_LINE_PRINT, 0);
     std::vector<uint8_t> contextBuf(MAX_LINE_PRINT, 0);
-    std::vector<uint32_t> entryBuf(MAX_LINE_PRINT, 0);
+    std::vector<char*> entryBuf(MAX_LINE_PRINT, NULL);
+    std::string entryIdStr = std::to_string(gCellId);
 
     for(const auto &task : ordered) {
         const uint32_t dmTid = chromOrder.at(task.chrom);
@@ -1597,7 +1599,7 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
                     covBuf[writeCount] = static_cast<uint16_t>(std::min<uint32_t>(cov, std::numeric_limits<uint16_t>::max()));
                     strandBuf[writeCount] = strand;
                     contextBuf[writeCount] = context;
-                    entryBuf[writeCount] = (out->type & BM_ID) ? gCellId : 0;
+                    entryBuf[writeCount] = (out->type & BM_ID) ? const_cast<char*>(entryIdStr.c_str()) : NULL;
                     ++writeCount;
                     recordsWritten++;
                 }
@@ -2185,6 +2187,7 @@ int main(int argc, char* argv[])
         gCellId = cellId;
         gCellName = cellNameArg;
         gIdmapOut = idmapOutArg;
+        gCellIdStr = std::to_string(gCellId);
     } else if(!idmapOutArg.empty()) {
         fprintf(stderr, "[bam2dm] --idmap-out requires --Id\n");
         return 1;
@@ -2913,7 +2916,7 @@ string getstring(char* seq, int l, int len){
 }
 //g++ bmtools/libBigWig.a bmtools/libBigWig.so calmeth.cpp -o calmeth -m64 -I./samtools-0.1.18/ -L./samtools-0.1.18/ -lbam -lz
 char **chromsUse;
-uint32_t *entryid;
+char **entryid;
 uint32_t *starts;
 uint32_t *pends;
 float *values;
@@ -2923,7 +2926,7 @@ uint8_t *contexts;
 
 //
 char **chromsUse_gch;
-uint32_t *entryid_gch;
+char **entryid_gch;
 uint32_t *starts_gch;
 uint32_t *pends_gch;
 float *values_gch;
@@ -2952,7 +2955,7 @@ void print_meth_tofile(int genome_id, ARGS* args){
                         args->Genome_Offsets[genome_id].Genome, (void*)fp, (void*)fp_gch, (void*)args->methOutFp, args->methOutLines);
             }
             chromsUse = (char **)calloc(MAX_LINE_PRINT, sizeof(char*));
-            entryid = (uint32_t *)calloc(MAX_LINE_PRINT, sizeof(uint32_t));
+            entryid = (char **)calloc(MAX_LINE_PRINT, sizeof(char*));
             starts = nullptr;
             pends = nullptr;
             values = nullptr;
@@ -2974,7 +2977,7 @@ void print_meth_tofile(int genome_id, ARGS* args){
             if(enableGch) {
                 //for GCH chromatin accessibility
                 chromsUse_gch = (char **)calloc(MAX_LINE_PRINT, sizeof(char*));
-                entryid_gch = (uint32_t *)calloc(MAX_LINE_PRINT, sizeof(uint32_t));
+                entryid_gch = (char **)calloc(MAX_LINE_PRINT, sizeof(char*));
                 starts_gch = (uint32_t *)calloc(MAX_LINE_PRINT, sizeof(uint32_t));
                 pends_gch = (uint32_t *)malloc(sizeof(uint32_t) * MAX_LINE_PRINT);
                 values_gch = (float *)malloc(sizeof(float) * MAX_LINE_PRINT);
@@ -3213,7 +3216,7 @@ void print_meth_tofile(int genome_id, ARGS* args){
                         contexts[printL] = 3;
                     }
                     if(fp && (fp->type & BM_ID)) {
-                        entryid[printL] = gCellId;
+                        entryid[printL] = const_cast<char*>(gCellIdStr.c_str());
                     }
                     printL++;
                         if(printtxt == 1 && args->methOutFp){
@@ -3239,7 +3242,7 @@ void print_meth_tofile(int genome_id, ARGS* args){
                             strands[printL] = 0; //0 represent '+'
                             contexts[printL] = 0;
                             if(fp && (fp->type & BM_ID)) {
-                                entryid[printL] = gCellId;
+                                entryid[printL] = const_cast<char*>(gCellIdStr.c_str());
                             }
                             printL++;
                         }else if(middleThree=="GCA" || middleThree=="GCT" || middleThree=="GCC") { //GCH for chromatin accessibility
@@ -3254,7 +3257,7 @@ void print_meth_tofile(int genome_id, ARGS* args){
                             strands_gch[printL_gch] = 0; //0 represent '+'
                             contexts_gch[printL_gch] = 0;
                             if(fp_gch && (fp_gch->type & BM_ID)) {
-                                entryid_gch[printL_gch] = gCellId;
+                                entryid_gch[printL_gch] = const_cast<char*>(gCellIdStr.c_str());
                             }
                             printL_gch++;
                         }
