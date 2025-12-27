@@ -1506,8 +1506,8 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
             size_t offset = 0;
             while(offset < merged.size()) {
                 size_t chunk = std::min(static_cast<size_t>(MAX_LINE_PRINT), merged.size() - offset);
-                char* chromName = chroms[dmTid];
-                uint32_t chrLen = lens[dmTid];
+                char* chromName = out->cl->chrom[dmTid];
+                uint32_t chrLen = out->cl->len[dmTid];
                 auto seqIt = chromSeqCache.find(chromName);
                 if(seqIt == chromSeqCache.end()) {
                     int fetchLen = faidx_seq_len(fai, chromName);
