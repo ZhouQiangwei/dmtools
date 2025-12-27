@@ -84,8 +84,28 @@ error:
     return NULL;
 }
 
+static uint32_t gWriteBufSize = 32768;
+static uint32_t gWriteBlockSize = 256;
+
+void bmSetWriteBufSize(uint32_t bufSize) {
+    if(bufSize < 4096) bufSize = 4096;
+    gWriteBufSize = bufSize;
+}
+
+void bmSetWriteBlockSize(uint32_t blockSize) {
+    if(blockSize < 2) blockSize = 2;
+    gWriteBlockSize = blockSize;
+}
+
+uint32_t bmGetWriteBufSize(void) {
+    return gWriteBufSize;
+}
+
+uint32_t bmGetWriteBlockSize(void) {
+    return gWriteBlockSize;
+}
+
 //If maxZooms == 0, then 0 is used (i.e., there are no zoom levels). If maxZooms < 0 or > 65535 then 10 is used.
-//TODO allow changing bufSize and blockSize
 int bmCreateHdr(binaMethFile_t *fp, int32_t maxZooms) {
     if(!fp->isWrite) return 1;
     binaMethHdr_t *hdr = calloc(1, sizeof(binaMethHdr_t));
@@ -113,11 +133,11 @@ int bmCreateHdr(binaMethFile_t *fp, int32_t maxZooms) {
         hdr->nLevels = maxZooms;
     }
 
-    hdr->bufSize = fp->type;// 32768; //fp->type;??// 0x8000 is 32768, per entry, momo; //When the file is finalized this is reset if fp->writeBuffer->compressPsz is 0!
+    hdr->bufSize = gWriteBufSize;
     hdr->minVal = 2; //DBL_MAX;
     hdr->maxVal = DBL_MIN;
     fp->hdr = hdr;
-    fp->writeBuffer->blockSize = 64;
+    fp->writeBuffer->blockSize = gWriteBlockSize;
 
     //Allocate the writeBuffer buffers
     fp->writeBuffer->compressPsz = compressBound(hdr->bufSize);
@@ -230,6 +250,16 @@ static int writeChromList(FILE *fp, chromList_t *cl) {
     return 0;
 }
 
+typedef struct {
+    uint32_t magic;
+    uint16_t version;
+    uint16_t size;
+    uint32_t bufSize;
+    uint32_t blockSize;
+} bmWriteParams_t;
+
+#define BM_WRITE_PARAMS_MAGIC 0x44574d50 /* "DWMP" */
+
 //returns 0 on success
 //Still need to fill in indexOffset
 int bmWriteHdr(binaMethFile_t *bm) {
@@ -272,6 +302,17 @@ int bmWriteHdr(binaMethFile_t *bm) {
     bm->hdr->ctOffset = ftell(fp);
     if(writeChromList(fp, bm->cl)) return 7;
     if(writeAtPos(&(bm->hdr->ctOffset), sizeof(uint64_t), 1, 0x8, fp)) return 8;
+
+    //Write extension with write parameters
+    bm->hdr->extensionOffset = ftell(fp);
+    bmWriteParams_t params;
+    params.magic = BM_WRITE_PARAMS_MAGIC;
+    params.version = 2;
+    params.size = sizeof(bmWriteParams_t);
+    params.bufSize = bm->hdr->bufSize;
+    params.blockSize = bm->writeBuffer->blockSize;
+    if(fwrite(&params, sizeof(params), 1, fp) != 1) return 12;
+    if(writeAtPos(&(bm->hdr->extensionOffset), sizeof(uint64_t), 1, 0x38, fp)) return 12;
 
     //Update the dataOffset
     bm->hdr->dataOffset = ftell(fp);
@@ -433,7 +474,7 @@ static void updateStats(binaMethFile_t *fp, uint32_t span, float val) {
 
 //12 bytes per entry, now 16 bytes per entry
 int bmAddIntervals(binaMethFile_t *fp, char **chrom, uint32_t *start, uint32_t *end, float *values, uint16_t *coverage, uint8_t *strand,
-    uint8_t *context, char **entryid, uint32_t n) {
+    uint8_t *context, uint32_t *entryid, uint32_t n) {
     uint32_t tid = 0, i;
     char *lastChrom = NULL;
     bmWriteBuffer_t *wb = fp->writeBuffer;
@@ -445,8 +486,7 @@ int bmAddIntervals(binaMethFile_t *fp, char **chrom, uint32_t *start, uint32_t *
     if(wb->ltype != 1) if(flushBuffer(fp)) return 3;
     if(DEBUG>1) fprintf(stderr, "fp->hdr->bufSize %d %d\n", wb->l, fp->hdr->bufSize);
 
-    const char *id0 = (entryid && entryid[0]) ? entryid[0] : "";
-    size_t slen = (fp->type & BM_ID) ? strlen(id0) + 1 : 0;
+    size_t slen = (fp->type & BM_ID) ? sizeof(uint32_t) : 0;
     size_t needed = 4; // start
     if(fp->type & BM_END) needed += 4;
     needed += 4; // value
@@ -474,30 +514,31 @@ int bmAddIntervals(binaMethFile_t *fp, char **chrom, uint32_t *start, uint32_t *
         wb->span = 0;
         wb->step = 0;
     }
-    if(!memcpy(wb->p+wb->l, start, sizeof(uint32_t))) return 7;
+    memcpy(wb->p+wb->l, start, sizeof(uint32_t));
     if(DEBUG>1) fprintf(stderr, "type %d\n", fp->type);
     size_t elen = 4;
     if(fp->type & BM_END){
-        if(!memcpy(wb->p+wb->l+elen, end, sizeof(uint32_t))) return 8;
+        memcpy(wb->p+wb->l+elen, end, sizeof(uint32_t));
         elen += 4;
     }
-    if(!memcpy(wb->p+wb->l+elen, values, sizeof(float))) return 9;
+    memcpy(wb->p+wb->l+elen, values, sizeof(float));
     elen += 4;
     if(fp->type & BM_COVER){
-        if(!memcpy(wb->p+wb->l+elen, coverage, sizeof(uint16_t))) return 9;
+        memcpy(wb->p+wb->l+elen, coverage, sizeof(uint16_t));
         elen += 2;
     }
     if(fp->type & BM_STRAND){
-        if(!memcpy(wb->p+wb->l+elen, strand, sizeof(uint8_t))) return 9;
+        memcpy(wb->p+wb->l+elen, strand, sizeof(uint8_t));
         elen += 1;
     }
     if(fp->type & BM_CONTEXT){
-        if(!memcpy(wb->p+wb->l+elen, context, sizeof(uint8_t))) return 9;
+        memcpy(wb->p+wb->l+elen, context, sizeof(uint8_t));
         elen += 1;
     }
     if(fp->type & BM_ID){
-        if(!memcpy(wb->p+wb->l+elen, id0, slen)) return 9;
-        elen += slen;
+        uint32_t id0 = entryid ? entryid[0] : 0;
+        memcpy(wb->p+wb->l+elen, &id0, sizeof(uint32_t));
+        elen += sizeof(uint32_t);
     }
     wb->l += elen;
     wb->nItems += 1;
@@ -567,31 +608,31 @@ int bmAddIntervals(binaMethFile_t *fp, char **chrom, uint32_t *start, uint32_t *
         }
         //if(DEBUG>1) 
         if(DEBUG>1) printf("--==--buffer %d %d %d %d\n", start[i], end[i], wb->l, fp->hdr->bufSize);
-        if(!memcpy(wb->p+wb->l, &(start[i]), sizeof(uint32_t))) return 11;
+        memcpy(wb->p+wb->l, &(start[i]), sizeof(uint32_t));
         elen = 4;
 
         if(fp->type & BM_END){
-            if(!memcpy(wb->p+wb->l+elen, &(end[i]), sizeof(uint32_t))) return 9;
+            memcpy(wb->p+wb->l+elen, &(end[i]), sizeof(uint32_t));
             elen += 4;
         }
-        if(!memcpy(wb->p+wb->l+elen, &(values[i]), sizeof(float))) return 9;
+        memcpy(wb->p+wb->l+elen, &(values[i]), sizeof(float));
         elen += 4;
         if(fp->type & BM_COVER){
-            if(!memcpy(wb->p+wb->l+elen, &(coverage[i]), sizeof(uint16_t))) return 9;
+            memcpy(wb->p+wb->l+elen, &(coverage[i]), sizeof(uint16_t));
             elen += 2;
         }
         if(fp->type & BM_STRAND){
-            if(!memcpy(wb->p+wb->l+elen, &(strand[i]), sizeof(uint8_t))) return 9;
+            memcpy(wb->p+wb->l+elen, &(strand[i]), sizeof(uint8_t));
             elen += 1;
         }
         if(fp->type & BM_CONTEXT){
-            if(!memcpy(wb->p+wb->l+elen, &(context[i]), sizeof(uint8_t))) return 9;
+            memcpy(wb->p+wb->l+elen, &(context[i]), sizeof(uint8_t));
             elen += 1;
         }
         if(fp->type & BM_ID){
-            slen = strlen(entryid[i]) + 1;
-            if(!memcpy(wb->p+wb->l+elen, entryid[i], sizeof(char*))) return 9;
-            wb->l += slen;
+            uint32_t idv = entryid ? entryid[i] : 0;
+            memcpy(wb->p+wb->l+elen, &idv, sizeof(uint32_t));
+            elen += sizeof(uint32_t);
         }
         if(DEBUG>1) printf("elen %d\n", elen);
         wb->l += elen;
@@ -653,7 +694,7 @@ int bmAddIntervals(binaMethFile_t *fp, char **chrom, uint32_t *start, uint32_t *
 }
 
 int bmAppendIntervals(binaMethFile_t *fp, uint32_t *start, uint32_t *end, float *values, uint16_t *coverage, uint8_t *strand,
-    uint8_t *context, char **entryid, uint32_t n) {
+    uint8_t *context, uint32_t *entryid, uint32_t n) {
     uint32_t i;
     bmWriteBuffer_t *wb = fp->writeBuffer;
     if(!n) return 0;
@@ -663,11 +704,10 @@ int bmAppendIntervals(binaMethFile_t *fp, uint32_t *start, uint32_t *end, float 
         fprintf(stderr, "wb->ltype %d\n", wb->ltype);
         return 3;
     }
-    size_t slen =0; size_t elen = 0;
+    size_t elen = 0;
 
     for(i=0; i<n; i++) {
-        const char *id = (entryid && entryid[i]) ? entryid[i] : "";
-        slen = (fp->type & BM_ID) ? strlen(id) + 1 : 0;
+        size_t slen = (fp->type & BM_ID) ? sizeof(uint32_t) : 0;
         size_t needed = 4; //start
         if(fp->type & BM_END) needed += 4;
         needed += 4; //value
@@ -685,30 +725,31 @@ int bmAppendIntervals(binaMethFile_t *fp, uint32_t *start, uint32_t *end, float 
             flushBuffer(fp);
             wb->start = start[i];
         }
-        if(!memcpy(wb->p+wb->l, &(start[i]), sizeof(uint32_t))) return 4;
+        memcpy(wb->p+wb->l, &(start[i]), sizeof(uint32_t));
         elen = 4;
 
         if(fp->type & BM_END){
-            if(!memcpy(wb->p+wb->l+elen, &(end[i]), sizeof(uint32_t))) return 9;
+            memcpy(wb->p+wb->l+elen, &(end[i]), sizeof(uint32_t));
             elen += 4;
         }
-        if(!memcpy(wb->p+wb->l+elen, &(values[i]), sizeof(float))) return 9;
+        memcpy(wb->p+wb->l+elen, &(values[i]), sizeof(float));
         elen += 4;
         if(fp->type & BM_COVER){
-            if(!memcpy(wb->p+wb->l+elen, &(coverage[i]), sizeof(uint16_t))) return 9;
+            memcpy(wb->p+wb->l+elen, &(coverage[i]), sizeof(uint16_t));
             elen += 2;
         }
         if(fp->type & BM_STRAND){
-            if(!memcpy(wb->p+wb->l+elen, &(strand[i]), sizeof(uint8_t))) return 9;
+            memcpy(wb->p+wb->l+elen, &(strand[i]), sizeof(uint8_t));
             elen += 1;
         }
         if(fp->type & BM_CONTEXT){
-            if(!memcpy(wb->p+wb->l+elen, &(context[i]), sizeof(uint8_t))) return 9;
+            memcpy(wb->p+wb->l+elen, &(context[i]), sizeof(uint8_t));
             elen += 1;
         }
         if(fp->type & BM_ID){
-            if(!memcpy(wb->p+wb->l+elen, id, slen)) return 9;
-            elen += slen;
+            uint32_t idv = entryid ? entryid[i] : 0;
+            memcpy(wb->p+wb->l+elen, &idv, sizeof(uint32_t));
+            elen += sizeof(uint32_t);
         }
         wb->l += elen;
         wb->nItems += 1;
@@ -1668,4 +1709,3 @@ void destroyZoomBuffers(bmWriteBuffer_t *wb, uint16_t nLevels) {
         wb->nNodes = NULL;
     }
 }
-

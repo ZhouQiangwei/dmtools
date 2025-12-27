@@ -28,8 +28,8 @@
 | 0x22 | `uint16_t` | `definedFieldCount`  | 与 `fieldCount` 相同。 |
 | 0x24 | `uint64_t` | `sqlOffset`          | 未使用，默认为 0。 |
 | 0x2c | `uint64_t` | `summaryOffset`      | 指向摘要块；摘要为 40 字节：`uint64_t nBasesCovered`、`double minVal`、`double maxVal`、`double sumData`、`double sumSquared`。 |
-| 0x34 | `uint32_t` | `bufSize`            | 写入 `version/type_mask`，非零表示数据块使用 zlib 压缩。 |
-| 0x38 | `uint64_t` | `extensionOffset`    | 未使用，默认为 0。 |
+| 0x34 | `uint32_t` | `bufSize`            | 数据块压缩缓冲区大小（默认 32768）。非零表示数据块使用 zlib 压缩。 |
+| 0x38 | `uint64_t` | `extensionOffset`    | 可选扩展区起始偏移（例如记录写入参数）。 |
 | 0x40 | 24×`nLevels` 字节 | Zoom headers | 每级 24 字节：`uint32_t level`、`uint32_t padding`、`uint64_t dataOffset`、`uint64_t indexOffset`。当前工具通常为 0。 |
 
 ### 染色体列表（`ctOffset`）
@@ -56,22 +56,32 @@
    - `uint16_t nItems`：块内记录条数。
 
 2. **记录列表**（`nItems` 条）。字段顺序由 `version/type_mask` 中的 `BM_*` 位决定：
-   - `uint32_t start`（必选）。
-   - `uint32_t end`（当 `BM_END` 置位时写入）。
+   - `uint32_t start`（必选；**当前 dmtools 写入 1-based 坐标**）。
+   - `uint32_t end`（当 `BM_END` 置位时写入；end 为半开区间的右端点）。
    - `float value`（必选；甲基化比例）。
    - `uint16_t coverage`（当 `BM_COVER` 置位时写入；测序覆盖度）。
    - `uint8_t strand`（当 `BM_STRAND` 置位时写入；`'+'`/`'-'` 以 `0/1` 表示）。
    - `uint8_t context`（当 `BM_CONTEXT` 置位时写入；碱基上下文编码）。
-   - `char entryid[]`（当 `BM_ID` 置位时写入；以 `\0` 结尾的可变长字符串）。
+   - `uint32_t entryid`（当 `BM_ID` 置位时写入；numeric-only ID）。
 
 记录在文件内按 `tid`、`start` 的写入顺序保存；索引假定这种单调性以支持区间查询。`bufSize` 非 0 时，块（含块头+记录）经 zlib 压缩写入，索引保存压缩后块的偏移与大小。
+
+## 扩展区（`extensionOffset`）
+
+若 `extensionOffset` 非 0，dmtools 会写入一个可选扩展结构记录写入参数，便于重现和排障。当前扩展版本包含：
+
+- `uint32_t magic`：`0x44574d50`（"DWMP"）
+- `uint16_t version`：`2`（numeric-only ID encoding）
+- `uint16_t size`：结构体字节数
+- `uint32_t bufSize`：写入时使用的压缩缓冲区大小
+- `uint32_t blockSize`：索引节点最大子节点数
 
 ## 索引结构（Index）
 
 `indexOffset` 指向数据块的 R-tree 索引，头部格式：
 
 - `uint32_t magic`：`IDX_MAGIC` (`0x2468ACE0`)。
-- `uint32_t blockSize`：索引节点最大子节点数（默认 64）。
+- `uint32_t blockSize`：索引节点最大子节点数（默认 256，可通过 CLI 覆盖）。
 - `uint64_t nBlocks`：数据块数量，应与 `nBlocks` 计数一致。
 - `uint32_t startTid`、`uint32_t startPos`、`uint32_t endTid`、`uint32_t endPos`：根节点覆盖的范围。
 - `uint64_t indexSize`：索引总字节数（包含头部和所有节点）。
