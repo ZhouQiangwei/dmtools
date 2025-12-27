@@ -32,6 +32,10 @@ jobs:
       - name: Single-cell export (bundle only)
         run: |
           ./dmtools sc-export -i /tmp/coords.dm -o /tmp/coords_export --binsize 5
+      - name: sc-shrinkage tests
+        run: |
+          ./test/test_sc_shrinkage_toy.py
+          ./test/test_sc_shrinkage_integration.py
 
   build-macos:
     runs-on: macos-latest
