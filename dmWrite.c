@@ -307,7 +307,7 @@ int bmWriteHdr(binaMethFile_t *bm) {
     bm->hdr->extensionOffset = ftell(fp);
     bmWriteParams_t params;
     params.magic = BM_WRITE_PARAMS_MAGIC;
-    params.version = 1;
+    params.version = 2;
     params.size = sizeof(bmWriteParams_t);
     params.bufSize = bm->hdr->bufSize;
     params.blockSize = bm->writeBuffer->blockSize;
@@ -474,7 +474,7 @@ static void updateStats(binaMethFile_t *fp, uint32_t span, float val) {
 
 //12 bytes per entry, now 16 bytes per entry
 int bmAddIntervals(binaMethFile_t *fp, char **chrom, uint32_t *start, uint32_t *end, float *values, uint16_t *coverage, uint8_t *strand,
-    uint8_t *context, char **entryid, uint32_t n) {
+    uint8_t *context, uint32_t *entryid, uint32_t n) {
     uint32_t tid = 0, i;
     char *lastChrom = NULL;
     bmWriteBuffer_t *wb = fp->writeBuffer;
@@ -486,8 +486,7 @@ int bmAddIntervals(binaMethFile_t *fp, char **chrom, uint32_t *start, uint32_t *
     if(wb->ltype != 1) if(flushBuffer(fp)) return 3;
     if(DEBUG>1) fprintf(stderr, "fp->hdr->bufSize %d %d\n", wb->l, fp->hdr->bufSize);
 
-    const char *id0 = (entryid && entryid[0]) ? entryid[0] : "";
-    size_t slen = (fp->type & BM_ID) ? strlen(id0) + 1 : 0;
+    size_t slen = (fp->type & BM_ID) ? sizeof(uint32_t) : 0;
     size_t needed = 4; // start
     if(fp->type & BM_END) needed += 4;
     needed += 4; // value
@@ -537,10 +536,9 @@ int bmAddIntervals(binaMethFile_t *fp, char **chrom, uint32_t *start, uint32_t *
         elen += 1;
     }
     if(fp->type & BM_ID){
-        const char *id0 = (entryid && entryid[0]) ? entryid[0] : "";
-        size_t slen = strlen(id0) + 1;
-        memcpy(wb->p+wb->l+elen, id0, slen);
-        elen += slen;
+        uint32_t id0 = entryid ? entryid[0] : 0;
+        memcpy(wb->p+wb->l+elen, &id0, sizeof(uint32_t));
+        elen += sizeof(uint32_t);
     }
     wb->l += elen;
     wb->nItems += 1;
@@ -632,10 +630,9 @@ int bmAddIntervals(binaMethFile_t *fp, char **chrom, uint32_t *start, uint32_t *
             elen += 1;
         }
         if(fp->type & BM_ID){
-            const char *idv = (entryid && entryid[i]) ? entryid[i] : "";
-            size_t slen = strlen(idv) + 1;
-            memcpy(wb->p+wb->l+elen, idv, slen);
-            elen += slen;
+            uint32_t idv = entryid ? entryid[i] : 0;
+            memcpy(wb->p+wb->l+elen, &idv, sizeof(uint32_t));
+            elen += sizeof(uint32_t);
         }
         if(DEBUG>1) printf("elen %d\n", elen);
         wb->l += elen;
@@ -697,7 +694,7 @@ int bmAddIntervals(binaMethFile_t *fp, char **chrom, uint32_t *start, uint32_t *
 }
 
 int bmAppendIntervals(binaMethFile_t *fp, uint32_t *start, uint32_t *end, float *values, uint16_t *coverage, uint8_t *strand,
-    uint8_t *context, char **entryid, uint32_t n) {
+    uint8_t *context, uint32_t *entryid, uint32_t n) {
     uint32_t i;
     bmWriteBuffer_t *wb = fp->writeBuffer;
     if(!n) return 0;
@@ -710,7 +707,7 @@ int bmAppendIntervals(binaMethFile_t *fp, uint32_t *start, uint32_t *end, float 
     size_t elen = 0;
 
     for(i=0; i<n; i++) {
-        size_t slen = (fp->type & BM_ID) ? strlen(id) + 1 : 0;
+        size_t slen = (fp->type & BM_ID) ? sizeof(uint32_t) : 0;
         size_t needed = 4; //start
         if(fp->type & BM_END) needed += 4;
         needed += 4; //value
@@ -750,10 +747,9 @@ int bmAppendIntervals(binaMethFile_t *fp, uint32_t *start, uint32_t *end, float 
             elen += 1;
         }
         if(fp->type & BM_ID){
-            const char *idv = (entryid && entryid[i]) ? entryid[i] : "";
-            size_t slen = strlen(idv) + 1;
-            memcpy(wb->p+wb->l+elen, idv, slen);
-            elen += slen;
+            uint32_t idv = entryid ? entryid[i] : 0;
+            memcpy(wb->p+wb->l+elen, &idv, sizeof(uint32_t));
+            elen += sizeof(uint32_t);
         }
         wb->l += elen;
         wb->nItems += 1;

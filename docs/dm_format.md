@@ -62,7 +62,7 @@
    - `uint16_t coverage`（当 `BM_COVER` 置位时写入；测序覆盖度）。
    - `uint8_t strand`（当 `BM_STRAND` 置位时写入；`'+'`/`'-'` 以 `0/1` 表示）。
    - `uint8_t context`（当 `BM_CONTEXT` 置位时写入；碱基上下文编码）。
-   - `char entryid[]`（当 `BM_ID` 置位时写入；以 `\\0` 结尾的可变长字符串）。
+   - `uint32_t entryid`（当 `BM_ID` 置位时写入；numeric-only ID）。
 
 记录在文件内按 `tid`、`start` 的写入顺序保存；索引假定这种单调性以支持区间查询。`bufSize` 非 0 时，块（含块头+记录）经 zlib 压缩写入，索引保存压缩后块的偏移与大小。
 
@@ -71,7 +71,7 @@
 若 `extensionOffset` 非 0，dmtools 会写入一个可选扩展结构记录写入参数，便于重现和排障。当前扩展版本包含：
 
 - `uint32_t magic`：`0x44574d50`（"DWMP"）
-- `uint16_t version`：`1`
+- `uint16_t version`：`2`（numeric-only ID encoding）
 - `uint16_t size`：结构体字节数
 - `uint32_t bufSize`：写入时使用的压缩缓冲区大小
 - `uint32_t blockSize`：索引节点最大子节点数

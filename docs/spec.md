@@ -22,7 +22,7 @@ Optional (in order):
 - `coverage` (`uint16_t`, `BM_COVER`)
 - `strand` (`uint8_t`, `BM_STRAND`, encoded as `0` for `+`, `1` for `-`)
 - `context` (`uint8_t`, `BM_CONTEXT`, encoded as `1=CG`, `2=CHG`, `3=CHH`, `0=NA`)
-- `id` (`char[]`, `BM_ID`, NUL-terminated string)
+- `id` (`uint32_t`, `BM_ID`, numeric-only cell ID)
 
 ## Data blocks and index
 
@@ -42,11 +42,20 @@ Optional (in order):
 If `extensionOffset` is non-zero, dmtools writes a small extension describing write parameters (to aid reproduction and debugging):
 
 - `magic = 0x44574d50` ("DWMP")
-- `version = 1`
+- `version = 2` (numeric-only ID encoding)
 - `size = sizeof(struct)`
 - `bufSize` and `blockSize` used by the writer
 
 Readers that do not recognize the extension can safely ignore it.
+
+## ID mapping (.idmap.tsv)
+
+- When `BM_ID` is set, record-level IDs are stored as **numeric `uint32_t` values**.
+- A sidecar `<dm>.idmap.tsv` provides the dictionary mapping `id` → `barcode`.
+  - Each line is `id<TAB>barcode` with no header.
+  - `id=0` is reserved for bulk/unassigned records and should be omitted from the map.
+- Tools that require per-cell metadata (e.g., `sc-*`) must fail if the idmap is missing.
+- Legacy string-ID DM files are not supported; regenerate with the current dmtools.
 
 ## CLI naming guidance
 

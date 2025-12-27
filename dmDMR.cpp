@@ -485,7 +485,7 @@ int bm_overlap(binaMethFile_t *ifp1, binaMethFile_t *ifp2, char *chrom, int star
                         plocus.position=o1->start[j];
                         plocus.sign=strand_str[o1->strand[j]];
                         if(ifp1->hdr->version & BM_ID)
-                            plocus.name=o1->entryid[j];
+                            plocus.name=std::to_string(o1->entryid[j]);
                         else
                             plocus.name="";
                         plocus.pos = chrom_offset + 1 + plocus.position;
@@ -604,7 +604,10 @@ int bm_overlap_mul_calp(binaMethFile_t **ifp1s, int sizeifp, char *chrom, int st
 
                     if(i==sizeifp-1){ // last i
                         if(ifp1s[i]->hdr->version & BM_ID){
-                            sprintf(tempchar,"\t%s", o1->entryid[j]);
+                            {
+                                std::string idStr = std::to_string(o1->entryid[j]);
+                                sprintf(tempchar,"\t%s", idStr.c_str());
+                            }
                             strcat(printmr[loci], tempchar);
                         }
                     }
@@ -826,7 +829,10 @@ int bm_overlap_mul_calp_add(binaMethFile_t **ifp1s, int sizeifp, char *chrom, in
 
                     if(i==sizeifp-1){ // last i
                         if(ifp1s[i]->hdr->version & BM_ID){
-                            sprintf(tempchar,"\t%s", o1->entryid[j]);
+                            {
+                                std::string idStr = std::to_string(o1->entryid[j]);
+                                sprintf(tempchar,"\t%s", idStr.c_str());
+                            }
                             strcat(printmr[loci], tempchar);
                         }
                     }
@@ -1061,7 +1067,10 @@ int bm_overlap_mul(binaMethFile_t **ifp1s, int sizeifp, char *chrom, int start, 
 
                     if(i==sizeifp-1){ // last i
                         if(ifp1s[i]->hdr->version & BM_ID){
-                            sprintf(tempchar,"\t%s", o1->entryid[j]);
+                            {
+                                std::string idStr = std::to_string(o1->entryid[j]);
+                                sprintf(tempchar,"\t%s", idStr.c_str());
+                            }
                             strcat(printmr[loci], tempchar);
                         }
                     }

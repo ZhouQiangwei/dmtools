@@ -43,7 +43,7 @@ int main(void) {
     uint16_t coverage[] = {10, 20, 30};
     uint8_t strands[] = {0, 1, 0};
     uint8_t contexts[] = {1, 2, 3};
-    char *ids[] = {"1", "123", "1234567890"};
+    uint32_t ids[] = {1, 123, 1234567890};
 
     if(bmAddIntervals(fp, chromsUse, starts, ends, values, coverage, strands, contexts, ids, 3)) {
         fprintf(stderr, "bmAddIntervals failed\n");
@@ -77,7 +77,7 @@ int main(void) {
             bmClose(fp);
             return 1;
         }
-        if(!o->entryid || strcmp(o->entryid[i], ids[i]) != 0) {
+        if(!o->entryid || o->entryid[i] != ids[i]) {
             fprintf(stderr, "id mismatch at %u\n", i);
             bmDestroyOverlappingIntervals(o);
             bmClose(fp);

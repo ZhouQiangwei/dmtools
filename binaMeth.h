@@ -278,7 +278,7 @@ typedef struct {
     uint16_t *coverage;
     uint8_t *strand;
     uint8_t *context;
-    char **entryid;
+    uint32_t *entryid;
 } bmOverlappingIntervals_t;
 
 /*!
@@ -583,7 +583,7 @@ int bmWriteHdr(binaMethFile_t *bm);
  * @see bmAppendIntervals
  */
 int bmAddIntervals(binaMethFile_t *fp, char **chrom, uint32_t *start, uint32_t *end, float *values, uint16_t *coverage, uint8_t *strand,
-    uint8_t *context, char **entryid, uint32_t n);
+    uint8_t *context, uint32_t *entryid, uint32_t n);
 
 /*!
  * @brief Append bedGraph-like intervals to a previous block of bedGraph-like intervals in a binaMeth file.
@@ -598,7 +598,7 @@ int bmAddIntervals(binaMethFile_t *fp, char **chrom, uint32_t *start, uint32_t *
  * @see bmAddIntervals
  */
 int bmAppendIntervals(binaMethFile_t *fp, uint32_t *start, uint32_t *end, float *values, uint16_t *coverage, uint8_t *strand,
-    uint8_t *context, char **entryid, uint32_t n);
+    uint8_t *context, uint32_t *entryid, uint32_t n);
 
 /*!
  * @brief Add a new block of variable-step entries to a binaMeth file

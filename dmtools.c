@@ -23,6 +23,7 @@
 */
 #include "binaMeth.h"
 #include <string.h>
+#include <limits.h>
 #include <stdlib.h>
 #include <assert.h>
 #include <math.h>
@@ -78,12 +79,78 @@ int executeCMDWithStatus(const char *cmd, const char *errorinfor);
 size_t get_executable_path( char* processdir,char* processname, size_t len);
 unsigned long get_chr_len(binaMethFile_t *bm, char* chrom);
 static int dm_idmap_find_or_add(char ***names, size_t *n, size_t *cap, const char *name);
+
+typedef struct {
+    char **names;
+    size_t n;
+} dm_idmap_t;
+
+static dm_idmap_t gViewIdmap = {0};
+
+static void dm_idmap_free(dm_idmap_t *map) {
+    if(!map || !map->names) return;
+    for(size_t i = 0; i < map->n; i++) {
+        free(map->names[i]);
+    }
+    free(map->names);
+    map->names = NULL;
+    map->n = 0;
+}
+
+static int dm_idmap_load(const char *dmPath, dm_idmap_t *map) {
+    if(!dmPath || !map) return 1;
+    char path[PATH_MAX];
+    snprintf(path, sizeof(path), "%s.idmap.tsv", dmPath);
+    FILE *f = fopen(path, "r");
+    if(!f) {
+        snprintf(path, sizeof(path), "%s.idmap", dmPath);
+        f = fopen(path, "r");
+    }
+    if(!f) return 1;
+    char line[4096];
+    size_t cap = 0;
+    while(fgets(line, sizeof(line), f)) {
+        if(line[0] == '#' || line[0] == '\n') continue;
+        char *idStr = strtok(line, "\t\n");
+        char *name = strtok(NULL, "\t\n");
+        if(!idStr || !name) continue;
+        uint32_t id = (uint32_t)strtoul(idStr, NULL, 10);
+        if(id == 0) continue;
+        if(id >= map->n) {
+            size_t newN = id + 1;
+            if(newN > cap) {
+                cap = cap ? cap * 2 : 64;
+                if(cap < newN) cap = newN;
+                char **tmp = realloc(map->names, cap * sizeof(char *));
+                if(!tmp) { fclose(f); return 1; }
+                for(size_t i = map->n; i < cap; i++) tmp[i] = NULL;
+                map->names = tmp;
+            }
+            map->n = newN;
+        }
+        if(!map->names[id]) map->names[id] = strdup(name);
+    }
+    fclose(f);
+    return 0;
+}
+
+static const char *dm_idmap_lookup(const dm_idmap_t *map, uint32_t id) {
+    if(!map || !map->names || id >= map->n) return NULL;
+    return map->names[id];
+}
+
+static const char *dm_format_entryid(uint32_t id, char *buf, size_t bufSize) {
+    const char *name = dm_idmap_lookup(&gViewIdmap, id);
+    if(name && name[0] != '\0') return name;
+    snprintf(buf, bufSize, "%" PRIu32, id);
+    return buf;
+}
 int main_view_bm(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outformat, binaMethFile_t *ofp, \
     char** chromsUse, uint32_t* starts, uint32_t* ends, float* values, uint16_t* coverages, uint8_t* strands, \
-    uint8_t* contexts, char** entryid);
+    uint8_t* contexts, uint32_t* entryid);
 int bm_merge_all_mul(char *inbmFs, char *outfile, uint8_t pstrand, int m_method, int zoomlevel, char *outformat);
 int bm_merge_mul(binaMethFile_t **ifp1s, int sizeifp, int m_method, char *chrom, int start, int end, uint8_t strand,
-    char **chromsUse, uint32_t *starts, uint32_t *ends, float *values, uint16_t *coverages, uint8_t *strands, uint8_t *contexts, char **entryid, uint16_t *coverC, FILE *output_txt, char *outformat);
+    char **chromsUse, uint32_t *starts, uint32_t *ends, float *values, uint16_t *coverages, uint8_t *strands, uint8_t *contexts, uint32_t *entryid, uint16_t *coverC, FILE *output_txt, char *outformat);
 void *multithread_cmd(void *arg);
 int dm_sc_qc_main(int argc, char **argv);
 int dm_sc_matrix_main(int argc, char **argv);
@@ -698,7 +765,7 @@ int main(int argc, char *argv[]) {
     char **chroms = (char**)calloc(MAX_LINE_PRINT, sizeof(char*));
     if(!chroms) goto error;
     char **chromsUse = (char**)calloc(MAX_LINE_PRINT, sizeof(char*));
-    char **entryid = (char**)calloc(MAX_LINE_PRINT, sizeof(char*));
+    uint32_t *entryid = (uint32_t*)calloc(MAX_LINE_PRINT, sizeof(uint32_t));
     uint32_t *chrLens = (uint32_t*)calloc(MAX_LINE_PRINT, sizeof(uint32_t));
     uint32_t *starts = (uint32_t*)calloc(MAX_LINE_PRINT, sizeof(uint32_t));
     uint32_t *ends = (uint32_t*)calloc(MAX_LINE_PRINT, sizeof(uint32_t));
@@ -730,7 +797,7 @@ int main(int argc, char *argv[]) {
     for(i = 0; i < MAX_LINE_PRINT; i++){
         chroms[i] = NULL;
         chromsUse[i] = NULL;
-        entryid[i] = NULL;
+        entryid[i] = 0;
     }
     
     char *bedfile = NULL;
@@ -1580,7 +1647,7 @@ int main(int argc, char *argv[]) {
                     contexts[printL] = 3;
                 }
                 if(write_type & BM_ID) {
-                    entryid[printL] = strdup(idbuf);
+                    entryid[printL] = idValue;
                 }
                 if(DEBUG>-1) fprintf(stderr,"## %d start %s %d %d %f %d %d %d\n", printL, chromsUse[printL], starts[printL], ends[printL], values[printL], coverages[printL], strands[printL], context[printL]);
                 int response = bmAddIntervals(fp, chromsUse, starts, ends, values, coverages, strands, contexts,
@@ -1638,7 +1705,7 @@ int main(int argc, char *argv[]) {
                     contexts[printL] = 3;
                 }
                 if(write_type & BM_ID) {
-                    entryid[printL] = strdup(idbuf);
+                    entryid[printL] = idValue;
                 }
                 strcpy(old_chrom, chrom);
                 printL++;
@@ -1694,7 +1761,6 @@ int main(int argc, char *argv[]) {
                 fprintf(stderr, "[mr2dm] failed to write idmap %s\n", idmapOut);
                 goto error;
             }
-            fprintf(idfp, "id\tbarcode\n");
             for(size_t k = 0; k < nIdmap; k++) {
                 fprintf(idfp, "%zu\t%s\n", k + 1, idmapNames[k]);
             }
@@ -1760,6 +1826,9 @@ int main(int argc, char *argv[]) {
         binaMethFile_t *ifp = NULL;
         ifp = bmOpen(inbmfile, NULL, "r");
         ifp->type = ifp->hdr->version;
+        if(ifp->hdr->version & BM_ID) {
+            dm_idmap_load(inbmfile, &gViewIdmap);
+        }
         FILE *outfp_bm = NULL;
         FILE *outfp_stats = NULL;
         binaMethFile_t *ofp = NULL;
@@ -1880,6 +1949,7 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "Done and free mem\n");
         free(inbmfile);
         bmClose(ifp);
+        dm_idmap_free(&gViewIdmap);
         if(outfile) free(outfile);
         if(filterchrom) free(filterchrom);
         if(strcmp(outformat, "txt") == 0){
@@ -4181,7 +4251,7 @@ int calbodystats(char *inbmfile, char *method, char *region, uint8_t pstrand, ui
     return 0;
 }
 
-int write_dm(binaMethFile_t *ifp, char* region, FILE* outfileF, char *outformat, binaMethFile_t *ofp, char **chromsUse, uint32_t *starts, uint32_t *ends, float *values, uint16_t *coverages, uint8_t *strands, uint8_t *contexts, char **entryid, int newchr){
+int write_dm(binaMethFile_t *ifp, char* region, FILE* outfileF, char *outformat, binaMethFile_t *ofp, char **chromsUse, uint32_t *starts, uint32_t *ends, float *values, uint16_t *coverages, uint8_t *strands, uint8_t *contexts, uint32_t *entryid, int newchr){
     int printL = 0;
     printL = main_view_bm(ifp, region, outfileF, outformat, ofp, chromsUse, starts, ends, values, coverages, strands, contexts,
          entryid);
@@ -4218,7 +4288,7 @@ int main_view_all(binaMethFile_t *ifp, FILE* outfileF, char *outformat, binaMeth
     char* region = malloc(sizeof(char)*1000);
 
     char **chromsUse = malloc(sizeof(char*)*MAX_LINE_PRINT);
-    char **entryid = malloc(sizeof(char*)*MAX_LINE_PRINT);
+    uint32_t *entryid = malloc(sizeof(uint32_t)*MAX_LINE_PRINT);
 //    uint32_t *chrLens = malloc(sizeof(uint32_t) * MAX_LINE_PRINT);
     uint32_t *starts = malloc(sizeof(uint32_t) * MAX_LINE_PRINT);
     uint32_t *ends = malloc(sizeof(uint32_t) * MAX_LINE_PRINT);
@@ -4275,8 +4345,7 @@ int main_view_all(binaMethFile_t *ifp, FILE* outfileF, char *outformat, binaMeth
     free(region);
     for(i =0; i < usingLine; i++){
         if(chromsUse[i]) free(chromsUse[i]);
-        if(entryid[i]) free(entryid[i]);
-        entryid[i] = NULL;
+        entryid[i] = 0;
     }
     free(chromsUse); free(entryid); free(starts);
     free(ends); free(values); free(coverages); free(strands); free(contexts);
@@ -4284,7 +4353,7 @@ int main_view_all(binaMethFile_t *ifp, FILE* outfileF, char *outformat, binaMeth
 
 int main_view_bm(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outformat, binaMethFile_t *ofp, \
     char** chromsUse, uint32_t* starts, uint32_t* ends, float* values, uint16_t* coverages, uint8_t* strands, \
-    uint8_t* contexts, char** entryid){
+    uint8_t* contexts, uint32_t* entryid){
     // read. test/example_output.bm
     if(DEBUG>1) fprintf(stderr, "\nifp===-=== %d %d\n", ifp->type, ifp->hdr->version);
     //ifp->type = type;
@@ -4303,6 +4372,7 @@ int main_view_bm(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outfor
     char *pszBuf = malloc(sizeof(char)*40000000);
     char *tempstore = pszBuf;
     char *tempchar = malloc(30);
+    char idbuf[64];
     int Nprint = 0; int cover = 0; float methlevel = 0; int keyvalue = 0;
     //char *strand = malloc(100*sizeof(char)); int strand;
     for(i=0;i<slen; i++){
@@ -4359,7 +4429,7 @@ int main_view_bm(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outfor
                         contexts[Nprint] = o->context[j];
                     }
                     if(ifp->hdr->version & BM_ID) {
-                        entryid[Nprint] = o->entryid ? strdup(o->entryid[j]) : NULL;
+                        entryid[Nprint] = o->entryid ? o->entryid[j] : 0;
                     }
                     Nprint++;
                 }else if(strcmp(outformat, "stats") == 0) {
@@ -4424,7 +4494,8 @@ int main_view_bm(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outfor
                         tempstore = fastStrcat(tempstore, tempchar);
                     }
                         if(ifp->hdr->version & BM_ID) {
-                            sprintf(tempchar, "\t%s", o->entryid ? o->entryid[j] : "");
+                            const char *idLabel = dm_format_entryid(o->entryid ? o->entryid[j] : 0, idbuf, sizeof(idbuf));
+                            sprintf(tempchar, "\t%s", idLabel);
                             tempstore = fastStrcat(tempstore, tempchar);
                         }
                     sprintf(tempchar, "\n");
@@ -4477,6 +4548,7 @@ int main_view_file(binaMethFile_t *ifp, char *bedfile, FILE* outfileF, char *out
     unsigned int j = 0;
     char *tempstore = malloc(sizeof(char)*10000000);
     char *tempchar = malloc(20);
+    char idbuf[64];
     int Nprint = 0;
     char* region = malloc(sizeof(char)*1000);
     while(fgets(PerLine,2000,Fbedfile)!=NULL){
@@ -4543,7 +4615,7 @@ int main_view(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outformat
     int usingLine = 0; int keyvalue = 0;
     if(strcmp(outformat, "dm") == 0) {
         char **chromsUse = malloc(sizeof(char*)*MAX_LINE_PRINT);
-        char **entryid = malloc(sizeof(char*)*MAX_LINE_PRINT);
+        uint32_t *entryid = malloc(sizeof(uint32_t)*MAX_LINE_PRINT);
 //        uint32_t *chrLens = malloc(sizeof(uint32_t) * MAX_LINE_PRINT);
         uint32_t *starts = malloc(sizeof(uint32_t) * MAX_LINE_PRINT);
         uint32_t *ends = malloc(sizeof(uint32_t) * MAX_LINE_PRINT);
@@ -4565,8 +4637,7 @@ int main_view(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outformat
         //free mem
         for(i =0; i < usingLine; i++){
             if(chromsUse[i]) free(chromsUse[i]);
-            if(entryid[i]) free(entryid[i]);
-            entryid[i] = NULL;
+            entryid[i] = 0;
         }
         free(chromsUse); free(entryid); free(starts);
         free(ends); free(values); free(coverages); free(strands); free(contexts);
@@ -4656,7 +4727,8 @@ int main_view(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outformat
                             tempstore = fastStrcat(tempstore, tempchar);
                         }
                         if(ifp->hdr->version & BM_ID) {
-                            sprintf(tempchar, "\t%s", o->entryid ? o->entryid[j] : "");
+                            const char *idLabel = dm_format_entryid(o->entryid ? o->entryid[j] : 0, idbuf, sizeof(idbuf));
+                            sprintf(tempchar, "\t%s", idLabel);
                             tempstore = fastStrcat(tempstore, tempchar);
                         }
                         sprintf(tempchar, "\n");
@@ -4749,8 +4821,10 @@ int main_view_bedfile(char *inbmF, char *bedfile, int type, FILE* outfileF, char
                 }else if(strcmp(outformat, "txt") == 0) {
                     //fprintf(stderr, "1\t%ld\t%ld\t%f\t%ld\t%d\t%d\n", o->start[i], o->end[i], o->value[i], o->coverage[i],
                     //o->strand[i], o->context[i]);
+                    char idbuf[64];
+                    const char *idLabel = dm_format_entryid(o->entryid ? o->entryid[j] : 0, idbuf, sizeof(idbuf));
                     fprintf(stderr, "%s\t%ld\t%ld\t%f\t%ld\t%s\t%s\t%s\n", chrom, o->start[j], o->end[j], o->value[j], o->coverage[j],
-                        strand_str[o->strand[j]], context_str[o->context[j]], o->entryid ? o->entryid[j] : "");
+                        strand_str[o->strand[j]], context_str[o->context[j]], idLabel);
                 }
             }
         }
@@ -4843,7 +4917,7 @@ int bm_merge_all_mul(char *inbmFs, char *outfile, uint8_t pstrand, int m_method,
     int start = 0, end = SEGlen-1;
 
     char **chromsUse = calloc(MAX_LINE_PRINT, sizeof(char*));
-    char **entryid = calloc(MAX_LINE_PRINT, sizeof(char*));
+    uint32_t *entryid = calloc(MAX_LINE_PRINT, sizeof(uint32_t));
 //    uint32_t *chrLens = malloc(sizeof(uint32_t) * MAX_LINE_PRINT);
     uint32_t *starts = calloc(MAX_LINE_PRINT, sizeof(uint32_t));
     uint32_t *ends = calloc(MAX_LINE_PRINT, sizeof(uint32_t));
@@ -4911,8 +4985,7 @@ int bm_merge_all_mul(char *inbmFs, char *outfile, uint8_t pstrand, int m_method,
 
     for(i =0; i < MAX_LINE_PRINT; i++){
         if(chromsUse[i]) free(chromsUse[i]);
-        if(entryid[i]) free(entryid[i]);
-        entryid[i] = NULL;
+        entryid[i] = 0;
     }
     free(chromsUse); free(entryid); free(starts);
     free(ends); free(values); free(coverages); free(strands); free(contexts); free(coverC);
@@ -5278,8 +5351,11 @@ int bm_overlap(binaMethFile_t *ifp1, binaMethFile_t *ifp2, char *chrom, int star
                         if(ifp2->hdr->version & BM_COVER)
                             printf("\t%"PRIu16"", o2->coverage[k]);
 
-                        if(ifp1->hdr->version & BM_ID)
-                            printf("\t%s", o1->entryid ? o1->entryid[j] : "");
+                        if(ifp1->hdr->version & BM_ID) {
+                            char idbuf[64];
+                            const char *idLabel = dm_format_entryid(o1->entryid ? o1->entryid[j] : 0, idbuf, sizeof(idbuf));
+                            printf("\t%s", idLabel);
+                        }
                         printf("\n");
                     }
                 }
@@ -5376,7 +5452,9 @@ int bm_overlap_mul(binaMethFile_t **ifp1s, int sizeifp, char *chrom, int start, 
                     
                     if(i==sizeifp-1){
                         if(ifp1s[i]->hdr->version & BM_ID){
-                            sprintf(tempchar,"\t%s", o1->entryid ? o1->entryid[j] : "");
+                            char idbuf[64];
+                            const char *idLabel = dm_format_entryid(o1->entryid ? o1->entryid[j] : 0, idbuf, sizeof(idbuf));
+                            sprintf(tempchar,"\t%s", idLabel);
                             strcat(printmr[loci], tempchar);
                         }
                     }
@@ -5408,7 +5486,7 @@ error:
 }
 
 int bm_merge_mul(binaMethFile_t **ifp1s, int sizeifp, int m_method, char *chrom, int start, int end, uint8_t strand,
-    char **chromsUse, uint32_t *starts, uint32_t *ends, float *values, uint16_t *coverages, uint8_t *strands, uint8_t *contexts, char **entryid, uint16_t *coverC, FILE *output_txt, char *outformat){
+    char **chromsUse, uint32_t *starts, uint32_t *ends, float *values, uint16_t *coverages, uint8_t *strands, uint8_t *contexts, uint32_t *entryid, uint16_t *coverC, FILE *output_txt, char *outformat){
     //fprintf(stderr, "process region %s %d %d\n", chrom, start, end);
     int slen = 1, i =0, j = 0;
     int* countM = malloc(sizeof(int)*(end-start+1));
@@ -5445,8 +5523,7 @@ int bm_merge_mul(binaMethFile_t **ifp1s, int sizeifp, int m_method, char *chrom,
                         coverC[loci] = (int)((double)o1->value[j]*o1->coverage[j] + 0.5);
                     }
                         if(ifp1s[i]->hdr->version & BM_ID){
-                        if(entryid[loci]) free(entryid[loci]);
-                        entryid[loci] = o1->entryid ? strdup(o1->entryid[j]) : NULL;
+                        entryid[loci] = o1->entryid ? o1->entryid[j] : 0;
                     }
                 }else {
                     values[loci] += o1->value[j];

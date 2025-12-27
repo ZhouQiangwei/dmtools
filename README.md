@@ -128,7 +128,7 @@ DMtools is a BS-Seq methylation file view/process tool based on htslib and libBi
 
 ### Single-cell QC (sc-qc)
 
-dmtools supports an ID field in dm files for per-cell tagging. You can summarize basic QC metrics per cell with:
+dmtools supports a numeric ID field in dm files for per-cell tagging, with a required `<dm>.idmap.tsv` sidecar that maps numeric IDs to barcodes (`id<TAB>barcode`, no header). You can summarize basic QC metrics per cell with:
 
 ```
 dmtools sc-qc -i singlecell.dm -o sc_qc.tsv --context CG --min-coverage 3
@@ -138,7 +138,7 @@ The output table reports `cell_id`, `n_sites`, `total_coverage`, `mean_coverage`
 
 ### Single-cell matrix (sc-matrix)
 
-Build a cell × region matrix using the ID field as `cell_id`:
+Build a cell × region matrix using the numeric ID field as `cell_id` (requires `<dm>.idmap.tsv`):
 
 ```
 dmtools sc-matrix -i singlecell.dm --bed regions.bed -o sc_matrix --context CG --min-coverage 3 --sparse
