@@ -212,4 +212,5 @@ install-env: libBinaMeth.a libBinaMeth.so
 	install *.h $(prefix)/include
 
 libs:
+	chmod +x htslib/version.sh || true
 	$(MAKE) -C htslib libhts.a
