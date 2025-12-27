@@ -287,7 +287,7 @@ const char* Help_String_scexport="Command Format :  dmtools sc-export [options] 
         "\t-h|--help";
 
 const char* Help_String_scshrinkage="Command Format :  dmtools sc-shrinkage [options] --mtx <mC.mtx> --cov <cov.mtx> --barcodes <barcodes.tsv> --features <features.tsv> --out <prefix>\n"
-        "\nUsage: dmtools sc-shrinkage --mtx sc.mC.mtx --cov sc.cov.mtx --barcodes sc.barcodes.tsv --features sc.features.tsv --out sc_shrunk [--var] [--to h5ad]\n"
+        "\nUsage: dmtools sc-shrinkage --mtx sc.mC.mtx --cov sc.cov.mtx --barcodes sc.barcodes.tsv --features sc.features.tsv --out sc_shrunk [--emit-var]\n"
         "\t [sc-shrinkage] mode parameters, required\n"
         "\t--mtx                MatrixMarket file of methylated counts (mC)\n"
         "\t--cov                MatrixMarket file of coverage counts\n"
@@ -295,9 +295,9 @@ const char* Help_String_scshrinkage="Command Format :  dmtools sc-shrinkage [opt
         "\t--features           features.tsv from sc-matrix\n"
         "\t--out                output prefix\n"
         "\t [sc-shrinkage] mode parameters, options\n"
-        "\t--var                write posterior variance matrix\n"
-        "\t--to h5ad            convert bundle to h5ad (requires python3, anndata, scipy, pandas)\n"
-        "\t--h5ad-script        override path to sc_export_h5ad.py\n"
+        "\t--prior-strength     prior strength M (alpha+beta) (default: 20)\n"
+        "\t--min-cov            minimum coverage per entry (default: 1)\n"
+        "\t--emit-var           write posterior variance matrix\n"
         "\t-h|--help";
 
 const char* Help_String_scpseudobulk="Command Format :  dmtools sc-pseudobulk [options] -i <dm> -o <out prefix> --groups <mapping.tsv>\n"
