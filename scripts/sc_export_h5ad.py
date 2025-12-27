@@ -47,11 +47,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Convert sc-matrix bundle to h5ad.")
     parser.add_argument("--prefix", required=True, help="Output prefix for sc-matrix bundle.")
     parser.add_argument("--output", required=True, help="Output .h5ad path.")
+    parser.add_argument("--matrix", default=None, help="Override matrix path for X layer.")
     args = parser.parse_args()
 
     ad, pd, scipy_io = load_deps()
 
-    matrix_path = resolve_matrix_path(args.prefix)
+    matrix_path = args.matrix or resolve_matrix_path(args.prefix)
     barcodes_path = f"{args.prefix}.barcodes.tsv"
     features_path = f"{args.prefix}.features.tsv"
     obs_qc_path = f"{args.prefix}.obs_qc.tsv"
@@ -94,6 +95,21 @@ def main() -> int:
     var = var.set_index("feature_id")
 
     adata = ad.AnnData(X=matrix, obs=obs, var=var)
+
+    layer_map = {
+        "mC": f"{args.prefix}.mC.mtx",
+        "cov": f"{args.prefix}.cov.mtx",
+        "post_var": f"{args.prefix}.var.mtx",
+    }
+    for name, path in layer_map.items():
+        if os.path.exists(path):
+            layer = scipy_io.mmread(path).tocsr()
+            if layer.shape != matrix.shape:
+                fail(
+                    f"Error: layer {name} shape {layer.shape} does not match X {matrix.shape}.",
+                    code=1,
+                )
+            adata.layers[name] = layer
     adata.write_h5ad(args.output)
     return 0
 

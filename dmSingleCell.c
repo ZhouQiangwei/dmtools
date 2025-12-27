@@ -15,6 +15,7 @@
 #include <unistd.h>
 
 extern const char* Help_String_scaggregate;
+extern const char* Help_String_scshrinkage;
 
 typedef struct {
     char **names;
@@ -296,6 +297,19 @@ typedef struct {
 } dm_matrix_accum_t;
 
 typedef struct {
+    int row;
+    int col;
+    double val;
+} dm_mtx_entry_t;
+
+typedef struct {
+    int row;
+    int col;
+    double mc;
+    double cov;
+} dm_count_entry_t;
+
+typedef struct {
     double alpha;
     double beta;
     int valid;
@@ -547,6 +561,25 @@ static int dm_sc_matrix_write_barcodes(const char *prefix, char **ids, size_t nI
     return 0;
 }
 
+static int dm_sc_copy_file(const char *src, const char *dst) {
+    FILE *in = fopen(src, "r");
+    if (!in) return 1;
+    FILE *out = fopen(dst, "w");
+    if (!out) { fclose(in); return 1; }
+    char buf[8192];
+    size_t nread = 0;
+    while ((nread = fread(buf, 1, sizeof(buf), in)) > 0) {
+        if (fwrite(buf, 1, nread, out) != nread) {
+            fclose(in);
+            fclose(out);
+            return 1;
+        }
+    }
+    fclose(in);
+    fclose(out);
+    return 0;
+}
+
 static double dm_sc_matrix_value(dm_matrix_accum_t *a, const char *valueType, const char *agg) {
     if (strcasecmp(valueType, "coverage") == 0) {
         if (strcasecmp(agg, "sum") == 0) return (double)a->sum_cov;
@@ -555,6 +588,66 @@ static double dm_sc_matrix_value(dm_matrix_accum_t *a, const char *valueType, co
     }
     if (a->sum_cov == 0) return 0.0;
     return a->sum_meth_weighted / (double)a->sum_cov;
+}
+
+static int dm_mtx_entry_cmp(const void *a, const void *b) {
+    const dm_mtx_entry_t *ea = a;
+    const dm_mtx_entry_t *eb = b;
+    if (ea->row != eb->row) return ea->row < eb->row ? -1 : 1;
+    if (ea->col != eb->col) return ea->col < eb->col ? -1 : 1;
+    return 0;
+}
+
+static int dm_read_mtx(const char *path, int *nRows, int *nCols, dm_mtx_entry_t **entries, size_t *nEntriesOut) {
+    FILE *f = fopen(path, "r");
+    if (!f) {
+        fprintf(stderr, "Error: cannot open matrix file %s\n", path);
+        return 1;
+    }
+    char line[4096];
+    int gotHeader = 0;
+    int rows = 0, cols = 0;
+    size_t nnz = 0;
+    while (fgets(line, sizeof(line), f)) {
+        if (line[0] == '%') continue;
+        if (!gotHeader) {
+            if (sscanf(line, "%d %d %zu", &rows, &cols, &nnz) != 3) {
+                fprintf(stderr, "Error: invalid matrix header in %s\n", path);
+                fclose(f);
+                return 1;
+            }
+            gotHeader = 1;
+            break;
+        }
+    }
+    if (!gotHeader) {
+        fprintf(stderr, "Error: missing matrix header in %s\n", path);
+        fclose(f);
+        return 1;
+    }
+    dm_mtx_entry_t *vals = calloc(nnz, sizeof(dm_mtx_entry_t));
+    if (!vals) { fclose(f); return 1; }
+    size_t idx = 0;
+    while (idx < nnz && fgets(line, sizeof(line), f)) {
+        if (line[0] == '%' || line[0] == '\n') continue;
+        int r = 0, c = 0;
+        double v = 0.0;
+        if (sscanf(line, "%d %d %lf", &r, &c, &v) != 3) continue;
+        vals[idx].row = r - 1;
+        vals[idx].col = c - 1;
+        vals[idx].val = v;
+        idx++;
+    }
+    fclose(f);
+    if (idx != nnz) {
+        fprintf(stderr, "Warning: expected %zu entries in %s, read %zu\n", nnz, path, idx);
+        nnz = idx;
+    }
+    *nRows = rows;
+    *nCols = cols;
+    *entries = vals;
+    *nEntriesOut = nnz;
+    return 0;
 }
 
 static dm_eb_prior_t dm_sc_matrix_estimate_prior(dm_matrix_accum_t *acc, size_t nAcc) {
@@ -634,6 +727,7 @@ static void dm_sc_matrix_usage() {
             "      --min-coverage <N>   Minimum coverage per site (default: 1)\n"
             "      --value <TYPE>       mean-meth (default) or coverage\n"
             "      --agg <METHOD>       mean (default) or sum (for coverage)\n"
+            "      --emit-counts        Emit mC/cov MatrixMarket files for shrinkage\n"
             "      --sparse             Write sparse Matrix Market output (default)\n"
             "      --dense              Write dense TSV matrix\n"
             "      --eb                 Enable empirical Bayes shrinkage (outputs eb_mean + var/CI)\n"
@@ -651,6 +745,7 @@ int dm_sc_matrix_main(int argc, char **argv) {
     char *aggMethod = strdup("mean");
     int dense = 0; int sparse = 1;
     int ebEnabled = 0;
+    int emitCounts = 0;
 
     if (!valueType || !aggMethod) goto error;
 
@@ -666,6 +761,7 @@ int dm_sc_matrix_main(int argc, char **argv) {
         {"sparse", no_argument, 0, 7},
         {"dense", no_argument, 0, 8},
         {"eb", no_argument, 0, 9},
+        {"emit-counts", no_argument, 0, 10},
         {"help", no_argument, 0, 'h'},
         {0,0,0,0}
     };
@@ -723,6 +819,9 @@ int dm_sc_matrix_main(int argc, char **argv) {
                 break;
             case 9:
                 ebEnabled = 1;
+                break;
+            case 10:
+                emitCounts = 1;
                 break;
             case 'h':
                 dm_sc_matrix_usage();
@@ -895,6 +994,36 @@ int dm_sc_matrix_main(int argc, char **argv) {
             double val = ebEnabled ? dm_sc_matrix_eb_mean(&acc[i], &ebPrior)
                                    : dm_sc_matrix_value(&acc[i], valueType, aggMethod);
             fprintf(f, "%d %d %.6f\n", acc[i].row + 1, acc[i].col + 1, val);
+        }
+        fclose(f);
+    }
+
+    if (emitCounts) {
+        size_t len = strlen(outputPrefix) + 9;
+        char *path = malloc(len);
+        if (!path) goto error_all;
+        snprintf(path, len, "%s.mC.mtx", outputPrefix);
+        FILE *f = fopen(path, "w");
+        free(path);
+        if (!f) goto error_all;
+        fprintf(f, "%%MatrixMarket matrix coordinate real general\n");
+        fprintf(f, "%zu %zu %zu\n", nCells, nRegions, nAcc);
+        for (size_t i = 0; i < nAcc; i++) {
+            fprintf(f, "%d %d %.6f\n", acc[i].row + 1, acc[i].col + 1, acc[i].sum_meth_weighted);
+        }
+        fclose(f);
+
+        len = strlen(outputPrefix) + 10;
+        path = malloc(len);
+        if (!path) goto error_all;
+        snprintf(path, len, "%s.cov.mtx", outputPrefix);
+        f = fopen(path, "w");
+        free(path);
+        if (!f) goto error_all;
+        fprintf(f, "%%MatrixMarket matrix coordinate real general\n");
+        fprintf(f, "%zu %zu %zu\n", nCells, nRegions, nAcc);
+        for (size_t i = 0; i < nAcc; i++) {
+            fprintf(f, "%d %d %.6f\n", acc[i].row + 1, acc[i].col + 1, (double)acc[i].sum_cov);
         }
         fclose(f);
     }
@@ -1694,6 +1823,276 @@ cleanup:
     free(toFmt);
     free(h5adScript);
     return rc;
+}
+
+static void dm_sc_shrinkage_usage() {
+    fprintf(stderr,
+            "Usage: dmtools sc-shrinkage --mtx <mC.mtx> --cov <cov.mtx> --barcodes <barcodes.tsv> --features <features.tsv> --out <prefix> [options]\n"
+            "Options:\n"
+            "  --mtx <matrix.mtx>     MatrixMarket of methylated counts (mC)\n"
+            "  --cov <cov.mtx>        MatrixMarket of coverage counts\n"
+            "  --barcodes <tsv>       Cell barcodes\n"
+            "  --features <tsv>       Region features\n"
+            "  --out <prefix>         Output prefix\n"
+            "  --var                 Write posterior variance matrix\n"
+            "  --to h5ad             Export to h5ad with layers if available\n"
+            "  --h5ad-script <path>  Override h5ad export script\n"
+            "  -h, --help            Show this help message\n");
+}
+
+int dm_sc_shrinkage_main(int argc, char **argv) {
+    char *mtxPath = NULL;
+    char *covPath = NULL;
+    char *barcodesPath = NULL;
+    char *featuresPath = NULL;
+    char *outPrefix = NULL;
+    char *toFmt = NULL;
+    char *h5adScript = NULL;
+    int writeVar = 0;
+
+    static struct option long_opts[] = {
+        {"mtx", required_argument, 0, 1},
+        {"cov", required_argument, 0, 2},
+        {"barcodes", required_argument, 0, 3},
+        {"features", required_argument, 0, 4},
+        {"out", required_argument, 0, 5},
+        {"var", no_argument, 0, 6},
+        {"to", required_argument, 0, 7},
+        {"h5ad-script", required_argument, 0, 8},
+        {"help", no_argument, 0, 'h'},
+        {0,0,0,0}
+    };
+
+    int opt, long_idx = 0;
+    while ((opt = getopt_long(argc, argv, "h", long_opts, &long_idx)) != -1) {
+        switch (opt) {
+            case 1: mtxPath = strdup(optarg); break;
+            case 2: covPath = strdup(optarg); break;
+            case 3: barcodesPath = strdup(optarg); break;
+            case 4: featuresPath = strdup(optarg); break;
+            case 5: outPrefix = strdup(optarg); break;
+            case 6: writeVar = 1; break;
+            case 7: toFmt = strdup(optarg); break;
+            case 8: h5adScript = strdup(optarg); break;
+            case 'h':
+                dm_sc_shrinkage_usage();
+                goto cleanup;
+            default:
+                dm_sc_shrinkage_usage();
+                goto error;
+        }
+    }
+
+    if (!mtxPath || !covPath || !barcodesPath || !featuresPath || !outPrefix) {
+        fprintf(stderr, "Error: --mtx, --cov, --barcodes, --features, and --out are required.\n");
+        dm_sc_shrinkage_usage();
+        goto error;
+    }
+
+    dm_mtx_entry_t *mcEntries = NULL;
+    dm_mtx_entry_t *covEntries = NULL;
+    size_t nMc = 0, nCov = 0;
+    int nRowsMc = 0, nColsMc = 0;
+    int nRowsCov = 0, nColsCov = 0;
+    if (dm_read_mtx(mtxPath, &nRowsMc, &nColsMc, &mcEntries, &nMc) != 0) goto error;
+    if (dm_read_mtx(covPath, &nRowsCov, &nColsCov, &covEntries, &nCov) != 0) goto error;
+    if (nRowsMc != nRowsCov || nColsMc != nColsCov) {
+        fprintf(stderr, "Error: mC and cov matrices have different shapes.\n");
+        goto error;
+    }
+
+    qsort(mcEntries, nMc, sizeof(dm_mtx_entry_t), dm_mtx_entry_cmp);
+    qsort(covEntries, nCov, sizeof(dm_mtx_entry_t), dm_mtx_entry_cmp);
+
+    dm_count_entry_t *counts = calloc(nMc < nCov ? nMc : nCov, sizeof(dm_count_entry_t));
+    if (!counts) goto error;
+    size_t nCounts = 0;
+    size_t i = 0, j = 0;
+    while (i < nMc && j < nCov) {
+        int cmp = dm_mtx_entry_cmp(&mcEntries[i], &covEntries[j]);
+        if (cmp == 0) {
+            if (covEntries[j].val > 0.0) {
+                counts[nCounts].row = mcEntries[i].row;
+                counts[nCounts].col = mcEntries[i].col;
+                counts[nCounts].mc = mcEntries[i].val;
+                counts[nCounts].cov = covEntries[j].val;
+                nCounts++;
+            }
+            i++; j++;
+        } else if (cmp < 0) {
+            i++;
+        } else {
+            j++;
+        }
+    }
+
+    dm_matrix_accum_t *acc = calloc(nCounts, sizeof(dm_matrix_accum_t));
+    if (!acc) goto error;
+    for (size_t k = 0; k < nCounts; k++) {
+        acc[k].row = counts[k].row;
+        acc[k].col = counts[k].col;
+        acc[k].sum_cov = (uint64_t)counts[k].cov;
+        acc[k].sum_meth_weighted = counts[k].mc;
+        acc[k].n_sites = 1;
+    }
+    dm_eb_prior_t prior = dm_sc_matrix_estimate_prior(acc, nCounts);
+    if (!prior.valid) {
+        fprintf(stderr, "Warning: EB prior estimation failed; using unshrunk ratios.\n");
+    }
+
+    size_t len = strlen(outPrefix) + 12;
+    char *path = malloc(len);
+    if (!path) goto error;
+    snprintf(path, len, "%s.mean.mtx", outPrefix);
+    FILE *f = fopen(path, "w");
+    free(path);
+    if (!f) goto error;
+    fprintf(f, "%%MatrixMarket matrix coordinate real general\n");
+    fprintf(f, "%d %d %zu\n", nRowsMc, nColsMc, nCounts);
+    for (size_t k = 0; k < nCounts; k++) {
+        double mean = prior.valid ? dm_sc_matrix_eb_mean(&acc[k], &prior)
+                                  : (counts[k].mc / counts[k].cov);
+        fprintf(f, "%d %d %.6f\n", counts[k].row + 1, counts[k].col + 1, mean);
+    }
+    fclose(f);
+
+    if (writeVar) {
+        len = strlen(outPrefix) + 11;
+        path = malloc(len);
+        if (!path) goto error;
+        snprintf(path, len, "%s.var.mtx", outPrefix);
+        f = fopen(path, "w");
+        free(path);
+        if (!f) goto error;
+        fprintf(f, "%%MatrixMarket matrix coordinate real general\n");
+        fprintf(f, "%d %d %zu\n", nRowsMc, nColsMc, nCounts);
+        for (size_t k = 0; k < nCounts; k++) {
+            double var = prior.valid ? dm_sc_matrix_eb_var(&acc[k], &prior) : 0.0;
+            fprintf(f, "%d %d %.6f\n", counts[k].row + 1, counts[k].col + 1, var);
+        }
+        fclose(f);
+    }
+
+    len = strlen(outPrefix) + 14;
+    path = malloc(len);
+    if (!path) goto error;
+    snprintf(path, len, "%s.barcodes.tsv", outPrefix);
+    if (dm_sc_copy_file(barcodesPath, path) != 0) { free(path); goto error; }
+    free(path);
+
+    len = strlen(outPrefix) + 14;
+    path = malloc(len);
+    if (!path) goto error;
+    snprintf(path, len, "%s.features.tsv", outPrefix);
+    if (dm_sc_copy_file(featuresPath, path) != 0) { free(path); goto error; }
+    free(path);
+
+    len = strlen(outPrefix) + 9;
+    path = malloc(len);
+    if (!path) goto error;
+    snprintf(path, len, "%s.mC.mtx", outPrefix);
+    if (dm_sc_copy_file(mtxPath, path) != 0) { free(path); goto error; }
+    free(path);
+
+    len = strlen(outPrefix) + 10;
+    path = malloc(len);
+    if (!path) goto error;
+    snprintf(path, len, "%s.cov.mtx", outPrefix);
+    if (dm_sc_copy_file(covPath, path) != 0) { free(path); goto error; }
+    free(path);
+
+    len = strlen(outPrefix) + 12;
+    path = malloc(len);
+    if (!path) goto error;
+    snprintf(path, len, "%s.qc.tsv", outPrefix);
+    f = fopen(path, "w");
+    free(path);
+    if (!f) goto error;
+    fprintf(f, "cell_id\ttotal_cov\ttotal_mc\tn_features\n");
+    FILE *barIn = fopen(barcodesPath, "r");
+    if (!barIn) { fclose(f); goto error; }
+    char line[4096];
+    size_t row = 0;
+    double *totalCov = calloc((size_t)nRowsMc, sizeof(double));
+    double *totalMc = calloc((size_t)nRowsMc, sizeof(double));
+    uint64_t *nFeat = calloc((size_t)nRowsMc, sizeof(uint64_t));
+    if (!totalCov || !totalMc || !nFeat) { fclose(barIn); fclose(f); goto error; }
+    for (size_t k = 0; k < nCounts; k++) {
+        totalCov[counts[k].row] += counts[k].cov;
+        totalMc[counts[k].row] += counts[k].mc;
+        nFeat[counts[k].row] += 1;
+    }
+    while (fgets(line, sizeof(line), barIn)) {
+        char *cell = strtok(line, "\t\n");
+        if (!cell) continue;
+        if (row >= (size_t)nRowsMc) break;
+        fprintf(f, "%s\t%.0f\t%.0f\t%" PRIu64 "\n",
+                cell, totalCov[row], totalMc[row], nFeat[row]);
+        row++;
+    }
+    fclose(barIn);
+    fclose(f);
+    {
+        size_t qcLen = strlen(outPrefix) + 12;
+        size_t obsLen = strlen(outPrefix) + 16;
+        char *qcPath = malloc(qcLen);
+        char *obsPath = malloc(obsLen);
+        if (!qcPath || !obsPath) {
+            free(qcPath);
+            free(obsPath);
+            goto error;
+        }
+        snprintf(qcPath, qcLen, "%s.qc.tsv", outPrefix);
+        snprintf(obsPath, obsLen, "%s.obs_qc.tsv", outPrefix);
+        if (dm_sc_copy_file(qcPath, obsPath) != 0) {
+            free(qcPath);
+            free(obsPath);
+            goto error;
+        }
+        free(qcPath);
+        free(obsPath);
+    }
+    free(totalCov);
+    free(totalMc);
+    free(nFeat);
+
+    if (toFmt && strcasecmp(toFmt, "h5ad") == 0) {
+        char scriptPath[PATH_MAX];
+        if (dm_sc_resolve_h5ad_script(argv[0], h5adScript, scriptPath, sizeof(scriptPath)) != 0) {
+            fprintf(stderr, "Error: unable to locate h5ad export script\n");
+            goto cleanup;
+        }
+        char cmd[PATH_MAX * 2];
+        snprintf(cmd, sizeof(cmd), "python3 %s --prefix %s --output %s.h5ad --matrix %s.mean.mtx",
+                 scriptPath, outPrefix, outPrefix, outPrefix);
+        int rc = system(cmd);
+        if (rc != 0) {
+            fprintf(stderr, "Warning: h5ad export failed (exit %d)\n", rc);
+        }
+    }
+
+    free(mcEntries);
+    free(covEntries);
+    free(counts);
+    free(acc);
+    goto cleanup;
+
+error:
+    free(mcEntries);
+    free(covEntries);
+    free(counts);
+    free(acc);
+    return 1;
+
+cleanup:
+    free(mtxPath);
+    free(covPath);
+    free(barcodesPath);
+    free(featuresPath);
+    free(outPrefix);
+    free(toFmt);
+    free(h5adScript);
+    return 0;
 }
 
 typedef struct {

@@ -156,6 +156,7 @@ int dm_sc_qc_main(int argc, char **argv);
 int dm_sc_matrix_main(int argc, char **argv);
 int dm_sc_aggregate_main(int argc, char **argv);
 int dm_sc_export_main(int argc, char **argv);
+int dm_sc_shrinkage_main(int argc, char **argv);
 int dm_sc_pseudobulk_main(int argc, char **argv);
 int dm_validate_main(int argc, char **argv);
 
@@ -182,7 +183,7 @@ struct Threading
 #define MAX_BUFF_PRINT 20000000
 const char* Help_String_main="Command Format :  dmtools <mode> [opnions]\n"
                 "\nUsage:\n"
-        "\t  [mode]         index align bam2dm mr2dm view ebsrate viewheader overlap regionstats bodystats profile chromstats sc-qc sc-matrix sc-aggregate sc-export sc-pseudobulk validate\n\n"
+        "\t  [mode]         index align bam2dm mr2dm view ebsrate viewheader overlap regionstats bodystats profile chromstats sc-qc sc-matrix sc-aggregate sc-export sc-shrinkage sc-pseudobulk validate\n\n"
         "\t  index          build index for genome\n"
         "\t  align          alignment fastq\n"
         "\t  bam2dm         calculate DNA methylation (DM format) with BAM file\n"
@@ -205,6 +206,7 @@ const char* Help_String_main="Command Format :  dmtools <mode> [opnions]\n"
         "\t  sc-matrix      build a cell x region methylation matrix from single-cell dm files (ID as cell_id)\n"
         "\t  sc-aggregate   aggregate single-cell methylation into group-level profiles (ID as cell_id)\n"
         "\t  sc-export      export sc-matrix output bundle (optionally to h5ad)\n"
+        "\t  sc-shrinkage   empirical Bayes shrinkage on sc-matrix count bundles\n"
         "\t  sc-pseudobulk  build per-group pseudobulk dm files from single-cell DM\n";
 
 static int dm_idmap_find_or_add(char ***names, size_t *n, size_t *cap, const char *name) {
@@ -247,6 +249,7 @@ const char* Help_String_scmatrix="Command Format :  dmtools sc-matrix [options] 
         "\t--min-coverage       minimum coverage per site (default: 1)\n"
         "\t--value              value to report: mean-meth (default) or coverage\n"
         "\t--agg                aggregation for coverage: mean (default) or sum\n"
+        "\t--emit-counts        emit mC/cov MatrixMarket files for shrinkage\n"
         "\t--sparse             write sparse Matrix Market output (default)\n"
         "\t--dense              write dense TSV matrix\n"
         "\t--eb                 enable empirical Bayes shrinkage (outputs eb_mean + var/CI files)\n"
@@ -278,6 +281,20 @@ const char* Help_String_scexport="Command Format :  dmtools sc-export [options] 
         "\t [sc-export] mode parameters, options\n"
         "\t--context            context filter: C, CG, CHG, CHH (default: no filter)\n"
         "\t--min-coverage       minimum coverage per site (default: 1)\n"
+        "\t--to h5ad            convert bundle to h5ad (requires python3, anndata, scipy, pandas)\n"
+        "\t--h5ad-script        override path to sc_export_h5ad.py\n"
+        "\t-h|--help";
+
+const char* Help_String_scshrinkage="Command Format :  dmtools sc-shrinkage [options] --mtx <mC.mtx> --cov <cov.mtx> --barcodes <barcodes.tsv> --features <features.tsv> --out <prefix>\n"
+        "\nUsage: dmtools sc-shrinkage --mtx sc.mC.mtx --cov sc.cov.mtx --barcodes sc.barcodes.tsv --features sc.features.tsv --out sc_shrunk [--var] [--to h5ad]\n"
+        "\t [sc-shrinkage] mode parameters, required\n"
+        "\t--mtx                MatrixMarket file of methylated counts (mC)\n"
+        "\t--cov                MatrixMarket file of coverage counts\n"
+        "\t--barcodes           barcodes.tsv from sc-matrix\n"
+        "\t--features           features.tsv from sc-matrix\n"
+        "\t--out                output prefix\n"
+        "\t [sc-shrinkage] mode parameters, options\n"
+        "\t--var                write posterior variance matrix\n"
         "\t--to h5ad            convert bundle to h5ad (requires python3, anndata, scipy, pandas)\n"
         "\t--h5ad-script        override path to sc_export_h5ad.py\n"
         "\t-h|--help";
@@ -761,6 +778,8 @@ int main(int argc, char *argv[]) {
         return dm_sc_aggregate_main(argc-1, argv+1);
     } else if(argc>1 && strcmp(argv[1], "sc-export") == 0){
         return dm_sc_export_main(argc-1, argv+1);
+    } else if(argc>1 && strcmp(argv[1], "sc-shrinkage") == 0){
+        return dm_sc_shrinkage_main(argc-1, argv+1);
     } else if(argc>1 && strcmp(argv[1], "sc-pseudobulk") == 0){
         return dm_sc_pseudobulk_main(argc-1, argv+1);
     } else if(argc>1 && strcmp(argv[1], "validate") == 0){
@@ -885,6 +904,8 @@ int main(int argc, char *argv[]) {
            fprintf(stderr, "%s\n", Help_String_scaggregate);
         }else if(strcmp(mode, "sc-export") == 0){
            fprintf(stderr, "%s\n", Help_String_scexport);
+        }else if(strcmp(mode, "sc-shrinkage") == 0){
+           fprintf(stderr, "%s\n", Help_String_scshrinkage);
         }else if(strcmp(mode, "sc-pseudobulk") == 0){
            fprintf(stderr, "%s\n", Help_String_scpseudobulk);
         }else if(strcmp(mode, "validate") == 0){
