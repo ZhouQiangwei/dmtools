@@ -93,16 +93,6 @@ static int dm_sc_qc_parse_context(const char *ctx, uint8_t *val) {
     return -1;
 }
 
-static int dm_sc_parse_entryid(const char *entryid, uint32_t *id) {
-    if (!entryid || !id) return -1;
-    char *end = NULL;
-    unsigned long tmp = strtoul(entryid, &end, 10);
-    if (end == entryid || *end != '\0') return -1;
-    if (tmp == 0 || tmp > UINT32_MAX) return -1;
-    *id = (uint32_t)tmp;
-    return 0;
-}
-
 static void dm_sc_qc_usage() {
     fprintf(stderr,
             "Usage: dmtools sc-qc -i <input.dm> [-i <input2.dm> ...] -o <output.tsv> [options]\n"
@@ -232,8 +222,7 @@ int dm_sc_qc_main(int argc, char **argv) {
             for (uint64_t j = 0; j < o->l; j++) {
                 if (contextFilterSet && o->context[j] != contextFilter) continue;
                 if (o->coverage[j] < minCoverage) continue;
-                uint32_t id = 0;
-                if (!o->entryid || dm_sc_parse_entryid(o->entryid[j], &id) != 0) continue;
+                uint32_t id = o->entryid ? o->entryid[j] : 0;
                 if (id >= idmap.n || !idmap.names[id]) continue;
                 entries[id].n_sites++;
                 entries[id].total_cov += o->coverage[j];
@@ -740,8 +729,7 @@ int dm_sc_matrix_main(int argc, char **argv) {
             for (uint64_t j = 0; j < o->l; j++) {
                 if (contextSet && o->context[j] != contextFilter) continue;
                 if (o->coverage[j] < minCoverage) continue;
-                uint32_t id = 0;
-                if (!o->entryid || dm_sc_parse_entryid(o->entryid[j], &id) != 0) continue;
+                uint32_t id = o->entryid ? o->entryid[j] : 0;
                 if (id >= idmap.n) continue;
                 int row = idToRow[id];
                 if (row < 0) continue;
@@ -1200,8 +1188,7 @@ int dm_sc_aggregate_main(int argc, char **argv) {
             for (uint64_t j = 0; j < o->l; j++) {
                 if (contextSet && o->context[j] != contextFilter) continue;
                 if (o->coverage[j] < minCoverage) continue;
-                uint32_t id = 0;
-                if (!o->entryid || dm_sc_parse_entryid(o->entryid[j], &id) != 0) continue;
+                uint32_t id = o->entryid ? o->entryid[j] : 0;
                 if (id >= idmap.n) continue;
                 int gidx = idToGroup[id];
                 if (gidx < 0) {
@@ -1581,8 +1568,7 @@ int dm_sc_pseudobulk_main(int argc, char **argv) {
         for (size_t g = 0; g < nGroups; g++) dm_pb_buf_reset(&buffers[g]);
         for (uint64_t j = 0; j < o->l; j++) {
             if (contextSet && o->context[j] != contextFilter) continue;
-            uint32_t id = 0;
-            if (!o->entryid || dm_sc_parse_entryid(o->entryid[j], &id) != 0) continue;
+            uint32_t id = o->entryid ? o->entryid[j] : 0;
             if (id >= idmap.n) continue;
             int gidx = idToGroup[id];
             if (gidx < 0) continue;

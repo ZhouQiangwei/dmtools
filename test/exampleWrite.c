@@ -93,7 +93,7 @@ int main(int argc, char *argv[]) {
     char **chroms = (char**)malloc(sizeof(char*)*MAX_LINE_PRINT);
     if(!chroms) goto error;
     char **chromsUse = malloc(sizeof(char*)*MAX_LINE_PRINT);
-    char **entryid = malloc(sizeof(char*)*MAX_LINE_PRINT);
+    uint32_t *entryid = malloc(sizeof(uint32_t)*MAX_LINE_PRINT);
     uint32_t *chrLens = malloc(sizeof(uint32_t) * MAX_LINE_PRINT);
     uint32_t *starts = malloc(sizeof(uint32_t) * MAX_LINE_PRINT);
     uint32_t *ends = malloc(sizeof(uint32_t) * MAX_LINE_PRINT);
@@ -452,7 +452,7 @@ int main(int argc, char *argv[]) {
         */
     
         for(i =0; i < MAX_LINE_PRINT; i++){
-            free(chroms[i]); free(chromsUse[i]); free(entryid[i]);
+            free(chroms[i]); free(chromsUse[i]);
         }
         free(chroms); free(chromsUse); free(entryid); 
 
@@ -958,7 +958,7 @@ int main_view_file(bigWigFile_t *ifp, char *bedfile){
                 if(ifp->hdr->version & BM_CONTEXT)
                     printf("\t%s", context_str[o->context[j]]);
                 if(ifp->hdr->version & BM_ID)
-                    printf("\t%s", o->entryid[j]);
+                    printf("\t%u", o->entryid[j]);
                 printf("\n");
             }
         }
@@ -1019,7 +1019,7 @@ int main_view(bigWigFile_t *ifp, char *region){
                 if(ifp->hdr->version & BM_CONTEXT)
                     printf("\t%s", context_str[o->context[j]]);
                 if(ifp->hdr->version & BM_ID)
-                    printf("\t%s", o->entryid[j]);
+                    printf("\t%u", o->entryid[j]);
                 printf("\n");
             }
         }
@@ -1411,7 +1411,7 @@ int bw_overlap(bigWigFile_t *ifp1, bigWigFile_t *ifp2, char *chrom, int start, i
                             printf("\t%"PRIu16"", o2->coverage[k]);
 
                         if(ifp1->hdr->version & BM_ID)
-                            printf("\t%s", o1->entryid[j]);
+                            printf("\t%u", o1->entryid[j]);
                         printf("\n");
                     }
                 }
@@ -1506,7 +1506,7 @@ int bw_overlap_mul(bigWigFile_t **ifp1s, int sizeifp, char *chrom, int start, in
                     
                     if(i==sizeifp-1){
                         if(ifp1s[i]->hdr->version & BM_ID){
-                            sprintf(tempchar,"\t%s", o1->entryid[j]);
+                            sprintf(tempchar,"\t%u", o1->entryid[j]);
                             strcat(printmr[loci], tempchar);
                         }
                     }

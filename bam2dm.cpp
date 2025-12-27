@@ -99,6 +99,81 @@ static void freeMethArrays(ARGS &args);
 bool RELESEM = true;// false
 bool printheader = true;
 using namespace std;
+static uint32_t gCellId = 0;
+static std::string gCellName;
+static std::string gIdmapOut;
+
+static int detect_cell_name_from_tag(const std::string &bamPath, const std::string &tag, std::string &name) {
+    if(tag.size() != 2) return 2;
+    samFile *fp = sam_open(bamPath.c_str(), "r");
+    if(!fp) return 3;
+    bam_hdr_t *hdr = sam_hdr_read(fp);
+    if(!hdr) { sam_close(fp); return 3; }
+    bam1_t *b = bam_init1();
+    if(!b) { bam_hdr_destroy(hdr); sam_close(fp); return 3; }
+    int rc = 1;
+    int reads = 0;
+    while(reads < 100000 && sam_read1(fp, hdr, b) > 0) {
+        ++reads;
+        uint8_t *aux = bam_aux_get(b, tag.c_str());
+        if(!aux) continue;
+        const char *val = bam_aux2Z(aux);
+        if(!val || val[0] == '\0') continue;
+        if(name.empty()) {
+            name = val;
+        } else if(name != val) {
+            rc = 4;
+            break;
+        }
+    }
+    bam_destroy1(b);
+    bam_hdr_destroy(hdr);
+    sam_close(fp);
+    if(rc == 4) return 4;
+    return name.empty() ? 1 : 0;
+}
+
+static int detect_cell_name_from_readname(const std::string &bamPath, char sep, std::string &name) {
+    samFile *fp = sam_open(bamPath.c_str(), "r");
+    if(!fp) return 3;
+    bam_hdr_t *hdr = sam_hdr_read(fp);
+    if(!hdr) { sam_close(fp); return 3; }
+    bam1_t *b = bam_init1();
+    if(!b) { bam_hdr_destroy(hdr); sam_close(fp); return 3; }
+    int rc = 1;
+    int reads = 0;
+    while(reads < 100000 && sam_read1(fp, hdr, b) > 0) {
+        ++reads;
+        const char *qname = bam_get_qname(b);
+        if(!qname || qname[0] == '\0') continue;
+        std::string val(qname);
+        if(sep != '\0') {
+            size_t pos = val.find(sep);
+            if(pos != std::string::npos) val = val.substr(0, pos);
+        }
+        if(val.empty()) continue;
+        if(name.empty()) {
+            name = val;
+        } else if(name != val) {
+            rc = 4;
+            break;
+        }
+    }
+    bam_destroy1(b);
+    bam_hdr_destroy(hdr);
+    sam_close(fp);
+    if(rc == 4) return 4;
+    return name.empty() ? 1 : 0;
+}
+
+static int write_idmap(const std::string &path, uint32_t id, const std::string &name) {
+    FILE *f = fopen(path.c_str(), "w");
+    if(!f) return 1;
+    fprintf(f, "id\tname\n");
+    fprintf(f, "%u\t%s\n", id, name.c_str());
+    fclose(f);
+    return 0;
+}
 bool Collision=false;
 map <string,int> String_Hash;
 float ENTROPY_CUTOFF=0;
@@ -1223,7 +1298,6 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
                              const std::vector<BinPartLocator> &locators, int shardCount,
                              const std::string &partDir, const std::string &dmPath, int zoomlevel,
                              bool debugMode, bool validateOutput) {
-    bool chromsTransferred = false;
     uint64_t recordsTotal = 0;
     uint64_t recordsWritten = 0;
     uint64_t filteredChromMissing = 0;
@@ -1263,10 +1337,14 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
         return 1;
     }
     auto freeChromBuffers = [&]() {
-        if(!chromsTransferred) {
+        if(chroms) {
             for(int i = 0; i < nseq; ++i) if(chroms[i]) free(chroms[i]);
             free(chroms);
+            chroms = NULL;
+        }
+        if(lens) {
             free(lens);
+            lens = NULL;
         }
     };
     for(int i = 0; i < nseq; ++i) {
@@ -1298,7 +1376,7 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
         freeChromBuffers();
         return 1;
     }
-    chromsTransferred = true;
+    freeChromBuffers();
     if(bmWriteHdr(out)) {
         fprintf(stderr, "[bin] failed to write header for %s\n", dmPath.c_str());
         bmClose(out);
@@ -1309,8 +1387,8 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
 
     std::unordered_map<std::string, uint32_t> chromOrder;
     chromOrder.reserve(static_cast<size_t>(nseq) * 2);
-    for(uint32_t i = 0; i < static_cast<uint32_t>(nseq); ++i) {
-        chromOrder[chroms[i]] = i;
+    for(uint32_t i = 0; i < static_cast<uint32_t>(out->cl->nKeys); ++i) {
+        chromOrder[out->cl->chrom[i]] = i;
     }
     for(const auto &task : tasks) {
         if(chromOrder.find(task.chrom) == chromOrder.end()) {
@@ -1356,7 +1434,7 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
     std::vector<uint16_t> covBuf(MAX_LINE_PRINT, 0);
     std::vector<uint8_t> strandBuf(MAX_LINE_PRINT, 0);
     std::vector<uint8_t> contextBuf(MAX_LINE_PRINT, 0);
-    std::vector<char*> entryBuf(MAX_LINE_PRINT, NULL);
+    std::vector<uint32_t> entryBuf(MAX_LINE_PRINT, 0);
 
     for(const auto &task : ordered) {
         const uint32_t dmTid = chromOrder.at(task.chrom);
@@ -1519,6 +1597,7 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
                     covBuf[writeCount] = static_cast<uint16_t>(std::min<uint32_t>(cov, std::numeric_limits<uint16_t>::max()));
                     strandBuf[writeCount] = strand;
                     contextBuf[writeCount] = context;
+                    entryBuf[writeCount] = (out->type & BM_ID) ? gCellId : 0;
                     ++writeCount;
                     recordsWritten++;
                 }
@@ -1731,6 +1810,11 @@ int main(int argc, char* argv[])
         "\t--Cx                  print context\n"
         "\t-E                    print end\n"
         "\t--Id                  print ID\n"
+        "\t--cell-id <INT>       numeric cell ID to store when --Id is enabled\n"
+        "\t--cell-name <STR>     cell name for idmap (default: use detected or numeric ID)\n"
+        "\t--cell-tag <TAG>      BAM tag for cell name (e.g., CB, BX)\n"
+        "\t--cell-readname-sep <CHAR>  split read name at CHAR to derive cell name\n"
+        "\t--idmap-out <PATH>    write <dm>.idmap.tsv mapping numeric ID to cell name\n"
         "\t--zl                  The maximum number of zoom levels. [1-10], default: 2\n"
         "\t--chunk-by <chrom|bin>  process by chromosome (default) or fixed-size bins\n"
         "\t--bin-size <INT>      bin size in bases when using --chunk-by bin (default: 2000)\n"
@@ -1759,6 +1843,11 @@ int main(int argc, char* argv[])
 	strcpy(Output_Name, "None");
     char Output_Name_MS[100];
     strcpy(Output_Name_MS, "None");
+    uint32_t cellId = 0;
+    std::string cellNameArg;
+    std::string idmapOutArg;
+    std::string cellTagArg;
+    char cellReadnameSep = '\0';
 
 	string Prefix2="None";
 	string methOutfileName;
@@ -1920,6 +2009,16 @@ int main(int argc, char* argv[])
             write_type |= BM_CONTEXT;
         }else if(strcmp(argv[i], "--Id") == 0){
             write_type |= BM_ID;
+        }else if(strcmp(argv[i], "--cell-id") == 0){
+            cellId = static_cast<uint32_t>(strtoul(argv[++i], NULL, 10));
+        }else if(strcmp(argv[i], "--cell-name") == 0){
+            cellNameArg = argv[++i];
+        }else if(strcmp(argv[i], "--cell-tag") == 0){
+            cellTagArg = argv[++i];
+        }else if(strcmp(argv[i], "--cell-readname-sep") == 0){
+            cellReadnameSep = argv[++i][0];
+        }else if(strcmp(argv[i], "--idmap-out") == 0){
+            idmapOutArg = argv[++i];
         }else if(strcmp(argv[i], "-E") == 0){
             write_type |= BM_END;
         }
@@ -2043,6 +2142,54 @@ int main(int argc, char* argv[])
             processChr,
             processRegion);
 
+    if(write_type & BM_ID) {
+        if(cellId == 0) cellId = 1;
+        if(cellNameArg.empty()) {
+            if(!cellTagArg.empty()) {
+                if(!bamformat) {
+                    fprintf(stderr, "[bam2dm] --cell-tag requires BAM input\n");
+                    return 1;
+                }
+                std::string bamPath = argv[InFileStart];
+                int rc = detect_cell_name_from_tag(bamPath, cellTagArg, cellNameArg);
+                if(rc == 4) {
+                    fprintf(stderr, "[bam2dm] multiple cell tags detected in %s; split BAMs per cell or set --cell-name\n", bamPath.c_str());
+                    return 1;
+                }
+                if(rc != 0) {
+                    fprintf(stderr, "[bam2dm] failed to detect cell tag %s in %s\n", cellTagArg.c_str(), bamPath.c_str());
+                    return 1;
+                }
+            } else if(cellReadnameSep != '\0') {
+                if(!bamformat) {
+                    fprintf(stderr, "[bam2dm] --cell-readname-sep requires BAM input\n");
+                    return 1;
+                }
+                std::string bamPath = argv[InFileStart];
+                int rc = detect_cell_name_from_readname(bamPath, cellReadnameSep, cellNameArg);
+                if(rc == 4) {
+                    fprintf(stderr, "[bam2dm] multiple read-name prefixes detected in %s; split BAMs per cell or set --cell-name\n", bamPath.c_str());
+                    return 1;
+                }
+                if(rc != 0) {
+                    fprintf(stderr, "[bam2dm] failed to detect cell name from readname in %s\n", bamPath.c_str());
+                    return 1;
+                }
+            } else {
+                cellNameArg = std::to_string(cellId);
+            }
+        }
+        if(idmapOutArg.empty()) {
+            idmapOutArg = Prefix + ".idmap.tsv";
+        }
+        gCellId = cellId;
+        gCellName = cellNameArg;
+        gIdmapOut = idmapOutArg;
+    } else if(!idmapOutArg.empty()) {
+        fprintf(stderr, "[bam2dm] --idmap-out requires --Id\n");
+        return 1;
+    }
+
     if(chunkBy == "bin") {
         if(!bamformat) {
             fprintf(stderr, "--chunk-by bin currently requires BAM input via -b/--binput\n");
@@ -2107,6 +2254,12 @@ int main(int argc, char* argv[])
             fprintf(stderr, "[bin] keeping part files under %s (use --cleanup-parts to delete)\n", partDir.c_str());
         }
         if(binBedGenerated && !binTempBed.empty()) unlink(binTempBed.c_str());
+        if(rc == 0 && (write_type & BM_ID)) {
+            if(write_idmap(gIdmapOut, gCellId, gCellName) != 0) {
+                fprintf(stderr, "[bam2dm] failed to write idmap %s\n", gIdmapOut.c_str());
+                return 1;
+            }
+        }
         return rc;
     }
 
@@ -2631,6 +2784,12 @@ int main(int argc, char* argv[])
                 gFilterStats.iterNull.load());
 
                 time(&End_Time);fprintf(stderr, "[DM::calmeth] Time Taken  - %.0lf Seconds ..\n ",difftime(End_Time,Start_Time));
+                if(write_type & BM_ID) {
+                    if(write_idmap(gIdmapOut, gCellId, gCellName) != 0) {
+                        fprintf(stderr, "[bam2dm] failed to write idmap %s\n", gIdmapOut.c_str());
+                        exit(1);
+                    }
+                }
             exit(0);
             //fclose(OUTLOG);
         }
@@ -2754,7 +2913,7 @@ string getstring(char* seq, int l, int len){
 }
 //g++ bmtools/libBigWig.a bmtools/libBigWig.so calmeth.cpp -o calmeth -m64 -I./samtools-0.1.18/ -L./samtools-0.1.18/ -lbam -lz
 char **chromsUse;
-char **entryid;
+uint32_t *entryid;
 uint32_t *starts;
 uint32_t *pends;
 float *values;
@@ -2764,7 +2923,7 @@ uint8_t *contexts;
 
 //
 char **chromsUse_gch;
-char **entryid_gch;
+uint32_t *entryid_gch;
 uint32_t *starts_gch;
 uint32_t *pends_gch;
 float *values_gch;
@@ -2793,7 +2952,7 @@ void print_meth_tofile(int genome_id, ARGS* args){
                         args->Genome_Offsets[genome_id].Genome, (void*)fp, (void*)fp_gch, (void*)args->methOutFp, args->methOutLines);
             }
             chromsUse = (char **)calloc(MAX_LINE_PRINT, sizeof(char*));
-            entryid = (char **)calloc(MAX_LINE_PRINT, sizeof(char*));
+            entryid = (uint32_t *)calloc(MAX_LINE_PRINT, sizeof(uint32_t));
             starts = nullptr;
             pends = nullptr;
             values = nullptr;
@@ -2815,7 +2974,7 @@ void print_meth_tofile(int genome_id, ARGS* args){
             if(enableGch) {
                 //for GCH chromatin accessibility
                 chromsUse_gch = (char **)calloc(MAX_LINE_PRINT, sizeof(char*));
-                entryid_gch = (char **)calloc(MAX_LINE_PRINT, sizeof(char*));
+                entryid_gch = (uint32_t *)calloc(MAX_LINE_PRINT, sizeof(uint32_t));
                 starts_gch = (uint32_t *)calloc(MAX_LINE_PRINT, sizeof(uint32_t));
                 pends_gch = (uint32_t *)malloc(sizeof(uint32_t) * MAX_LINE_PRINT);
                 values_gch = (float *)malloc(sizeof(float) * MAX_LINE_PRINT);
@@ -3051,9 +3210,12 @@ void print_meth_tofile(int genome_id, ARGS* args){
                         }else if(strcmp(context.c_str(), "CHG") == 0){
                             contexts[printL] = 2;
                         }else{ // if(strcmp(context.c_str(), "CHH") == 0){
-                            contexts[printL] = 3;
-                        }
-                        printL++;
+                        contexts[printL] = 3;
+                    }
+                    if(fp && (fp->type & BM_ID)) {
+                        entryid[printL] = gCellId;
+                    }
+                    printL++;
                         if(printtxt == 1 && args->methOutFp){
                             if(revGA>0) fprintf(args->methOutFp,"%s\t%d\t+\t%s\t%d\t%d\t%f\t%0.001f\t%d\t%d\t%s\t%s\n",args->Genome_Offsets[i].Genome,l+1,context.c_str(),C_count,(C_count+T_count),PlusMethratio,float(C_count+T_count)*revGA,rev_G,(rev_A+rev_G),category.c_str(),Fivecontext.c_str());
                             else fprintf(args->methOutFp,"%s\t%d\t+\t%s\t%d\t%d\t%f\tnull\t%d\t%d\t%s\t%s\n",args->Genome_Offsets[i].Genome,l+1,context.c_str(),C_count,(C_count+T_count),PlusMethratio,rev_G,(rev_A+rev_G),category.c_str(),Fivecontext.c_str());
@@ -3076,6 +3238,9 @@ void print_meth_tofile(int genome_id, ARGS* args){
                             values[printL] = PlusMethratio;
                             strands[printL] = 0; //0 represent '+'
                             contexts[printL] = 0;
+                            if(fp && (fp->type & BM_ID)) {
+                                entryid[printL] = gCellId;
+                            }
                             printL++;
                         }else if(middleThree=="GCA" || middleThree=="GCT" || middleThree=="GCC") { //GCH for chromatin accessibility
                             if(printL_gch >= MAX_LINE_PRINT) {
@@ -3088,6 +3253,9 @@ void print_meth_tofile(int genome_id, ARGS* args){
                             values_gch[printL_gch] = PlusMethratio;
                             strands_gch[printL_gch] = 0; //0 represent '+'
                             contexts_gch[printL_gch] = 0;
+                            if(fp_gch && (fp_gch->type & BM_ID)) {
+                                entryid_gch[printL_gch] = gCellId;
+                            }
                             printL_gch++;
                         }
                     }
@@ -3233,9 +3401,12 @@ void print_meth_tofile(int genome_id, ARGS* args){
                         }else if(strcmp(context.c_str(), "CHG") == 0){
                             contexts[printL] = 2;
                         }else{ // if(strcmp(context.c_str(), "CHH") == 0){
-                            contexts[printL] = 3;
-                        }
-                        printL++;
+                        contexts[printL] = 3;
+                    }
+                    if(fp && (fp->type & BM_ID)) {
+                        entryid[printL] = gCellId;
+                    }
+                    printL++;
                         if(printtxt == 1 && args->methOutFp){
                             if(revGA>0) fprintf(args->methOutFp,"%s\t%d\t-\t%s\t%d\t%d\t%f\t%0.001f\t%d\t%d\t%s\t%s\n",args->Genome_Offsets[i].Genome,l+1,context.c_str(),C_count,(C_count+T_count),NegMethratio,float(C_count+T_count)*revGA,rev_G,(rev_G+rev_A),category.c_str(),Fcontext);
                             else fprintf(args->methOutFp,"%s\t%d\t-\t%s\t%d\t%d\t%f\tnull\t%d\t%d\t%s\t%s\n",args->Genome_Offsets[i].Genome,l+1,context.c_str(),C_count,(C_count+T_count),NegMethratio,rev_G,(rev_G+rev_A),category.c_str(),Fcontext);
@@ -3259,6 +3430,9 @@ void print_meth_tofile(int genome_id, ARGS* args){
                             values[printL] = NegMethratio;
                             strands[printL] = 1;
                             contexts[printL] = 0;
+                            if(fp && (fp->type & BM_ID)) {
+                                entryid[printL] = gCellId;
+                            }
                             printL++;
                         }else if(middleThree=="GCA" || middleThree=="GCT" || middleThree=="GCC") { //GCH for chromatin accessibility
                             if(printL_gch >= MAX_LINE_PRINT) {
@@ -3271,6 +3445,9 @@ void print_meth_tofile(int genome_id, ARGS* args){
                             values_gch[printL_gch] = NegMethratio;
                             strands_gch[printL_gch] = 1;
                             contexts_gch[printL_gch] = 0;
+                            if(fp_gch && (fp_gch->type & BM_ID)) {
+                                entryid_gch[printL_gch] = gCellId;
+                            }
                             printL_gch++;
                         }
                     }

@@ -918,7 +918,7 @@ string getstring(char* seq, int l, int len){
 }
 //g++ bmtools/libBigWig.a bmtools/libBigWig.so calmeth.cpp -o calmeth -m64 -I./samtools-0.1.18/ -L./samtools-0.1.18/ -lbam -lz
 char **chromsUse;
-char **entryid;
+uint32_t *entryid;
 uint32_t *starts;
 uint32_t *pends;
 float *values;
@@ -928,7 +928,7 @@ uint8_t *contexts;
 
 //
 char **chromsUse_gch;
-char **entryid_gch;
+uint32_t *entryid_gch;
 uint32_t *starts_gch;
 uint32_t *pends_gch;
 float *values_gch;

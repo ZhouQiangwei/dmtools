@@ -22,7 +22,9 @@ Optional (in order):
 - `coverage` (`uint16_t`, `BM_COVER`)
 - `strand` (`uint8_t`, `BM_STRAND`, encoded as `0` for `+`, `1` for `-`)
 - `context` (`uint8_t`, `BM_CONTEXT`, encoded as `1=CG`, `2=CHG`, `3=CHH`, `0=NA`)
-- `id` (`char[]`, `BM_ID`, NUL-terminated string)
+- `id` (`uint32_t`, `BM_ID`, numeric cell ID)
+
+When `BM_ID` is set, dmtools expects a sidecar `<dm>.idmap.tsv` mapping numeric IDs to cell names (`id<TAB>name`).
 
 ## Data blocks and index
 

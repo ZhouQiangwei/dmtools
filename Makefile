@@ -184,11 +184,15 @@ test/testIterator: libBinaMeth.a
 test/testBinOrder: htslib/libhts.a
 	$(CC) -o $@ -I. $(CFLAGS) test/testBinOrder.c htslib/libhts.a $(LDFLAGS_SUB)
 
+test/testCoordinates: libBinaMeth.a
+	$(CC) -o $@ -I. $(CFLAGS) test/testCoordinates.c libBinaMeth.a $(LIBS)
+
 install: dmtools bam2dm dmDMR dmalign bam2motif
 
-test: test/testLocal test/testRemote test/testWrite test/testLocal dmtools bam2dm-asan test/exampleWrite test/testRemoteManyContigs test/testIterator test/testBinOrder
+test: test/testLocal test/testRemote test/testWrite test/testLocal dmtools bam2dm-asan test/exampleWrite test/testRemoteManyContigs test/testIterator test/testBinOrder test/testCoordinates
 	./test/test.py
 	./test/testBinOrder.sh
+	./test/testCoordinates
 
 clean:
 	rm -f *.o libBinaMeth.a libBinaMeth.so *.pico test/testLocal test/testRemote test/testWrite dmtools dmDMR bam2dm bam2motif dmalign test/exampleWrite test/testRemoteManyContigs test/testIterator genome2cg genomebinLen dmalign
