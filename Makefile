@@ -146,7 +146,7 @@ test/testWrite: libBinaMeth.a
 	$(CC) -o $@ -I. $(CFLAGS) test/testWrite.c libBinaMeth.a $(LIBS)
 
 dmtools: libBinaMeth.so
-	$(CC) -o $@ -I. -L. $(CFLAGS) dmtools.c dmSingleCell.c -lBinaMeth $(LIBS) -Wl,-rpath $(RPATH) -lpthread
+	$(CC) -o $@ -I. -L. $(CFLAGS) dmtools.c dmSingleCell.c dmScShrinkage.c -lBinaMeth $(LIBS) -Wl,-rpath $(RPATH) -lpthread
 
 #bam2dm: libBinaMeth.so
 #	$(CXX) -o $@ -I. -L. $(CFLAGS) bam2dm.cpp -lBinaMeth -Wl,-rpath $(RPATH) htslib/libhts.a -llzma -lbz2 -lz
@@ -181,10 +181,25 @@ test/exampleWrite: libBinaMeth.so
 test/testIterator: libBinaMeth.a
 	$(CC) -o $@ -I. $(CFLAGS) test/testIterator.c libBinaMeth.a $(LIBS)
 
+test/testBinOrder: htslib/libhts.a
+	$(CC) -o $@ -I. $(CFLAGS) test/testBinOrder.c htslib/libhts.a $(LDFLAGS_SUB)
+
+test/testCoordinates: libBinaMeth.a
+	$(CC) -o $@ -I. $(CFLAGS) test/testCoordinates.c libBinaMeth.a $(LIBS)
+
+test/test_id_roundtrip: libBinaMeth.a
+	$(CC) -o $@ -I. $(CFLAGS) test/test_id_roundtrip.c libBinaMeth.a $(LIBS)
+
 install: dmtools bam2dm dmDMR dmalign bam2motif
 
-test: test/testLocal test/testRemote test/testWrite test/testLocal dmtools test/exampleWrite test/testRemoteManyContigs test/testIterator
+test: test/testLocal test/testRemote test/testWrite test/testLocal dmtools bam2dm-asan test/exampleWrite test/testRemoteManyContigs test/testIterator test/testBinOrder test/testCoordinates test/test_id_roundtrip
 	./test/test.py
+	./test/testBinOrder.sh
+	./test/testCoordinates
+	./test/test_id_roundtrip
+	./test/test_sc_shrinkage_toy.py
+	./test/test_sc_shrinkage_integration.py
+	./test/test_dmr_bb_toy.py
 
 clean:
 	rm -f *.o libBinaMeth.a libBinaMeth.so *.pico test/testLocal test/testRemote test/testWrite dmtools dmDMR bam2dm bam2motif dmalign test/exampleWrite test/testRemoteManyContigs test/testIterator genome2cg genomebinLen dmalign
@@ -200,4 +215,5 @@ install-env: libBinaMeth.a libBinaMeth.so
 	install *.h $(prefix)/include
 
 libs:
+	chmod +x htslib/version.sh || true
 	$(MAKE) -C htslib libhts.a

@@ -101,6 +101,14 @@ typedef void CURL;
 * bigmeth file, 1000000000000000
 */
 #define BM_MAGIC 0x8000
+/*!
+ * value encoding flag (uint16 quantized values)
+ */
+#define BM_VAL_U16 0x10000
+/*!
+ * packed strand/context flag (1 byte combined)
+ */
+#define BM_PACK_SC 0x20000
 
 /*!
  * The magic number of a binaMeth file.
@@ -254,10 +262,19 @@ typedef struct {
     int isWrite; /**<0: Opened for reading, 1: Opened for writing.*/
     int type; /**<0: binaMeth, 1: bigBed.*/ //now store version and type infor
     int mtype;
+    uint32_t valScale; /**<Value quantization scale (0 means float32).*/
+    uint8_t valEncoding; /**<0: float32, 1: uint16 quantized. */
     /* 0: bigmeth, 1: bigmeth for region with ID, 2: bigmeth for region without ID, 3: ID with strand */
     /**<0: binaMeth, 1: bigBed.*/
     int isClosed; /**<1 if bmClose already ran to guard against double-free.*/
 } binaMethFile_t;
+
+static inline int bmApplyHeaderType(binaMethFile_t *fp) {
+    if(!fp || !fp->hdr) return 0;
+    int extFlags = fp->type & (BM_VAL_U16 | BM_PACK_SC);
+    fp->type = fp->hdr->version | extFlags;
+    return fp->type;
+}
 
 /*!
  * @brief Holds interval:value associations
@@ -278,7 +295,7 @@ typedef struct {
     uint16_t *coverage;
     uint8_t *strand;
     uint8_t *context;
-    char **entryid;
+    uint32_t *entryid;
 } bmOverlappingIntervals_t;
 
 /*!
@@ -583,7 +600,7 @@ int bmWriteHdr(binaMethFile_t *bm);
  * @see bmAppendIntervals
  */
 int bmAddIntervals(binaMethFile_t *fp, char **chrom, uint32_t *start, uint32_t *end, float *values, uint16_t *coverage, uint8_t *strand,
-    uint8_t *context, char **entryid, uint32_t n);
+    uint8_t *context, uint32_t *entryid, uint32_t n);
 
 /*!
  * @brief Append bedGraph-like intervals to a previous block of bedGraph-like intervals in a binaMeth file.
@@ -598,7 +615,7 @@ int bmAddIntervals(binaMethFile_t *fp, char **chrom, uint32_t *start, uint32_t *
  * @see bmAddIntervals
  */
 int bmAppendIntervals(binaMethFile_t *fp, uint32_t *start, uint32_t *end, float *values, uint16_t *coverage, uint8_t *strand,
-    uint8_t *context, char **entryid, uint32_t n);
+    uint8_t *context, uint32_t *entryid, uint32_t n);
 
 /*!
  * @brief Add a new block of variable-step entries to a binaMeth file

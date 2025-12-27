@@ -175,6 +175,60 @@ error:
     bm->hdr = NULL;
 }
 
+typedef struct {
+    uint32_t magic;
+    uint16_t version;
+    uint16_t size;
+    uint32_t bufSize;
+    uint32_t blockSize;
+    uint32_t valScale;
+    uint8_t valEncoding;
+    uint8_t packSc;
+    uint8_t padding[2];
+} bmWriteParams_t;
+
+#define BM_WRITE_PARAMS_MAGIC 0x44574d50 /* "DWMP" */
+
+static int bmReadWriteParams(binaMethFile_t *bm, bmWriteParams_t *params) {
+    if(!bm || !bm->hdr || !params) return 1;
+    if(!bm->hdr->extensionOffset) return 1;
+    if(bmSetPos(bm, bm->hdr->extensionOffset)) return 1;
+    memset(params, 0, sizeof(*params));
+    if(bmRead(&params->magic, sizeof(params->magic), 1, bm) != 1) return 1;
+    if(bmRead(&params->version, sizeof(params->version), 1, bm) != 1) return 1;
+    if(bmRead(&params->size, sizeof(params->size), 1, bm) != 1) return 1;
+    if(bmRead(&params->bufSize, sizeof(params->bufSize), 1, bm) != 1) return 1;
+    if(bmRead(&params->blockSize, sizeof(params->blockSize), 1, bm) != 1) return 1;
+    if(params->magic != BM_WRITE_PARAMS_MAGIC) return 1;
+
+    uint16_t remaining = 0;
+    if(params->size > 16) {
+        remaining = params->size - 16;
+    }
+
+    if(remaining >= 4) {
+        if(bmRead(&params->valScale, sizeof(params->valScale), 1, bm) != 1) return 1;
+        remaining -= sizeof(params->valScale);
+    }
+    if(remaining >= 1) {
+        if(bmRead(&params->valEncoding, sizeof(params->valEncoding), 1, bm) != 1) return 1;
+        remaining -= sizeof(params->valEncoding);
+    }
+    if(remaining >= 1) {
+        if(bmRead(&params->packSc, sizeof(params->packSc), 1, bm) != 1) return 1;
+        remaining -= sizeof(params->packSc);
+    }
+    if(remaining > 0) {
+        uint8_t discard[8];
+        while(remaining) {
+            size_t chunk = remaining > sizeof(discard) ? sizeof(discard) : remaining;
+            if(bmRead(discard, 1, chunk, bm) != chunk) return 1;
+            remaining -= chunk;
+        }
+    }
+    return 0;
+}
+
 static void destroyChromList(chromList_t *cl) {
     uint32_t i;
     if(!cl) return;
@@ -389,6 +443,25 @@ binaMethFile_t *bmOpen(char *fname, CURLcode (*callBack) (CURL*), const char *mo
             fprintf(stderr, "[bmOpen] bmg->hdr is NULL!\n");
             goto error;
         }
+        bmWriteParams_t params;
+        int hasParams = (bmReadWriteParams(bmg, &params) == 0);
+        bmg->type = bmg->hdr->version;
+        if(hasParams) {
+            bmg->valScale = params.valScale;
+            bmg->valEncoding = params.valEncoding;
+            if(params.valEncoding == 1) {
+                bmg->type |= BM_VAL_U16;
+            }
+            if(params.packSc) {
+                bmg->type |= BM_PACK_SC;
+            }
+        }
+        if(bmg->hdr->version & BM_ID) {
+            if(!hasParams || params.version < 2) {
+                fprintf(stderr, "[bmOpen] legacy string-ID DM detected in %s; regenerate with new dmtools\n", fname);
+                goto error;
+            }
+        }
 
         //Read in the chromosome list
         bmg->cl = bmReadChromList(bmg);
@@ -406,7 +479,7 @@ binaMethFile_t *bmOpen(char *fname, CURLcode (*callBack) (CURL*), const char *mo
             }
         }
         //type used for meth type
-        bmg->type = bmg->hdr->version;
+        bmApplyHeaderType(bmg);
     } else {
         bmg->isWrite = 1;
         bmg->URL = urlOpen(fname, NULL, "w+");

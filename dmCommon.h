@@ -4,6 +4,7 @@
  *
  * These are structures and functions from a variety of files that are used across files internally but don't need to be see by libBigWig users.
  */
+#include <stdint.h>
 
 /*!
  * @brief Like fsetpos, but for local or remote binaMeth files.
@@ -68,3 +69,8 @@ void destroyBWOverlapBlock(bmOverlapBlock_t *b);
  * @return 0 on success
  */
 int bmFinalize(binaMethFile_t *fp);
+
+void bmSetWriteBufSize(uint32_t bufSize);
+void bmSetWriteBlockSize(uint32_t blockSize);
+uint32_t bmGetWriteBufSize(void);
+uint32_t bmGetWriteBlockSize(void);

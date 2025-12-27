@@ -23,6 +23,7 @@
 */
 #include "binaMeth.h"
 #include <string.h>
+#include <limits.h>
 #include <stdlib.h>
 #include <assert.h>
 #include <math.h>
@@ -77,17 +78,88 @@ void onlyexecuteCMD(const char *cmd, const char *errorinfor);
 int executeCMDWithStatus(const char *cmd, const char *errorinfor);
 size_t get_executable_path( char* processdir,char* processname, size_t len);
 unsigned long get_chr_len(binaMethFile_t *bm, char* chrom);
+static int dm_idmap_find_or_add(char ***names, size_t *n, size_t *cap, const char *name);
+
+typedef struct {
+    char **names;
+    size_t n;
+} dm_idmap_t;
+
+static dm_idmap_t gViewIdmap = {0};
+
+static void dm_idmap_free(dm_idmap_t *map) {
+    if(!map || !map->names) return;
+    for(size_t i = 0; i < map->n; i++) {
+        free(map->names[i]);
+    }
+    free(map->names);
+    map->names = NULL;
+    map->n = 0;
+}
+
+static int dm_idmap_load(const char *dmPath, dm_idmap_t *map) {
+    if(!dmPath || !map) return 1;
+    char path[PATH_MAX];
+    snprintf(path, sizeof(path), "%s.idmap.tsv", dmPath);
+    FILE *f = fopen(path, "r");
+    if(!f) {
+        snprintf(path, sizeof(path), "%s.idmap", dmPath);
+        f = fopen(path, "r");
+    }
+    if(!f) return 1;
+    char line[4096];
+    size_t cap = 0;
+    while(fgets(line, sizeof(line), f)) {
+        if(line[0] == '#' || line[0] == '\n') continue;
+        char *idStr = strtok(line, "\t\n");
+        char *name = strtok(NULL, "\t\n");
+        if(!idStr || !name) continue;
+        uint32_t id = (uint32_t)strtoul(idStr, NULL, 10);
+        if(id == 0) continue;
+        if(id >= map->n) {
+            size_t newN = id + 1;
+            if(newN > cap) {
+                cap = cap ? cap * 2 : 64;
+                if(cap < newN) cap = newN;
+                char **tmp = realloc(map->names, cap * sizeof(char *));
+                if(!tmp) { fclose(f); return 1; }
+                for(size_t i = map->n; i < cap; i++) tmp[i] = NULL;
+                map->names = tmp;
+            }
+            map->n = newN;
+        }
+        if(!map->names[id]) map->names[id] = strdup(name);
+    }
+    fclose(f);
+    return 0;
+}
+
+static const char *dm_idmap_lookup(const dm_idmap_t *map, uint32_t id) {
+    if(!map || !map->names || id >= map->n) return NULL;
+    return map->names[id];
+}
+
+static const char *dm_format_entryid(uint32_t id, char *buf, size_t bufSize) {
+    const char *name = dm_idmap_lookup(&gViewIdmap, id);
+    if(name && name[0] != '\0') return name;
+    snprintf(buf, bufSize, "%" PRIu32, id);
+    return buf;
+}
 int main_view_bm(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outformat, binaMethFile_t *ofp, \
     char** chromsUse, uint32_t* starts, uint32_t* ends, float* values, uint16_t* coverages, uint8_t* strands, \
-    uint8_t* contexts, char** entryid);
+    uint8_t* contexts, uint32_t* entryid);
 int bm_merge_all_mul(char *inbmFs, char *outfile, uint8_t pstrand, int m_method, int zoomlevel, char *outformat);
 int bm_merge_mul(binaMethFile_t **ifp1s, int sizeifp, int m_method, char *chrom, int start, int end, uint8_t strand,
-    char **chromsUse, uint32_t *starts, uint32_t *ends, float *values, uint16_t *coverages, uint8_t *strands, uint8_t *contexts, char **entryid, uint16_t *coverC, FILE *output_txt, char *outformat);
+    char **chromsUse, uint32_t *starts, uint32_t *ends, float *values, uint16_t *coverages, uint8_t *strands, uint8_t *contexts, uint32_t *entryid, uint16_t *coverC, FILE *output_txt, char *outformat);
 void *multithread_cmd(void *arg);
 int dm_sc_qc_main(int argc, char **argv);
 int dm_sc_matrix_main(int argc, char **argv);
 int dm_sc_aggregate_main(int argc, char **argv);
+int dm_sc_export_main(int argc, char **argv);
+int dm_sc_shrinkage_main(int argc, char **argv);
+int dm_sc_pseudobulk_main(int argc, char **argv);
 int dm_validate_main(int argc, char **argv);
+int dm_dmr_bb_main(int argc, char **argv);
 
 struct ARGS{
     char* runCMD;
@@ -112,7 +184,7 @@ struct Threading
 #define MAX_BUFF_PRINT 20000000
 const char* Help_String_main="Command Format :  dmtools <mode> [opnions]\n"
                 "\nUsage:\n"
-        "\t  [mode]         index align bam2dm mr2dm view ebsrate viewheader overlap regionstats bodystats profile chromstats sc-qc sc-matrix sc-aggregate validate\n\n"
+        "\t  [mode]         index align bam2dm mr2dm view ebsrate viewheader overlap regionstats bodystats profile chromstats sc-qc sc-matrix sc-aggregate sc-export sc-shrinkage sc-pseudobulk dmr-bb validate\n\n"
         "\t  index          build index for genome\n"
         "\t  align          alignment fastq\n"
         "\t  bam2dm         calculate DNA methylation (DM format) with BAM file\n"
@@ -133,7 +205,29 @@ const char* Help_String_main="Command Format :  dmtools <mode> [opnions]\n"
         "\t  bw             convert dm file to bigwig file\n"
         "\t  sc-qc          per-cell QC summary for single-cell dm files (ID as cell_id)\n"
         "\t  sc-matrix      build a cell x region methylation matrix from single-cell dm files (ID as cell_id)\n"
-        "\t  sc-aggregate   aggregate single-cell methylation into group-level profiles (ID as cell_id)\n";
+        "\t  sc-aggregate   aggregate single-cell methylation into group-level profiles (ID as cell_id)\n"
+        "\t  sc-export      export sc-matrix output bundle (optionally to h5ad)\n"
+        "\t  sc-shrinkage   empirical Bayes shrinkage on sc-matrix count bundles\n"
+        "\t  sc-pseudobulk  build per-group pseudobulk dm files from single-cell DM\n"
+        "\t  dmr-bb         beta-binomial style DMR test on region counts\n";
+
+static int dm_idmap_find_or_add(char ***names, size_t *n, size_t *cap, const char *name) {
+    if(!names || !n || !cap || !name) return -1;
+    for(size_t i = 0; i < *n; i++) {
+        if(strcmp((*names)[i], name) == 0) return (int)i;
+    }
+    if(*n == *cap) {
+        size_t newCap = (*cap == 0) ? 16 : (*cap * 2);
+        char **tmp = realloc(*names, newCap * sizeof(char *));
+        if(!tmp) return -1;
+        *names = tmp;
+        *cap = newCap;
+    }
+    (*names)[*n] = strdup(name);
+    if(!(*names)[*n]) return -1;
+    (*n)++;
+    return (int)(*n - 1);
+}
 
 const char* Help_String_scqc="Command Format :  dmtools sc-qc [options] -i <dm> -o <out.tsv>\n"
         "\nUsage: dmtools sc-qc -i input.dm -o sc_qc.tsv [--context CG] [--min-coverage 1]\n"
@@ -157,8 +251,11 @@ const char* Help_String_scmatrix="Command Format :  dmtools sc-matrix [options] 
         "\t--min-coverage       minimum coverage per site (default: 1)\n"
         "\t--value              value to report: mean-meth (default) or coverage\n"
         "\t--agg                aggregation for coverage: mean (default) or sum\n"
+        "\t--emit-counts        emit mC/cov MatrixMarket files for shrinkage\n"
         "\t--sparse             write sparse Matrix Market output (default)\n"
         "\t--dense              write dense TSV matrix\n"
+        "\t--eb                 enable empirical Bayes shrinkage (outputs eb_mean + var/CI files)\n"
+        "\t--prior-strength     prior strength M (alpha+beta) for EB (default: 50)\n"
         "\t-h|--help";
 
 const char* Help_String_scaggregate="Command Format :  dmtools sc-aggregate [options] -i <dm> --groups <mapping.tsv> -o <out prefix> --bed <regions.bed> | --binsize <N>\n"
@@ -177,17 +274,233 @@ const char* Help_String_scaggregate="Command Format :  dmtools sc-aggregate [opt
         "\t--dense              write dense TSV matrix output in addition to summary\n"
         "\t-h|--help";
 
+const char* Help_String_scexport="Command Format :  dmtools sc-export [options] -i <dm> -o <out prefix> --bed <regions.bed> | --binsize <N>\n"
+        "\nUsage: dmtools sc-export -i input.dm -o export_prefix --bed regions.bed [--context CG] [--min-coverage 1] [--to h5ad]\n"
+        "\t [sc-export] mode parameters, required\n"
+        "\t-i|--input           input DM file\n"
+        "\t-o|--output          output prefix for matrix files\n"
+        "\t    --bed            BED file of regions (chrom start end [name])\n"
+        "\t    --binsize        fixed window size for genome-wide bins\n"
+        "\t [sc-export] mode parameters, options\n"
+        "\t--context            context filter: C, CG, CHG, CHH (default: no filter)\n"
+        "\t--min-coverage       minimum coverage per site (default: 1)\n"
+        "\t--to h5ad            convert bundle to h5ad (requires python3, anndata, scipy, pandas)\n"
+        "\t--h5ad-script        override path to sc_export_h5ad.py\n"
+        "\t-h|--help";
+
+const char* Help_String_scshrinkage="Command Format :  dmtools sc-shrinkage [options] --mtx <mC.mtx> --cov <cov.mtx> --barcodes <barcodes.tsv> --features <features.tsv> --out <prefix>\n"
+        "\nUsage: dmtools sc-shrinkage --mtx sc.mC.mtx --cov sc.cov.mtx --barcodes sc.barcodes.tsv --features sc.features.tsv --out sc_shrunk [--emit-var]\n"
+        "\t [sc-shrinkage] mode parameters, required\n"
+        "\t--mtx                MatrixMarket file of methylated counts (mC)\n"
+        "\t--cov                MatrixMarket file of coverage counts\n"
+        "\t--barcodes           barcodes.tsv from sc-matrix\n"
+        "\t--features           features.tsv from sc-matrix\n"
+        "\t--out                output prefix\n"
+        "\t [sc-shrinkage] mode parameters, options\n"
+        "\t--prior-strength     prior strength M (alpha+beta) (default: 20)\n"
+        "\t--min-cov            minimum coverage per entry (default: 1)\n"
+        "\t--emit-var           write posterior variance matrix\n"
+        "\t-h|--help";
+
+const char* Help_String_scpseudobulk="Command Format :  dmtools sc-pseudobulk [options] -i <dm> -o <out prefix> --groups <mapping.tsv>\n"
+        "\nUsage: dmtools sc-pseudobulk -i input.dm -o bulk_prefix --groups cell_to_group.tsv [--context CG]\n"
+        "\t [sc-pseudobulk] mode parameters, required\n"
+        "\t-i|--input           input DM file\n"
+        "\t-o|--output          output prefix for output DM files\n"
+        "\t    --groups         TSV mapping of cell_id to group label\n"
+        "\t [sc-pseudobulk] mode parameters, options\n"
+        "\t--context            context filter: C, CG, CHG, CHH (default: no filter)\n"
+        "\t-h|--help";
+
+const char* Help_String_dmrbb="Command Format :  dmtools dmr-bb --input <counts.tsv> [options]\n"
+        "\nUsage: dmtools dmr-bb --input counts.tsv --out dmr.tsv [--rho 0.0]\n"
+        "\t [dmr-bb] required\n"
+        "\t--input              TSV with columns: chr start end k1 n1 k2 n2\n"
+        "\t [dmr-bb] options\n"
+        "\t--out                output TSV (default: stdout)\n"
+        "\t--rho                beta-binomial overdispersion (default: 0.0)\n"
+        "\t-h|--help";
+
 const char* Help_String_validate="Command Format :  dmtools validate -i <dm file> [--verbose]\n"
-        "\nUsage: dmtools validate -i input.dm [--verbose]\n"
+        "\nUsage: dmtools validate -i input.dm [--verbose] [--region chr:start-end]\n"
         "\t [validate] required\n"
         "\t-i|--input           input DM file to check\n"
         "\t [validate] options\n"
         "\t--verbose            print additional index block details\n"
+        "\t--region             region to query for records (default: chr1:1-1000000)\n"
         "\t-h|--help";
+
+typedef struct {
+    char *chrom;
+    uint32_t start;
+    uint32_t end;
+    double k1;
+    double n1;
+    double k2;
+    double n2;
+    double pval;
+    double qval;
+    double delta;
+    double p1;
+    double p2;
+} dm_dmr_bb_row_t;
+
+static int dm_dmr_bb_row_cmp(const void *a, const void *b) {
+    const dm_dmr_bb_row_t *ra = *(const dm_dmr_bb_row_t * const *)a;
+    const dm_dmr_bb_row_t *rb = *(const dm_dmr_bb_row_t * const *)b;
+    if (ra->pval < rb->pval) return -1;
+    if (ra->pval > rb->pval) return 1;
+    return 0;
+}
+
+int dm_dmr_bb_main(int argc, char **argv) {
+    char *input = NULL;
+    char *output = NULL;
+    double rho = 0.0;
+
+    for (int i = 1; i < argc; ++i) {
+        if ((strcmp(argv[i], "-i") == 0 || strcmp(argv[i], "--input") == 0) && i + 1 < argc) {
+            input = argv[++i];
+        } else if ((strcmp(argv[i], "-o") == 0 || strcmp(argv[i], "--out") == 0) && i + 1 < argc) {
+            output = argv[++i];
+        } else if (strcmp(argv[i], "--rho") == 0 && i + 1 < argc) {
+            rho = atof(argv[++i]);
+            if (rho < 0.0) {
+                fprintf(stderr, "Error: --rho must be >= 0.\n");
+                return 1;
+            }
+        } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
+            fprintf(stderr, "%s\n", Help_String_dmrbb);
+            return 0;
+        } else {
+            fprintf(stderr, "%s\n", Help_String_dmrbb);
+            return 1;
+        }
+    }
+
+    if (!input) {
+        fprintf(stderr, "%s\n", Help_String_dmrbb);
+        return 1;
+    }
+
+    FILE *in = fopen(input, "r");
+    if (!in) {
+        fprintf(stderr, "Error: cannot open input %s\n", input);
+        return 1;
+    }
+    FILE *out = output ? fopen(output, "w") : stdout;
+    if (!out) {
+        fclose(in);
+        fprintf(stderr, "Error: cannot open output %s\n", output);
+        return 1;
+    }
+
+    dm_dmr_bb_row_t *rows = NULL;
+    size_t nRows = 0;
+    size_t capRows = 0;
+    char line[4096];
+    while (fgets(line, sizeof(line), in)) {
+        if (line[0] == '#' || line[0] == '\n') continue;
+        char chrom[256];
+        uint32_t start = 0, end = 0;
+        double k1 = 0.0, n1 = 0.0, k2 = 0.0, n2 = 0.0;
+        int parsed = sscanf(line, "%255s%u%u%lf%lf%lf%lf", chrom, &start, &end, &k1, &n1, &k2, &n2);
+        if (parsed != 7) continue;
+
+        if (nRows == capRows) {
+            size_t newCap = capRows ? capRows * 2 : 256;
+            dm_dmr_bb_row_t *tmp = realloc(rows, newCap * sizeof(dm_dmr_bb_row_t));
+            if (!tmp) {
+                fprintf(stderr, "Error: out of memory.\n");
+                fclose(in);
+                if (out != stdout) fclose(out);
+                free(rows);
+                return 1;
+            }
+            rows = tmp;
+            capRows = newCap;
+        }
+
+        double p1 = (n1 > 0.0) ? k1 / n1 : 0.0;
+        double p2 = (n2 > 0.0) ? k2 / n2 : 0.0;
+        double var1 = (n1 > 0.0) ? (p1 * (1.0 - p1) / n1) * (1.0 + (n1 - 1.0) * rho) : 0.0;
+        double var2 = (n2 > 0.0) ? (p2 * (1.0 - p2) / n2) * (1.0 + (n2 - 1.0) * rho) : 0.0;
+        double denom = sqrt(var1 + var2);
+        double z = (denom > 0.0) ? (p1 - p2) / denom : 0.0;
+        double pval = (denom > 0.0) ? erfc(fabs(z) / sqrt(2.0)) : 1.0;
+
+        rows[nRows].chrom = strdup(chrom);
+        rows[nRows].start = start;
+        rows[nRows].end = end;
+        rows[nRows].k1 = k1;
+        rows[nRows].n1 = n1;
+        rows[nRows].k2 = k2;
+        rows[nRows].n2 = n2;
+        rows[nRows].pval = pval;
+        rows[nRows].qval = 1.0;
+        rows[nRows].delta = p1 - p2;
+        rows[nRows].p1 = p1;
+        rows[nRows].p2 = p2;
+        nRows++;
+    }
+    fclose(in);
+
+    if (nRows == 0) {
+        fprintf(stderr, "Warning: no valid rows in %s\n", input);
+    }
+
+    dm_dmr_bb_row_t **order = NULL;
+    if (nRows > 0) {
+        order = malloc(nRows * sizeof(dm_dmr_bb_row_t *));
+        if (!order) {
+            fprintf(stderr, "Error: out of memory.\n");
+            if (out != stdout) fclose(out);
+            for (size_t i = 0; i < nRows; i++) free(rows[i].chrom);
+            free(rows);
+            return 1;
+        }
+        for (size_t i = 0; i < nRows; i++) order[i] = &rows[i];
+        qsort(order, nRows, sizeof(dm_dmr_bb_row_t *), dm_dmr_bb_row_cmp);
+        for (size_t i = 0; i < nRows; i++) {
+            double q = order[i]->pval * (double)nRows / (double)(i + 1);
+            if (q > 1.0) q = 1.0;
+            order[i]->qval = q;
+        }
+        for (size_t i = nRows; i-- > 1;) {
+            if (order[i - 1]->qval > order[i]->qval) {
+                order[i - 1]->qval = order[i]->qval;
+            }
+        }
+    }
+
+    fprintf(out, "chrom\tstart\tend\tdelta\tp_value\tq_value\tk1\tn1\tk2\tn2\tp1\tp2\n");
+    for (size_t i = 0; i < nRows; i++) {
+        fprintf(out, "%s\t%u\t%u\t%.6f\t%.6g\t%.6g\t%.0f\t%.0f\t%.0f\t%.0f\t%.6f\t%.6f\n",
+                rows[i].chrom,
+                rows[i].start,
+                rows[i].end,
+                rows[i].delta,
+                rows[i].pval,
+                rows[i].qval,
+                rows[i].k1,
+                rows[i].n1,
+                rows[i].k2,
+                rows[i].n2,
+                rows[i].p1,
+                rows[i].p2);
+    }
+
+    if (out != stdout) fclose(out);
+    for (size_t i = 0; i < nRows; i++) free(rows[i].chrom);
+    free(rows);
+    free(order);
+    return 0;
+}
 
 int dm_validate_main(int argc, char **argv){
     char *input = NULL;
     int verbose = 0;
+    const char *region = NULL;
     for(int i = 1; i < argc; ++i){
         if(strcmp(argv[i], "-i") == 0 || strcmp(argv[i], "--input") == 0){
             if(i + 1 < argc){
@@ -198,6 +511,13 @@ int dm_validate_main(int argc, char **argv){
             }
         }else if(strcmp(argv[i], "--verbose") == 0){
             verbose = 1;
+        }else if(strcmp(argv[i], "--region") == 0){
+            if(i + 1 < argc){
+                region = argv[++i];
+            }else{
+                fprintf(stderr, "%s\n", Help_String_validate);
+                return 1;
+            }
         }else if(strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0){
             fprintf(stderr, "%s\n", Help_String_validate);
             return 0;
@@ -225,20 +545,69 @@ int dm_validate_main(int argc, char **argv){
         bmClose(fp);
         return 1;
     }
+    if(!(fp->hdr->version & BM_MAGIC)){
+        fprintf(stderr, "[dmtools validate] header version missing BM_MAGIC bit in %s\n", input);
+        bmClose(fp);
+        return 1;
+    }
 
-    uint32_t tid = 0;
+    const char *queryChrom = NULL;
     uint32_t start = 0;
-    uint32_t end = fp->cl->len[tid];
-    if(end > 100000) end = 100000;
-    bmOverlappingIntervals_t *hits = bmGetOverlappingIntervals(fp, fp->cl->chrom[tid], start, end);
+    uint32_t end = 0;
+    if(region){
+        const char *colon = strchr(region, ':');
+        const char *dash = colon ? strchr(colon + 1, '-') : NULL;
+        if(!colon || !dash){
+            fprintf(stderr, "[dmtools validate] invalid region format: %s\n", region);
+            bmClose(fp);
+            return 1;
+        }
+        size_t chromLen = (size_t)(colon - region);
+        char *chrom = (char*)calloc(chromLen + 1, 1);
+        if(!chrom){
+            fprintf(stderr, "[dmtools validate] out of memory parsing region\n");
+            bmClose(fp);
+            return 1;
+        }
+        memcpy(chrom, region, chromLen);
+        queryChrom = chrom;
+        start = (uint32_t)strtoul(colon + 1, NULL, 10);
+        end = (uint32_t)strtoul(dash + 1, NULL, 10);
+        if(start > 0) start -= 1;
+    }else{
+        uint32_t tid = 0;
+        for(uint32_t i = 0; i < fp->cl->nKeys; ++i){
+            if(strcmp(fp->cl->chrom[i], "chr1") == 0){
+                tid = i;
+                break;
+            }
+        }
+        queryChrom = fp->cl->chrom[tid];
+        end = fp->cl->len[tid];
+        if(end > 1000000) end = 1000000;
+    }
+    if(end <= start){
+        fprintf(stderr, "[dmtools validate] invalid region range: %u-%u\n", start, end);
+        if(region) free((void*)queryChrom);
+        bmClose(fp);
+        return 1;
+    }
+    bmOverlappingIntervals_t *hits = bmGetOverlappingIntervals(fp, queryChrom, start, end);
     if(!hits){
-        fprintf(stderr, "[dmtools validate] failed to read data from %s\n", input);
+        fprintf(stderr, "[dmtools validate] failed to read data from %s (region %s:%u-%u)\n",
+                input, queryChrom, start + 1, end);
+        if(region) free((void*)queryChrom);
         bmClose(fp);
         return 1;
     }
     if(hits->l == 0){
-        fprintf(stderr, "[dmtools validate] no records returned for %s\n", input);
+        fprintf(stderr, "[dmtools validate] no records returned for %s (region %s:%u-%u)\n",
+                input, queryChrom, start + 1, end);
         bmDestroyOverlappingIntervals(hits);
+        if(region) free((void*)queryChrom);
+        if(fp->idx->nItems > 0){
+            fprintf(stderr, "[dmtools validate] indexed records exist but query returned 0; write/index param or chrom mapping issue\n");
+        }
         bmClose(fp);
         return 1;
     }
@@ -248,6 +617,7 @@ int dm_validate_main(int argc, char **argv){
     }
 
     bmDestroyOverlappingIntervals(hits);
+    if(region) free((void*)queryChrom);
     bmClose(fp);
     fprintf(stderr, "[dmtools validate] OK: %s\n", input);
     return 0;
@@ -300,6 +670,9 @@ const char* Help_String_bam2dm="Command Format :  dmtools bam2dm [options] -g ge
         "\t--Cx                  print context in DM file\n"
         "\t-E                    print end in DM file\n"
         "\t--Id                  print ID in DM file\n"
+        "\t--quantize-ml         store values as uint16 (default: off)\n"
+        "\t--quantize-scale <INT>  scale for quantization (default: 10000)\n"
+        "\t--pack-sc             pack strand+context into 1 byte (default: off)\n"
         "\t--check <dm>          validate an existing dm file and exit\n"
         "\t--validate-output     validate dm after writing (structural check)\n"
         "\t-h|--help";
@@ -337,6 +710,9 @@ const char* Help_String_mr2dm="Command Format :  dmtools mr2dm [opnions] -g geno
         "\t--Cx                  print context\n"
         "\t-E                    print end\n"
         "\t--Id                  print ID\n"
+        "\t--quantize-ml         store values as uint16 (default: off)\n"
+        "\t--quantize-scale <INT>  scale for quantization (default: 10000)\n"
+        "\t--pack-sc             pack strand+context into 1 byte (default: off)\n"
         "\t--CF                  coverage filter, >=[int], default 4.\n"
         "\t--sort Y/N            make chromsize file and meth file in same coordinate, default Y\n"
         "\t--zl                  The maximum number of zoom levels. [0-10]\n"
@@ -351,6 +727,9 @@ const char* Help_String_mr2dm="Command Format :  dmtools mr2dm [opnions] -g geno
 //        "\t--context             [0/1/2/3] context for show, 0 represent 'C/ALL' context, 1 'CG' context, 2 'CHG' context, 3 'CHH' context.\n"
         "\t--fcontext            CG/CHG/CHH/ALL, only convert provide context in methratio file or bedsimple, default ALL\n"
         "\t--sv                  add strand information to meth level. eg 0.5, -0.5\n"
+        "\t--cell-id             numeric ID to write when --Id is enabled\n"
+        "\t--cell-name           cell name for idmap (default: numeric ID)\n"
+        "\t--idmap-out           write <dm>.idmap.tsv mapping numeric ID to cell name\n"
         "\tNote. meth ratio file must be sorted by chrom and coordinate. ex. sort -k1,1 -k2,2n\n"
 		"\t-h|--help";
 
@@ -576,6 +955,14 @@ int main(int argc, char *argv[]) {
         return dm_sc_matrix_main(argc-1, argv+1);
     } else if(argc>1 && strcmp(argv[1], "sc-aggregate") == 0){
         return dm_sc_aggregate_main(argc-1, argv+1);
+    } else if(argc>1 && strcmp(argv[1], "sc-export") == 0){
+        return dm_sc_export_main(argc-1, argv+1);
+    } else if(argc>1 && strcmp(argv[1], "sc-shrinkage") == 0){
+        return dm_sc_shrinkage_main(argc-1, argv+1);
+    } else if(argc>1 && strcmp(argv[1], "sc-pseudobulk") == 0){
+        return dm_sc_pseudobulk_main(argc-1, argv+1);
+    } else if(argc>1 && strcmp(argv[1], "dmr-bb") == 0){
+        return dm_dmr_bb_main(argc-1, argv+1);
     } else if(argc>1 && strcmp(argv[1], "validate") == 0){
         return dm_validate_main(argc-1, argv+1);
     }
@@ -585,7 +972,7 @@ int main(int argc, char *argv[]) {
     char **chroms = (char**)calloc(MAX_LINE_PRINT, sizeof(char*));
     if(!chroms) goto error;
     char **chromsUse = (char**)calloc(MAX_LINE_PRINT, sizeof(char*));
-    char **entryid = (char**)calloc(MAX_LINE_PRINT, sizeof(char*));
+    uint32_t *entryid = (uint32_t*)calloc(MAX_LINE_PRINT, sizeof(uint32_t));
     uint32_t *chrLens = (uint32_t*)calloc(MAX_LINE_PRINT, sizeof(uint32_t));
     uint32_t *starts = (uint32_t*)calloc(MAX_LINE_PRINT, sizeof(uint32_t));
     uint32_t *ends = (uint32_t*)calloc(MAX_LINE_PRINT, sizeof(uint32_t));
@@ -602,6 +989,8 @@ int main(int argc, char *argv[]) {
     unsigned long totalCG = 0;
     int i = 0;
     uint32_t write_type = 0x8000;
+    int quantize_ml = 0;
+    uint32_t quantize_scale = 10000;
     char methfile[100]; char *outbmfile = NULL;
     char *inbmfile = malloc(10000);
     char *bmfile2 = malloc(1000);
@@ -617,7 +1006,7 @@ int main(int argc, char *argv[]) {
     for(i = 0; i < MAX_LINE_PRINT; i++){
         chroms[i] = NULL;
         chromsUse[i] = NULL;
-        entryid[i] = NULL;
+        entryid[i] = 0;
     }
     
     char *bedfile = NULL;
@@ -645,6 +1034,9 @@ int main(int argc, char *argv[]) {
     double bodyX = 1; // N times of bin size for gene body
     int matrixX = 5; int print2one = 0; // print all matrix to one file.
     char* bsrmode = NULL;
+    char *idmapOut = NULL;
+    char *cellName = NULL;
+    uint32_t cellId = 0;
     if(argc>3){
         strcpy(mode, argv[1]);
         // mr2bam view overlap region
@@ -691,6 +1083,12 @@ int main(int argc, char *argv[]) {
            fprintf(stderr, "%s\n", Help_String_scmatrix);
         }else if(strcmp(mode, "sc-aggregate") == 0){
            fprintf(stderr, "%s\n", Help_String_scaggregate);
+        }else if(strcmp(mode, "sc-export") == 0){
+           fprintf(stderr, "%s\n", Help_String_scexport);
+        }else if(strcmp(mode, "sc-shrinkage") == 0){
+           fprintf(stderr, "%s\n", Help_String_scshrinkage);
+        }else if(strcmp(mode, "sc-pseudobulk") == 0){
+           fprintf(stderr, "%s\n", Help_String_scpseudobulk);
         }else if(strcmp(mode, "validate") == 0){
            fprintf(stderr, "%s\n", Help_String_validate);
          }else if(strcmp(mode, "addzm") == 0){
@@ -743,6 +1141,21 @@ int main(int argc, char *argv[]) {
                 write_type |= BM_CONTEXT;
             }else if(strcmp(argv[i], "--Id") == 0){
                 write_type |= BM_ID;
+            }else if(strcmp(argv[i], "--quantize-ml") == 0){
+                quantize_ml = 1;
+                write_type |= BM_VAL_U16;
+            }else if(strcmp(argv[i], "--quantize-scale") == 0){
+                if(i + 1 >= argc) {
+                    fprintf(stderr, "--quantize-scale requires an integer\n");
+                    exit(1);
+                }
+                quantize_scale = (uint32_t)strtoul(argv[++i], NULL, 10);
+                if(quantize_scale == 0 || quantize_scale > UINT16_MAX) {
+                    fprintf(stderr, "--quantize-scale must be in [1, %u]\n", UINT16_MAX);
+                    exit(1);
+                }
+            }else if(strcmp(argv[i], "--pack-sc") == 0){
+                write_type |= BM_PACK_SC;
             }else if(strcmp(argv[i], "-E") == 0){
                 write_type |= BM_END;
             }else if(strcmp(argv[i], "-m") == 0){
@@ -864,6 +1277,14 @@ int main(int argc, char *argv[]) {
                 strandmeth = 1;
             }else if(strcmp(argv[i], "--pr") == 0){
                 printwarning = 1;
+            }else if(strcmp(argv[i], "--idmap-out") == 0){
+                if(!idmapOut) idmapOut = malloc(1000);
+                strcpy(idmapOut, argv[++i]);
+            }else if(strcmp(argv[i], "--cell-name") == 0){
+                if(!cellName) cellName = malloc(1000);
+                strcpy(cellName, argv[++i]);
+            }else if(strcmp(argv[i], "--cell-id") == 0){
+                cellId = (uint32_t)strtoul(argv[++i], NULL, 10);
             }else if(strcmp(argv[i], "-o") == 0 || strcmp(argv[i], "--out") == 0 || strcmp(argv[i], "--outdm") == 0){
                 if(strcmp(mode, "mr2dm") == 0){
                     if(!outbmfile){
@@ -1192,6 +1613,27 @@ int main(int argc, char *argv[]) {
     }
     else if(strcmp(mode, "mr2dm") == 0){
         fprintf(stderr, "mr file format %s\n", mrformat);
+        char **idmapNames = NULL;
+        size_t nIdmap = 0, capIdmap = 0;
+        char defaultNameBuf[64] = {0};
+        const char *defaultName = NULL;
+        if(write_type & BM_ID) {
+            if(cellId == 0) cellId = 1;
+            if(cellName && cellName[0] != '\0') {
+                defaultName = cellName;
+            } else {
+                snprintf(defaultNameBuf, sizeof(defaultNameBuf), "%u", cellId);
+                defaultName = defaultNameBuf;
+            }
+            if(!idmapOut) {
+                size_t len = strlen(outbmfile) + 12;
+                idmapOut = malloc(len);
+                snprintf(idmapOut, len, "%s.idmap.tsv", outbmfile);
+            }
+        } else if(idmapOut) {
+            fprintf(stderr, "[mr2dm] --idmap-out requires --Id\n");
+            exit(1);
+        }
         if(chromlenf_yes==0){
             fprintf(stderr, "please provide chrome size file with -g paramater\n");
             exit(0);
@@ -1273,6 +1715,8 @@ int main(int argc, char *argv[]) {
             return 1;
         }
         fp->type = write_type;
+        fp->valScale = quantize_ml ? quantize_scale : 0;
+        fp->valEncoding = quantize_ml ? 1 : 0;
         
         //Allow up to 10 zoom levels, though fewer will be used in practice
         if(bmCreateHdr(fp, zoomlevel)) {
@@ -1306,6 +1750,7 @@ int main(int argc, char *argv[]) {
         while(fgets(PerLine,2000,methF)!=0){
             if(PerLine[0] == '#') continue; // remove header #
             //fprintf(stderr, "%s\n", PerLine);
+            nameid[0] = '\0';
             if(strcmp(mrformat, "methratio") == 0){
                 sscanf(PerLine, "%255s%u%1s%9s%u%u", chrom, &start, strand, context, &coverC, &coverage);
                 //fprintf(stderr, "%f\n", ((double) coverC/ coverage));
@@ -1370,6 +1815,19 @@ int main(int argc, char *argv[]) {
                 if(strand[0] == '-') value = -value;
             }
 
+            uint32_t idValue = 0;
+            char idbuf[32];
+            if(write_type & BM_ID) {
+                const char *idName = (nameid[0] != '\0' && strcmp(nameid, ".") != 0) ? nameid : defaultName;
+                int idx = dm_idmap_find_or_add(&idmapNames, &nIdmap, &capIdmap, idName);
+                if(idx < 0) {
+                    fprintf(stderr, "[mr2dm] failed to map id name %s\n", idName ? idName : "(null)");
+                    goto error;
+                }
+                idValue = (uint32_t)idx + 1;
+                snprintf(idbuf, sizeof(idbuf), "%u", idValue);
+            }
+
             if(strcmp(old_chrom, chrom)!=0){
                 if(printL > 1){
                     if(bmAppendIntervals(fp, starts+1, ends+1, values+1, coverages+1, strands+1, contexts+1, entryid, printL-1))  {
@@ -1415,6 +1873,9 @@ int main(int argc, char *argv[]) {
                     contexts[printL] = 2;
                 }else if(strcmp(context, "CHH") == 0){
                     contexts[printL] = 3;
+                }
+                if(write_type & BM_ID) {
+                    entryid[printL] = idValue;
                 }
                 if(DEBUG>-1) fprintf(stderr,"## %d start %s %d %d %f %d %d %d\n", printL, chromsUse[printL], starts[printL], ends[printL], values[printL], coverages[printL], strands[printL], context[printL]);
                 int response = bmAddIntervals(fp, chromsUse, starts, ends, values, coverages, strands, contexts,
@@ -1471,6 +1932,9 @@ int main(int argc, char *argv[]) {
                 }else if(strcmp(context, "CHH") == 0){
                     contexts[printL] = 3;
                 }
+                if(write_type & BM_ID) {
+                    entryid[printL] = idValue;
+                }
                 strcpy(old_chrom, chrom);
                 printL++;
                 if(printL > maxPrintLUsed) maxPrintLUsed = printL;
@@ -1519,6 +1983,17 @@ int main(int argc, char *argv[]) {
         bmClose(fp);
         if(DEBUG>0) fprintf(stderr, "bm close22222 ---===--- \n");
         bmCleanupOnce();
+        if(write_type & BM_ID) {
+            FILE *idfp = fopen(idmapOut, "w");
+            if(!idfp) {
+                fprintf(stderr, "[mr2dm] failed to write idmap %s\n", idmapOut);
+                goto error;
+            }
+            for(size_t k = 0; k < nIdmap; k++) {
+                fprintf(idfp, "%zu\t%s\n", k + 1, idmapNames[k]);
+            }
+            fclose(idfp);
+        }
         /*
         * free memory from malloc
         */
@@ -1529,7 +2004,6 @@ int main(int argc, char *argv[]) {
         }
         for(i =0; i < maxPrintLUsed; i++){
             if(chromsUse[i]) free(chromsUse[i]);
-            if(entryid[i]) free(entryid[i]);
         }
         if(!chromsTransferred) free(chroms);
         free(chromsUse); free(entryid); free(starts);
@@ -1538,6 +2012,10 @@ int main(int argc, char *argv[]) {
         if(!chromsTransferred) free(chrLens);
         free(strand); free(context); free(PerLine);free(chromlenf);
         if(outfile) free(outfile); if(outbmfile) free(outbmfile);
+        if(idmapOut) free(idmapOut);
+        if(cellName) free(cellName);
+        for(size_t k = 0; k < nIdmap; k++) free(idmapNames[k]);
+        free(idmapNames);
         return 0;
     }
 
@@ -1575,7 +2053,10 @@ int main(int argc, char *argv[]) {
         uint32_t type = BMtype(inbmfile, NULL);
         binaMethFile_t *ifp = NULL;
         ifp = bmOpen(inbmfile, NULL, "r");
-        ifp->type = ifp->hdr->version;
+        bmApplyHeaderType(ifp);
+        if(ifp->hdr->version & BM_ID) {
+            dm_idmap_load(inbmfile, &gViewIdmap);
+        }
         FILE *outfp_bm = NULL;
         FILE *outfp_stats = NULL;
         binaMethFile_t *ofp = NULL;
@@ -1696,6 +2177,7 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "Done and free mem\n");
         free(inbmfile);
         bmClose(ifp);
+        dm_idmap_free(&gViewIdmap);
         if(outfile) free(outfile);
         if(filterchrom) free(filterchrom);
         if(strcmp(outformat, "txt") == 0){
@@ -1745,7 +2227,7 @@ int main(int argc, char *argv[]) {
         uint32_t type = BMtype(inbmfile, NULL);
         binaMethFile_t *ifp = NULL;
         ifp = bmOpen(inbmfile, NULL, "r");
-        ifp->type = ifp->hdr->version;
+        bmApplyHeaderType(ifp);
         bmPrintHdr(ifp);
         //bmPrintIndexTree(ifp);
         free(inbmfile);
@@ -1772,7 +2254,7 @@ int main(int argc, char *argv[]) {
         uint32_t type = BMtype(inbmfile, NULL);
         binaMethFile_t *ifp = NULL;
         ifp = bmOpen(inbmfile, NULL, "r");
-        ifp->type = ifp->hdr->version;
+        bmApplyHeaderType(ifp);
         if(strcmp(mode, "ebsrate") == 0) {
             float bsrate = 0; int bscount = 0;
             fprintf(outfp_mean, "##bs rate calculated by %s\n", bsrmode);
@@ -2262,7 +2744,7 @@ int calchromstats(char *inbmfile, char *method, int chromstep, int stepoverlap, 
     uint32_t type = BMtype(inbmfile, NULL);
     binaMethFile_t *fp = NULL;
     fp = bmOpen(inbmfile, NULL, "r");
-    fp->type = fp->hdr->version;
+    bmApplyHeaderType(fp);
 
     int i = 0, start = 0, end = chromstep; //, j = 0
     char* region = malloc(sizeof(char)*1000);
@@ -3093,7 +3575,7 @@ int calprofile_gtf(char *inbmfile, int upstream, int downstream, double profiles
     uint32_t type = BMtype(inbmfile, NULL);
     binaMethFile_t *fp = NULL;
     fp = bmOpen(inbmfile, NULL, "r");
-    fp->type = fp->hdr->version;
+    bmApplyHeaderType(fp);
 
     FILE* Fgtffile=File_Open(gtffile,"r");
     char *PerLine = malloc(2000);
@@ -3140,7 +3622,7 @@ int calprofile_gtf(char *inbmfile, int upstream, int downstream, double profiles
         profileArgs[ithread].method = "weighted";
         profileArgs[ithread].fp = NULL;
         profileArgs[ithread].fp = bmOpen(inbmfile, NULL, "r");
-        profileArgs[ithread].fp->type = profileArgs[ithread].fp->hdr->version;
+        bmApplyHeaderType(profileArgs[ithread].fp);
         profileArgs[ithread].printbuffer_c = malloc(sizeof(char)*MAX_BUFF_PRINT);
         profileArgs[ithread].printbuffer_cg = malloc(sizeof(char)*MAX_BUFF_PRINT);
         profileArgs[ithread].printbuffer_chg = malloc(sizeof(char)*MAX_BUFF_PRINT);
@@ -3312,7 +3794,7 @@ int calprofile(char *inbmfile, int upstream, int downstream, double profilestep,
     uint32_t type = BMtype(inbmfile, NULL);
     binaMethFile_t *fp = NULL;
     fp = bmOpen(inbmfile, NULL, "r");
-    fp->type = fp->hdr->version;
+    bmApplyHeaderType(fp);
 
     FILE* Fbedfile=File_Open(bedfile,"r");
     char *PerLine = malloc(2000);
@@ -3355,7 +3837,7 @@ int calprofile(char *inbmfile, int upstream, int downstream, double profilestep,
         profileArgs[ithread].method = "weighted";
         profileArgs[ithread].fp = NULL;
         profileArgs[ithread].fp = bmOpen(inbmfile, NULL, "r");
-        profileArgs[ithread].fp->type = profileArgs[ithread].fp->hdr->version;
+        bmApplyHeaderType(profileArgs[ithread].fp);
         profileArgs[ithread].printbuffer_c = malloc(sizeof(char)*MAX_BUFF_PRINT);
         profileArgs[ithread].printbuffer_cg = malloc(sizeof(char)*MAX_BUFF_PRINT);
         profileArgs[ithread].printbuffer_chg = malloc(sizeof(char)*MAX_BUFF_PRINT);
@@ -3737,7 +4219,7 @@ int calregionstats_file(char *inbmfile, char *method, char *bedfile, int format,
     uint32_t type = BMtype(inbmfile, NULL);
     binaMethFile_t *fp = NULL;
     fp = bmOpen(inbmfile, NULL, "r");
-    fp->type = fp->hdr->version;
+    bmApplyHeaderType(fp);
 
     FILE* Fbedfile=File_Open(bedfile,"r");
     char *PerLine = malloc(2000);
@@ -3800,7 +4282,7 @@ int calregionstats(char *inbmfile, char *method, char *region, uint8_t pstrand, 
     uint32_t type = BMtype(inbmfile, NULL);
     binaMethFile_t *fp = NULL;
     fp = bmOpen(inbmfile, NULL, "r");
-    fp->type = fp->hdr->version;
+    bmApplyHeaderType(fp);
 
     char *substr= strtok(region, ";");
     char regions[1000][200] = {""};
@@ -3882,7 +4364,7 @@ int calbodystats_file(char *inbmfile, char *method, char *bedfile, int format, u
     uint32_t type = BMtype(inbmfile, NULL);
     binaMethFile_t *fp = NULL;
     fp = bmOpen(inbmfile, NULL, "r");
-    fp->type = fp->hdr->version;
+    bmApplyHeaderType(fp);
 
     FILE* Fbedfile=File_Open(bedfile,"r");
     char *PerLine = malloc(2000);
@@ -3948,7 +4430,7 @@ int calbodystats(char *inbmfile, char *method, char *region, uint8_t pstrand, ui
     uint32_t type = BMtype(inbmfile, NULL);
     binaMethFile_t *fp = NULL;
     fp = bmOpen(inbmfile, NULL, "r");
-    fp->type = fp->hdr->version;
+    bmApplyHeaderType(fp);
 
     char *substr= strtok(region, ";");
     char regions[1000][200] = {""};
@@ -3997,7 +4479,7 @@ int calbodystats(char *inbmfile, char *method, char *region, uint8_t pstrand, ui
     return 0;
 }
 
-int write_dm(binaMethFile_t *ifp, char* region, FILE* outfileF, char *outformat, binaMethFile_t *ofp, char **chromsUse, uint32_t *starts, uint32_t *ends, float *values, uint16_t *coverages, uint8_t *strands, uint8_t *contexts, char **entryid, int newchr){
+int write_dm(binaMethFile_t *ifp, char* region, FILE* outfileF, char *outformat, binaMethFile_t *ofp, char **chromsUse, uint32_t *starts, uint32_t *ends, float *values, uint16_t *coverages, uint8_t *strands, uint8_t *contexts, uint32_t *entryid, int newchr){
     int printL = 0;
     printL = main_view_bm(ifp, region, outfileF, outformat, ofp, chromsUse, starts, ends, values, coverages, strands, contexts,
          entryid);
@@ -4034,7 +4516,7 @@ int main_view_all(binaMethFile_t *ifp, FILE* outfileF, char *outformat, binaMeth
     char* region = malloc(sizeof(char)*1000);
 
     char **chromsUse = malloc(sizeof(char*)*MAX_LINE_PRINT);
-    char **entryid = malloc(sizeof(char*)*MAX_LINE_PRINT);
+    uint32_t *entryid = malloc(sizeof(uint32_t)*MAX_LINE_PRINT);
 //    uint32_t *chrLens = malloc(sizeof(uint32_t) * MAX_LINE_PRINT);
     uint32_t *starts = malloc(sizeof(uint32_t) * MAX_LINE_PRINT);
     uint32_t *ends = malloc(sizeof(uint32_t) * MAX_LINE_PRINT);
@@ -4091,7 +4573,7 @@ int main_view_all(binaMethFile_t *ifp, FILE* outfileF, char *outformat, binaMeth
     free(region);
     for(i =0; i < usingLine; i++){
         if(chromsUse[i]) free(chromsUse[i]);
-        if(entryid[i]) free(entryid[i]);
+        entryid[i] = 0;
     }
     free(chromsUse); free(entryid); free(starts);
     free(ends); free(values); free(coverages); free(strands); free(contexts);
@@ -4099,7 +4581,7 @@ int main_view_all(binaMethFile_t *ifp, FILE* outfileF, char *outformat, binaMeth
 
 int main_view_bm(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outformat, binaMethFile_t *ofp, \
     char** chromsUse, uint32_t* starts, uint32_t* ends, float* values, uint16_t* coverages, uint8_t* strands, \
-    uint8_t* contexts, char** entryid){
+    uint8_t* contexts, uint32_t* entryid){
     // read. test/example_output.bm
     if(DEBUG>1) fprintf(stderr, "\nifp===-=== %d %d\n", ifp->type, ifp->hdr->version);
     //ifp->type = type;
@@ -4118,6 +4600,7 @@ int main_view_bm(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outfor
     char *pszBuf = malloc(sizeof(char)*40000000);
     char *tempstore = pszBuf;
     char *tempchar = malloc(30);
+    char idbuf[64];
     int Nprint = 0; int cover = 0; float methlevel = 0; int keyvalue = 0;
     //char *strand = malloc(100*sizeof(char)); int strand;
     for(i=0;i<slen; i++){
@@ -4174,7 +4657,7 @@ int main_view_bm(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outfor
                         contexts[Nprint] = o->context[j];
                     }
                     if(ifp->hdr->version & BM_ID) {
-                        strcpy(entryid[Nprint], o->entryid[j]);
+                        entryid[Nprint] = o->entryid ? o->entryid[j] : 0;
                     }
                     Nprint++;
                 }else if(strcmp(outformat, "stats") == 0) {
@@ -4238,10 +4721,11 @@ int main_view_bm(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outfor
                         sprintf(tempchar, "\t%s", context_str[o->context[j]]);
                         tempstore = fastStrcat(tempstore, tempchar);
                     }
-                    if(ifp->hdr->version & BM_ID) {
-                        sprintf(tempchar, "\t%s", o->entryid[j]);
-                        tempstore = fastStrcat(tempstore, tempchar);
-                    }
+                        if(ifp->hdr->version & BM_ID) {
+                            const char *idLabel = dm_format_entryid(o->entryid ? o->entryid[j] : 0, idbuf, sizeof(idbuf));
+                            sprintf(tempchar, "\t%s", idLabel);
+                            tempstore = fastStrcat(tempstore, tempchar);
+                        }
                     sprintf(tempchar, "\n");
                     tempstore = fastStrcat(tempstore, tempchar);
                     Nprint++;
@@ -4292,6 +4776,7 @@ int main_view_file(binaMethFile_t *ifp, char *bedfile, FILE* outfileF, char *out
     unsigned int j = 0;
     char *tempstore = malloc(sizeof(char)*10000000);
     char *tempchar = malloc(20);
+    char idbuf[64];
     int Nprint = 0;
     char* region = malloc(sizeof(char)*1000);
     while(fgets(PerLine,2000,Fbedfile)!=NULL){
@@ -4358,7 +4843,7 @@ int main_view(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outformat
     int usingLine = 0; int keyvalue = 0;
     if(strcmp(outformat, "dm") == 0) {
         char **chromsUse = malloc(sizeof(char*)*MAX_LINE_PRINT);
-        char **entryid = malloc(sizeof(char*)*MAX_LINE_PRINT);
+        uint32_t *entryid = malloc(sizeof(uint32_t)*MAX_LINE_PRINT);
 //        uint32_t *chrLens = malloc(sizeof(uint32_t) * MAX_LINE_PRINT);
         uint32_t *starts = malloc(sizeof(uint32_t) * MAX_LINE_PRINT);
         uint32_t *ends = malloc(sizeof(uint32_t) * MAX_LINE_PRINT);
@@ -4380,7 +4865,7 @@ int main_view(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outformat
         //free mem
         for(i =0; i < usingLine; i++){
             if(chromsUse[i]) free(chromsUse[i]);
-            if(entryid[i]) free(entryid[i]);
+            entryid[i] = 0;
         }
         free(chromsUse); free(entryid); free(starts);
         free(ends); free(values); free(coverages); free(strands); free(contexts);
@@ -4470,7 +4955,8 @@ int main_view(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outformat
                             tempstore = fastStrcat(tempstore, tempchar);
                         }
                         if(ifp->hdr->version & BM_ID) {
-                            sprintf(tempchar, "\t%s", o->entryid[j]);
+                            const char *idLabel = dm_format_entryid(o->entryid ? o->entryid[j] : 0, idbuf, sizeof(idbuf));
+                            sprintf(tempchar, "\t%s", idLabel);
                             tempstore = fastStrcat(tempstore, tempchar);
                         }
                         sprintf(tempchar, "\n");
@@ -4563,8 +5049,10 @@ int main_view_bedfile(char *inbmF, char *bedfile, int type, FILE* outfileF, char
                 }else if(strcmp(outformat, "txt") == 0) {
                     //fprintf(stderr, "1\t%ld\t%ld\t%f\t%ld\t%d\t%d\n", o->start[i], o->end[i], o->value[i], o->coverage[i],
                     //o->strand[i], o->context[i]);
+                    char idbuf[64];
+                    const char *idLabel = dm_format_entryid(o->entryid ? o->entryid[j] : 0, idbuf, sizeof(idbuf));
                     fprintf(stderr, "%s\t%ld\t%ld\t%f\t%ld\t%s\t%s\t%s\n", chrom, o->start[j], o->end[j], o->value[j], o->coverage[j],
-                        strand_str[o->strand[j]], context_str[o->context[j]], o->entryid[j]);
+                        strand_str[o->strand[j]], context_str[o->context[j]], idLabel);
                 }
             }
         }
@@ -4611,7 +5099,7 @@ int bm_merge_all_mul(char *inbmFs, char *outfile, uint8_t pstrand, int m_method,
         uint32_t type1 = BMtype(infiles[i], NULL);
         binaMethFile_t *ifp1 = NULL;
         ifp1 = bmOpen(infiles[i], NULL, "r");
-        ifp1->type = ifp1->hdr->version;
+        bmApplyHeaderType(ifp1);
         ifps[i] = ifp1;
     }
 
@@ -4657,7 +5145,7 @@ int bm_merge_all_mul(char *inbmFs, char *outfile, uint8_t pstrand, int m_method,
     int start = 0, end = SEGlen-1;
 
     char **chromsUse = calloc(MAX_LINE_PRINT, sizeof(char*));
-    char **entryid = calloc(MAX_LINE_PRINT, sizeof(char*));
+    uint32_t *entryid = calloc(MAX_LINE_PRINT, sizeof(uint32_t));
 //    uint32_t *chrLens = malloc(sizeof(uint32_t) * MAX_LINE_PRINT);
     uint32_t *starts = calloc(MAX_LINE_PRINT, sizeof(uint32_t));
     uint32_t *ends = calloc(MAX_LINE_PRINT, sizeof(uint32_t));
@@ -4725,7 +5213,7 @@ int bm_merge_all_mul(char *inbmFs, char *outfile, uint8_t pstrand, int m_method,
 
     for(i =0; i < MAX_LINE_PRINT; i++){
         if(chromsUse[i]) free(chromsUse[i]);
-        if(entryid[i]) free(entryid[i]);
+        entryid[i] = 0;
     }
     free(chromsUse); free(entryid); free(starts);
     free(ends); free(values); free(coverages); free(strands); free(contexts); free(coverC);
@@ -4749,7 +5237,7 @@ int bm_overlap_all_mul(char *inbmFs, uint8_t pstrand){
         uint32_t type1 = BMtype(infiles[i], NULL);
         binaMethFile_t *ifp1 = NULL;
         ifp1 = bmOpen(infiles[i], NULL, "r");
-        ifp1->type = ifp1->hdr->version;
+        bmApplyHeaderType(ifp1);
         ifps[i] = ifp1;
     }
 
@@ -4783,12 +5271,12 @@ int bm_overlap_file_mul(char *inbmFs, char *bedfile){
     uint32_t type1 = BMtype(inbmF1, NULL);
     binaMethFile_t *ifp1 = NULL;
     ifp1 = bmOpen(inbmF1, NULL, "r");
-    ifp1->type = ifp1->hdr->version;
+    bmApplyHeaderType(ifp1);
     //file2
     uint32_t type2 = BMtype(inbmF2, NULL);
     binaMethFile_t *ifp2 = NULL;
     ifp2 = bmOpen(inbmF2, NULL, "r");
-    ifp2->type = ifp2->hdr->version;
+    bmApplyHeaderType(ifp2);
     */
 
 
@@ -4807,7 +5295,7 @@ int bm_overlap_file_mul(char *inbmFs, char *bedfile){
         uint32_t type1 = BMtype(infiles[i], NULL);
         binaMethFile_t *ifp1 = NULL;
         ifp1 = bmOpen(infiles[i], NULL, "r");
-        ifp1->type = ifp1->hdr->version;
+        bmApplyHeaderType(ifp1);
         ifps[i] = ifp1;
     }
     
@@ -4857,12 +5345,12 @@ int bm_overlap_file(char *inbmF1, char *inbmF2, char *bedfile){
     uint32_t type1 = BMtype(inbmF1, NULL);
     binaMethFile_t *ifp1 = NULL;
     ifp1 = bmOpen(inbmF1, NULL, "r");
-    ifp1->type = ifp1->hdr->version;
+    bmApplyHeaderType(ifp1);
     //file2
     uint32_t type2 = BMtype(inbmF2, NULL);
     binaMethFile_t *ifp2 = NULL;
     ifp2 = bmOpen(inbmF2, NULL, "r");
-    ifp2->type = ifp2->hdr->version;
+    bmApplyHeaderType(ifp2);
 
     
     FILE* Fbedfile=File_Open(bedfile,"r");
@@ -4914,7 +5402,7 @@ int bm_overlap_region_mul(char *inbmFs, char *region, uint8_t pstrand){
         uint32_t type1 = BMtype(infiles[i], NULL);
         binaMethFile_t *ifp1 = NULL;
         ifp1 = bmOpen(infiles[i], NULL, "r");
-        ifp1->type = ifp1->hdr->version;
+        bmApplyHeaderType(ifp1);
         ifps[i] = ifp1;
     }
 
@@ -4967,12 +5455,12 @@ int bm_overlap_region(char *inbmF1, char *inbmF2, char *region, uint8_t pstrand)
     uint32_t type1 = BMtype(inbmF1, NULL);
     binaMethFile_t *ifp1 = NULL;
     ifp1 = bmOpen(inbmF1, NULL, "r");
-    ifp1->type = ifp1->hdr->version;
+    bmApplyHeaderType(ifp1);
     //file2
     uint32_t type2 = BMtype(inbmF2, NULL);
     binaMethFile_t *ifp2 = NULL;
     ifp2 = bmOpen(inbmF2, NULL, "r");
-    ifp2->type = ifp2->hdr->version;
+    bmApplyHeaderType(ifp2);
 
     char *substr= strtok(region, ",");
     char regions[1000][200] = {""};
@@ -5005,12 +5493,12 @@ int bm_overlap_all(char *inbmF1, char *inbmF2, int n1, int n2, uint8_t pstrand){
     uint32_t type1 = BMtype(inbmF1, NULL);
     binaMethFile_t *ifp1 = NULL;
     ifp1 = bmOpen(inbmF1, NULL, "r");
-    ifp1->type = ifp1->hdr->version;
+    bmApplyHeaderType(ifp1);
     //file2
     uint32_t type2 = BMtype(inbmF2, NULL);
     binaMethFile_t *ifp2 = NULL;
     ifp2 = bmOpen(inbmF2, NULL, "r");
-    ifp2->type = ifp2->hdr->version;
+    bmApplyHeaderType(ifp2);
 
     int SEGlen = 1000000;
     int start = 0, end = SEGlen-1;
@@ -5091,8 +5579,11 @@ int bm_overlap(binaMethFile_t *ifp1, binaMethFile_t *ifp2, char *chrom, int star
                         if(ifp2->hdr->version & BM_COVER)
                             printf("\t%"PRIu16"", o2->coverage[k]);
 
-                        if(ifp1->hdr->version & BM_ID)
-                            printf("\t%s", o1->entryid[j]);
+                        if(ifp1->hdr->version & BM_ID) {
+                            char idbuf[64];
+                            const char *idLabel = dm_format_entryid(o1->entryid ? o1->entryid[j] : 0, idbuf, sizeof(idbuf));
+                            printf("\t%s", idLabel);
+                        }
                         printf("\n");
                     }
                 }
@@ -5189,7 +5680,9 @@ int bm_overlap_mul(binaMethFile_t **ifp1s, int sizeifp, char *chrom, int start, 
                     
                     if(i==sizeifp-1){
                         if(ifp1s[i]->hdr->version & BM_ID){
-                            sprintf(tempchar,"\t%s", o1->entryid[j]);
+                            char idbuf[64];
+                            const char *idLabel = dm_format_entryid(o1->entryid ? o1->entryid[j] : 0, idbuf, sizeof(idbuf));
+                            sprintf(tempchar,"\t%s", idLabel);
                             strcat(printmr[loci], tempchar);
                         }
                     }
@@ -5221,7 +5714,7 @@ error:
 }
 
 int bm_merge_mul(binaMethFile_t **ifp1s, int sizeifp, int m_method, char *chrom, int start, int end, uint8_t strand,
-    char **chromsUse, uint32_t *starts, uint32_t *ends, float *values, uint16_t *coverages, uint8_t *strands, uint8_t *contexts, char **entryid, uint16_t *coverC, FILE *output_txt, char *outformat){
+    char **chromsUse, uint32_t *starts, uint32_t *ends, float *values, uint16_t *coverages, uint8_t *strands, uint8_t *contexts, uint32_t *entryid, uint16_t *coverC, FILE *output_txt, char *outformat){
     //fprintf(stderr, "process region %s %d %d\n", chrom, start, end);
     int slen = 1, i =0, j = 0;
     int* countM = malloc(sizeof(int)*(end-start+1));
@@ -5257,8 +5750,8 @@ int bm_merge_mul(binaMethFile_t **ifp1s, int sizeifp, int m_method, char *chrom,
                         coverages[loci] = o1->coverage[j];
                         coverC[loci] = (int)((double)o1->value[j]*o1->coverage[j] + 0.5);
                     }
-                    if(ifp1s[i]->hdr->version & BM_ID){
-                        entryid[loci] = o1->entryid[j];
+                        if(ifp1s[i]->hdr->version & BM_ID){
+                        entryid[loci] = o1->entryid ? o1->entryid[j] : 0;
                     }
                 }else {
                     values[loci] += o1->value[j];

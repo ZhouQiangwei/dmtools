@@ -1,0 +1,56 @@
+project: dmtools
+run_id: "example-run"
+
+hardware:
+  note: "Fill in CPU, RAM, storage, OS; this will also be captured automatically by the runner."
+  cpu: ""
+  ram: ""
+  storage: ""
+  os: ""
+
+cache_strategy:
+  mode: "warm"  # warm | cold | none
+  drop_caches: false
+  note: "Set drop_caches true for cold runs (requires sudo)."
+
+paths:
+  dm_float: "/path/to/dm_float.dm"
+  dm_quantized: "/path/to/dm_quantized.dm"
+  cgmap_gz: "/path/to/data.cgmap.gz"
+  bedgraph_gz: "/path/to/data.bedGraph.gz"
+  ballc: "/path/to/data.ballc"
+  regions_bed: "/path/to/regions.bed"
+  matrix_regions_bed: "/path/to/matrix_regions.bed"
+  output_dir: "/path/to/benchmark_outputs"
+
+benchmarks:
+  storage:
+    enabled: true
+    datasets: ["dm_float", "dm_quantized", "cgmap_gz", "bedgraph_gz", "ballc"]
+
+  region_query:
+    enabled: true
+    datasets: ["dm_float", "dm_quantized"]
+    regions:
+      - "chr1:100000-200000"
+      - "chr1:500000-600000"
+      - "chr2:100000-200000"
+    command: "dmtools view -i {dm} -r {region} -o /dev/null"
+    repeats: 3
+
+  region_aggregate:
+    enabled: true
+    datasets: ["dm_float", "dm_quantized"]
+    command: "dmtools regionstats -i {dm} -g {regions_bed} -o {output}"
+    repeats: 3
+
+  matrix_build:
+    enabled: true
+    datasets: ["dm_float", "dm_quantized"]
+    command: "dmtools sc-matrix -i {dm} -o {output_prefix} --bed {matrix_regions_bed} --sparse"
+    repeats: 1
+
+notes:
+  dataset_fixed: "Record exact dataset version/checksum here."
+  parameters_fixed: "Record command-line parameters used here."
+  hardware_fixed: "Record hardware used here (also captured in hardware.txt)."
