@@ -10,6 +10,13 @@ make -j$(nproc)
 
 The `dmtools` binary will be in the repository root.
 
+If you unpacked a zip/tarball (non-git) and see `htslib/version.sh: Permission denied`, run:
+
+```bash
+chmod +x htslib/version.sh || true
+make libs && make
+```
+
 ## Docker
 
 ```bash

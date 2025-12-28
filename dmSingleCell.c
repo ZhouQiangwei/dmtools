@@ -25,6 +25,8 @@ typedef struct {
     uint64_t n_sites;
     uint64_t total_cov;
     double sum_meth_weighted;
+    uint64_t n_sites_cg;
+    uint64_t n_sites_chh;
 } dm_sc_qc_entry_t;
 
 static void dm_sc_free_idmap(dm_sc_idmap_t *map) {
@@ -108,7 +110,7 @@ static void dm_sc_qc_usage() {
             "      --min-coverage <N>   Minimum coverage per site (default: 1)\n"
             "  -h, --help               Show this help message\n"
             "\nOutput columns:\n"
-            "  cell_id  n_sites  total_coverage  mean_coverage  mean_meth\n");
+            "  cell_id  n_sites  total_coverage  mean_coverage  mean_meth  n_sites_cg  n_sites_chh  cg_chh_ratio\n");
 }
 
 int dm_sc_qc_main(int argc, char **argv) {
@@ -234,6 +236,10 @@ int dm_sc_qc_main(int argc, char **argv) {
                 entries[id].n_sites++;
                 entries[id].total_cov += o->coverage[j];
                 entries[id].sum_meth_weighted += ((double)o->value[j]) * o->coverage[j];
+                if (fp->hdr->version & BM_CONTEXT) {
+                    if (o->context[j] == 1) entries[id].n_sites_cg++;
+                    else if (o->context[j] == 3) entries[id].n_sites_chh++;
+                }
             }
             bmDestroyOverlappingIntervals(o);
         }
@@ -245,17 +251,26 @@ int dm_sc_qc_main(int argc, char **argv) {
         fprintf(stderr, "Error: cannot open output file %s: %s\n", outputPath, strerror(errno));
         goto error_entries;
     }
-    fprintf(out, "cell_id\tn_sites\ttotal_coverage\tmean_coverage\tmean_meth\n");
+    fprintf(out, "cell_id\tn_sites\ttotal_coverage\tmean_coverage\tmean_meth\tn_sites_cg\tn_sites_chh\tcg_chh_ratio\n");
     for (size_t i = 1; i < idmap.n; i++) {
         if (!idmap.names[i]) continue;
         double mean_cov = entries[i].n_sites ? (double)entries[i].total_cov / (double)entries[i].n_sites : 0.0;
         double mean_meth = entries[i].total_cov ? entries[i].sum_meth_weighted / (double)entries[i].total_cov : 0.0;
-        fprintf(out, "%s\t%" PRIu64 "\t%" PRIu64 "\t%.6f\t%.6f\n",
+        double cg_chh_ratio = 0.0;
+        if (entries[i].n_sites_chh > 0) {
+            cg_chh_ratio = (double)entries[i].n_sites_cg / (double)entries[i].n_sites_chh;
+        } else if (entries[i].n_sites_cg > 0) {
+            cg_chh_ratio = (double)entries[i].n_sites_cg;
+        }
+        fprintf(out, "%s\t%" PRIu64 "\t%" PRIu64 "\t%.6f\t%.6f\t%" PRIu64 "\t%" PRIu64 "\t%.6f\n",
                 idmap.names[i],
                 entries[i].n_sites,
                 entries[i].total_cov,
                 mean_cov,
-                mean_meth);
+                mean_meth,
+                entries[i].n_sites_cg,
+                entries[i].n_sites_chh,
+                cg_chh_ratio);
     }
     fclose(out);
     goto success;
@@ -965,13 +980,13 @@ int dm_sc_matrix_main(int argc, char **argv) {
         FILE *f = fopen(path, "w");
         free(path);
         if (!f) goto error_all;
-        fprintf(f, "cell_id\tn_sites\ttotal_coverage\tmean_coverage\tmean_meth\n");
-        for (size_t i = 0; i < nCells; i++) {
-            double mean_cov = cellSites[i] ? (double)cellCov[i] / (double)cellSites[i] : 0.0;
-            double mean_meth = cellCov[i] ? cellMeth[i] / (double)cellCov[i] : 0.0;
-            fprintf(f, "%s\t%" PRIu64 "\t%" PRIu64 "\t%.6f\t%.6f\n",
-                    cellIds[i], cellSites[i], cellCov[i], mean_cov, mean_meth);
-        }
+    fprintf(f, "cell_id\tn_sites\ttotal_coverage\tmean_coverage\tmean_meth\tn_sites_cg\tn_sites_chh\tcg_chh_ratio\n");
+    for (size_t i = 0; i < nCells; i++) {
+        double mean_cov = cellSites[i] ? (double)cellCov[i] / (double)cellSites[i] : 0.0;
+        double mean_meth = cellCov[i] ? cellMeth[i] / (double)cellCov[i] : 0.0;
+        fprintf(f, "%s\t%" PRIu64 "\t%" PRIu64 "\t%.6f\t%.6f\t0\t0\t0\n",
+                cellIds[i], cellSites[i], cellCov[i], mean_cov, mean_meth);
+    }
         fclose(f);
     }
 
@@ -1793,8 +1808,13 @@ int dm_sc_export_main(int argc, char **argv) {
     if (context) { argv_sc[idx++] = "--context"; argv_sc[idx++] = context; }
     if (minCov) { argv_sc[idx++] = "--min-coverage"; argv_sc[idx++] = minCov; }
     argv_sc[idx++] = "--sparse";
+    argv_sc[idx++] = "--emit-counts";
+    argv_sc[idx++] = "--eb";
     argv_sc[idx] = NULL;
 
+    optind = 1;
+    opterr = 1;
+    optopt = 0;
     rc = dm_sc_matrix_main(idx, argv_sc);
     if (rc != 0) goto cleanup;
 
@@ -1891,7 +1911,7 @@ static void dm_pb_buf_free(dm_pb_buf_t *buf) {
 
 static void dm_sc_pseudobulk_usage() {
     fprintf(stderr,
-            "Usage: dmtools sc-pseudobulk -i <input.dm> -o <out_prefix> --groups <mapping.tsv> [--context CG]\n");
+            "Usage: dmtools sc-pseudobulk -i <input.dm> -o <out_prefix> --groups <mapping.tsv> [--context CG] [--format dm|bigwig|both] [--coverage]\n");
 }
 
 int dm_sc_pseudobulk_main(int argc, char **argv) {
@@ -1900,12 +1920,16 @@ int dm_sc_pseudobulk_main(int argc, char **argv) {
     char *groupsPath = NULL;
     int contextSet = 0;
     uint8_t contextFilter = 0;
+    char *format = strdup("both");
+    int writeCoverageTrack = 1;
 
     static struct option long_opts[] = {
         {"input", required_argument, 0, 'i'},
         {"output", required_argument, 0, 'o'},
         {"groups", required_argument, 0, 1},
         {"context", required_argument, 0, 2},
+        {"format", required_argument, 0, 3},
+        {"coverage", no_argument, 0, 4},
         {"help", no_argument, 0, 'h'},
         {0, 0, 0, 0}
     };
@@ -1922,6 +1946,13 @@ int dm_sc_pseudobulk_main(int argc, char **argv) {
                     return 1;
                 }
                 contextSet = 1;
+                break;
+            case 3:
+                free(format);
+                format = strdup(optarg);
+                break;
+            case 4:
+                writeCoverageTrack = 1;
                 break;
             case 'h': dm_sc_pseudobulk_usage(); return 0;
             default: dm_sc_pseudobulk_usage(); return 1;
@@ -1959,22 +1990,58 @@ int dm_sc_pseudobulk_main(int argc, char **argv) {
 
     binaMethFile_t **outs = calloc(nGroups, sizeof(binaMethFile_t*));
     dm_pb_buf_t *buffers = calloc(nGroups, sizeof(dm_pb_buf_t));
-    if (!outs || !buffers) { bmClose(fp); dm_sc_free_idmap(&idmap); free(idToGroup); return 1; }
+    if (!outs || !buffers) { bmClose(fp); dm_sc_free_idmap(&idmap); free(idToGroup); free(format); return 1; }
 
     uint32_t write_type = BM_COVER | BM_END;
     if (fp->hdr->version & BM_STRAND) write_type |= BM_STRAND;
     if (fp->hdr->version & BM_CONTEXT) write_type |= BM_CONTEXT;
 
-    for (size_t g = 0; g < nGroups; g++) {
-        char path[PATH_MAX];
-        snprintf(path, sizeof(path), "%s.%s.dm", outputPrefix, groups[g]);
-        outs[g] = bmOpen(path, NULL, "w");
-        if (!outs[g]) { fprintf(stderr, "Error: cannot open output %s\n", path); goto error; }
-        outs[g]->type = write_type;
-        if (bmCreateHdr(outs[g], 0)) { fprintf(stderr, "Error: bmCreateHdr failed\n"); goto error; }
-        outs[g]->cl = bmCreateChromList(fp->cl->chrom, fp->cl->len, fp->cl->nKeys);
-        if (!outs[g]->cl) { fprintf(stderr, "Error: bmCreateChromList failed\n"); goto error; }
-        if (bmWriteHdr(outs[g])) { fprintf(stderr, "Error: bmWriteHdr failed\n"); goto error; }
+    int emitDM = (strcasecmp(format, "dm") == 0) || (strcasecmp(format, "both") == 0);
+    int emitBW = (strcasecmp(format, "bigwig") == 0) || (strcasecmp(format, "both") == 0);
+
+    if (emitDM) {
+        for (size_t g = 0; g < nGroups; g++) {
+            char path[PATH_MAX];
+            snprintf(path, sizeof(path), "%s.%s.dm", outputPrefix, groups[g]);
+            outs[g] = bmOpen(path, NULL, "w");
+            if (!outs[g]) { fprintf(stderr, "Error: cannot open output %s\n", path); goto error; }
+            outs[g]->type = write_type;
+            if (bmCreateHdr(outs[g], 0)) { fprintf(stderr, "Error: bmCreateHdr failed\n"); goto error; }
+            outs[g]->cl = bmCreateChromList(fp->cl->chrom, fp->cl->len, fp->cl->nKeys);
+            if (!outs[g]->cl) { fprintf(stderr, "Error: bmCreateChromList failed\n"); goto error; }
+            if (bmWriteHdr(outs[g])) { fprintf(stderr, "Error: bmWriteHdr failed\n"); goto error; }
+        }
+    }
+
+    binaMethFile_t **bw_ml = NULL;
+    binaMethFile_t **bw_cov = NULL;
+    if (emitBW) {
+        bw_ml = calloc(nGroups, sizeof(binaMethFile_t*));
+        bw_cov = calloc(nGroups, sizeof(binaMethFile_t*));
+        if (!bw_ml || !bw_cov) { goto error; }
+        for (size_t g = 0; g < nGroups; g++) {
+            char mlPath[PATH_MAX];
+            snprintf(mlPath, sizeof(mlPath), "%s.%s.ml.bw", outputPrefix, groups[g]);
+            bw_ml[g] = bmOpen(mlPath, NULL, "w");
+            if (!bw_ml[g]) { fprintf(stderr, "Error: cannot open %s\n", mlPath); goto error; }
+            bw_ml[g]->type = BM_END;
+            if (bmCreateHdr(bw_ml[g], 0)) { fprintf(stderr, "Error: bmCreateHdr failed for %s\n", mlPath); goto error; }
+            bw_ml[g]->cl = bmCreateChromList(fp->cl->chrom, fp->cl->len, fp->cl->nKeys);
+            if (!bw_ml[g]->cl) { fprintf(stderr, "Error: bmCreateChromList failed for %s\n", mlPath); goto error; }
+            if (bmWriteHdr(bw_ml[g])) { fprintf(stderr, "Error: bmWriteHdr failed for %s\n", mlPath); goto error; }
+
+            if (writeCoverageTrack && (fp->hdr->version & BM_COVER)) {
+                char covPath[PATH_MAX];
+                snprintf(covPath, sizeof(covPath), "%s.%s.cov.bw", outputPrefix, groups[g]);
+                bw_cov[g] = bmOpen(covPath, NULL, "w");
+                if (!bw_cov[g]) { fprintf(stderr, "Error: cannot open %s\n", covPath); goto error; }
+                bw_cov[g]->type = BM_END;
+                if (bmCreateHdr(bw_cov[g], 0)) { fprintf(stderr, "Error: bmCreateHdr failed for %s\n", covPath); goto error; }
+                bw_cov[g]->cl = bmCreateChromList(fp->cl->chrom, fp->cl->len, fp->cl->nKeys);
+                if (!bw_cov[g]->cl) { fprintf(stderr, "Error: bmCreateChromList failed for %s\n", covPath); goto error; }
+                if (bmWriteHdr(bw_cov[g])) { fprintf(stderr, "Error: bmWriteHdr failed for %s\n", covPath); goto error; }
+            }
+        }
     }
 
     for (uint64_t ci = 0; ci < fp->cl->nKeys; ci++) {
@@ -2012,23 +2079,52 @@ int dm_sc_pseudobulk_main(int argc, char **argv) {
             char **chroms = calloc(buffers[g].n, sizeof(char*));
             if (!chroms) { free(vals); goto error; }
             for (size_t i = 0; i < buffers[g].n; i++) chroms[i] = chrom;
-            int rc = bmAddIntervals(outs[g], chroms, buffers[g].start, buffers[g].end, vals, buffers[g].cov,
-                                    buffers[g].strand, buffers[g].context, NULL, (uint32_t)buffers[g].n);
+            if (emitDM) {
+                int rc = bmAddIntervals(outs[g], chroms, buffers[g].start, buffers[g].end, vals, buffers[g].cov,
+                                        buffers[g].strand, buffers[g].context, NULL, (uint32_t)buffers[g].n);
+                if (rc != 0) { fprintf(stderr, "Error: bmAddIntervals failed for group %s\n", groups[g]); free(vals); free(chroms); goto error; }
+            }
+            if (emitBW && bw_ml[g]) {
+                uint32_t *starts_bw = calloc(buffers[g].n, sizeof(uint32_t));
+                uint32_t *ends_bw = calloc(buffers[g].n, sizeof(uint32_t));
+                if (!starts_bw || !ends_bw) { free(vals); free(chroms); free(starts_bw); free(ends_bw); goto error; }
+                for (size_t i = 0; i < buffers[g].n; i++) {
+                    starts_bw[i] = (buffers[g].start[i] > 0) ? buffers[g].start[i] - 1 : 0;
+                    ends_bw[i] = (buffers[g].end[i] > 0) ? buffers[g].end[i] - 1 : 0;
+                }
+                if (bmAddIntervals(bw_ml[g], chroms, starts_bw, ends_bw, vals, NULL, NULL, NULL, NULL, (uint32_t)buffers[g].n) != 0) {
+                    fprintf(stderr, "Error: failed to write bigWig ml for group %s\n", groups[g]); free(starts_bw); free(ends_bw); free(vals); free(chroms); goto error;
+                }
+                if (bw_cov[g]) {
+                    float *covVals = calloc(buffers[g].n, sizeof(float));
+                    if (!covVals) { free(starts_bw); free(ends_bw); free(vals); free(chroms); goto error; }
+                    for (size_t i = 0; i < buffers[g].n; i++) covVals[i] = (float)buffers[g].cov[i];
+                    if (bmAddIntervals(bw_cov[g], chroms, starts_bw, ends_bw, covVals, NULL, NULL, NULL, NULL, (uint32_t)buffers[g].n) != 0) {
+                        fprintf(stderr, "Error: failed to write bigWig cov for group %s\n", groups[g]); free(covVals); free(starts_bw); free(ends_bw); free(vals); free(chroms); goto error;
+                    }
+                    free(covVals);
+                }
+                free(starts_bw);
+                free(ends_bw);
+            }
             free(vals);
             free(chroms);
-            if (rc != 0) { fprintf(stderr, "Error: bmAddIntervals failed for group %s\n", groups[g]); goto error; }
         }
     }
 
     bmClose(fp);
     for (size_t g = 0; g < nGroups; g++) {
-        if (outs[g]) bmClose(outs[g]);
+        if (outs && outs[g]) bmClose(outs[g]);
+        if (bw_ml && bw_ml[g]) bmClose(bw_ml[g]);
+        if (bw_cov && bw_cov[g]) bmClose(bw_cov[g]);
         dm_pb_buf_free(&buffers[g]);
     }
     dm_sc_free_idmap(&idmap);
     free(idToGroup);
     free(outs);
     free(buffers);
+    free(bw_ml);
+    free(bw_cov);
     for (size_t i = 0; i < nMap; i++) free(mapping[i].cell);
     free(mapping);
     for (size_t i = 0; i < nGroups; i++) free(groups[i]);
@@ -2036,18 +2132,23 @@ int dm_sc_pseudobulk_main(int argc, char **argv) {
     free(input);
     free(outputPrefix);
     free(groupsPath);
+    free(format);
     return 0;
 
 error:
     bmClose(fp);
     for (size_t g = 0; g < nGroups; g++) {
         if (outs && outs[g]) bmClose(outs[g]);
+        if (bw_ml && bw_ml[g]) bmClose(bw_ml[g]);
+        if (bw_cov && bw_cov[g]) bmClose(bw_cov[g]);
         if (buffers) dm_pb_buf_free(&buffers[g]);
     }
     dm_sc_free_idmap(&idmap);
     free(idToGroup);
     free(outs);
     free(buffers);
+    free(bw_ml);
+    free(bw_cov);
     for (size_t i = 0; i < nMap; i++) free(mapping[i].cell);
     free(mapping);
     for (size_t i = 0; i < nGroups; i++) free(groups[i]);
@@ -2055,5 +2156,6 @@ error:
     free(input);
     free(outputPrefix);
     free(groupsPath);
+    free(format);
     return 1;
 }

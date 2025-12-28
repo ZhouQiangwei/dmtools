@@ -23,6 +23,9 @@ jobs:
       - name: Validate bundled DM
         run: |
           ./dmtools validate -i test/test.dm
+      - name: Quickstart smoke (docs/quickstart.md)
+        run: |
+          ./scripts/quickstart_smoke.sh
       - name: Single-cell smoke test
         run: |
           printf "chr1\t10\n" > /tmp/coords.len

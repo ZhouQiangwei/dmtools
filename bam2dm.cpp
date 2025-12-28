@@ -106,6 +106,77 @@ static std::string gCellTag;
 static std::atomic<bool> gRequireCellTag{false};
 static std::atomic<bool> gCellTagError{false};
 
+static std::string genomePath;
+
+unsigned Total_Reads_all;
+uint64_t Total_Reads=0, Total_mapped = 0, forward_mapped = 0, reverse_mapped = 0;
+//----mapping count
+unsigned Tot_Unique_Org=0;//total unique hits obtained
+unsigned ALL_MAP_Org=0;
+unsigned Tot_Unique_Remdup=0;//total unique hits obtained after removing dups...
+unsigned ALL_Map_Remdup=0;
+float UPPER_MAX_MISMATCH=0.1;
+bool REMOVE_DUP=false; //true; //true to removeDup, false will not remove PCR-dup
+unsigned Mismatch_Qual[255][255][255]; //[readLength][255][255]
+int QualCut=30;
+const int POWLIMIT=300;
+float POW10[POWLIMIT];
+int QUALITYCONVERSIONFACTOR=33;
+//---------- 
+bool Methratio=false;
+//-------meth count
+unsigned long non_met_CG=0;
+unsigned long met_CG=0;
+unsigned long non_met_CHG=0;
+unsigned long met_CHG=0;
+unsigned long non_met_CHH=0;
+unsigned long met_CHH=0;
+bool bamformat=false;
+
+struct FilterStats {
+    std::atomic<uint64_t> totalReads{0};
+    std::atomic<uint64_t> processReadAccepted{0};
+    std::atomic<uint64_t> bamFiltered{0};
+    std::atomic<uint64_t> mapqFiltered{0};
+    std::atomic<uint64_t> hashMiss{0};
+    std::atomic<uint64_t> mismatchFiltered{0};
+    std::atomic<uint64_t> refOob{0};
+    std::atomic<uint64_t> refNonACGT{0};
+    std::atomic<uint64_t> enterMethyl{0};
+    std::atomic<uint64_t> methylCalls{0};
+    std::atomic<uint64_t> iterNull{0};
+    std::atomic<uint64_t> cellTagMissing{0};
+};
+
+static FilterStats gFilterStats;
+
+static void maybeLogFilterStats() {
+    static std::atomic<uint64_t> lastLogged{0};
+    const uint64_t cur = gFilterStats.totalReads.load();
+    if(cur - lastLogged.load() >= 1000000) {
+        lastLogged.store(cur);
+        fprintf(stderr,
+                "[filter] reads=%" PRIu64 " accepted=%" PRIu64 " bamFiltered=%" PRIu64 " mapq=%" PRIu64
+                " hashMiss=%" PRIu64 " mismatch=%" PRIu64 " refOOB=%" PRIu64 " refNonACGT=%" PRIu64
+                " enterMethyl=%" PRIu64 " methylCalls=%" PRIu64 " iterNull=%" PRIu64 " missingCellTag=%" PRIu64 "\n",
+                cur,
+                gFilterStats.processReadAccepted.load(),
+                gFilterStats.bamFiltered.load(),
+                gFilterStats.mapqFiltered.load(),
+                gFilterStats.hashMiss.load(),
+                gFilterStats.mismatchFiltered.load(),
+                gFilterStats.refOob.load(),
+                gFilterStats.refNonACGT.load(),
+                gFilterStats.enterMethyl.load(),
+                gFilterStats.methylCalls.load(),
+                gFilterStats.iterNull.load(),
+                gFilterStats.cellTagMissing.load());
+    }
+}
+
+int processbamread(const bam_hdr_t *header, const bam1_t *b, char* Dummy,int &Flag,char* Chrom,int &pos,int &mapQuality,char* CIG,char* Chrom_P,int &pos_P,int &Insert_Size,char* forReadString,char* forQuality, int &hitType);
+int conutMismatch(std::string CIGr, int chrLen, char* Genome_seq, std::string readString, int pos, int hitType);
+
 static int detect_cell_name_from_tag(const std::string &bamPath, const std::string &tag, std::string &name) {
     if(tag.size() != 2) return 2;
     samFile *fp = sam_open(bamPath.c_str(), "r");
@@ -565,47 +636,6 @@ static bool gDmWritersClosed = false;
 static std::mutex gDmWriterMutex;
 static std::once_flag gMethArraysCleanupFlag;
 
-struct FilterStats {
-    std::atomic<uint64_t> totalReads{0};
-    std::atomic<uint64_t> processReadAccepted{0};
-    std::atomic<uint64_t> bamFiltered{0};
-    std::atomic<uint64_t> mapqFiltered{0};
-    std::atomic<uint64_t> hashMiss{0};
-    std::atomic<uint64_t> mismatchFiltered{0};
-    std::atomic<uint64_t> refOob{0};
-    std::atomic<uint64_t> refNonACGT{0};
-    std::atomic<uint64_t> enterMethyl{0};
-    std::atomic<uint64_t> methylCalls{0};
-    std::atomic<uint64_t> iterNull{0};
-    std::atomic<uint64_t> cellTagMissing{0};
-};
-
-static FilterStats gFilterStats;
-
-static void maybeLogFilterStats() {
-    static std::atomic<uint64_t> lastLogged{0};
-    const uint64_t cur = gFilterStats.totalReads.load();
-    if(cur - lastLogged.load() >= 1000000) {
-        lastLogged.store(cur);
-        fprintf(stderr,
-                "[filter] reads=%" PRIu64 " accepted=%" PRIu64 " bamFiltered=%" PRIu64 " mapq=%" PRIu64
-                " hashMiss=%" PRIu64 " mismatch=%" PRIu64 " refOOB=%" PRIu64 " refNonACGT=%" PRIu64
-                " enterMethyl=%" PRIu64 " methylCalls=%" PRIu64 " iterNull=%" PRIu64 " missingCellTag=%" PRIu64 "\n",
-                cur,
-                gFilterStats.processReadAccepted.load(),
-                gFilterStats.bamFiltered.load(),
-                gFilterStats.mapqFiltered.load(),
-                gFilterStats.hashMiss.load(),
-                gFilterStats.mismatchFiltered.load(),
-                gFilterStats.refOob.load(),
-                gFilterStats.refNonACGT.load(),
-                gFilterStats.enterMethyl.load(),
-                gFilterStats.methylCalls.load(),
-                gFilterStats.iterNull.load(),
-                gFilterStats.cellTagMissing.load());
-    }
-}
-
 struct BinPartFileHeader {
     uint32_t tid;
     uint64_t start;
@@ -644,31 +674,6 @@ static int mergeBinPartsToDm(const std::string &genomePath, const std::vector<Bi
                              const std::string &partDir, const std::string &dmPath, int zoomlevel,
                              bool debugMode, bool validateOutput, uint32_t writeType,
                              uint32_t valScale, uint8_t valEncoding);
-
-unsigned Total_Reads_all;
-uint64_t Total_Reads=0, Total_mapped = 0, forward_mapped = 0, reverse_mapped = 0;
-//----mapping count
-unsigned Tot_Unique_Org=0;//total unique hits obtained
-unsigned ALL_MAP_Org=0;
-unsigned Tot_Unique_Remdup=0;//total unique hits obtained after removing dups...
-unsigned ALL_Map_Remdup=0;
-float UPPER_MAX_MISMATCH=0.1;
-bool REMOVE_DUP=false; //true; //true to removeDup, false will not remove PCR-dup
-unsigned Mismatch_Qual[255][255][255]; //[readLength][255][255]
-int QualCut=30;
-const int POWLIMIT=300;
-float POW10[POWLIMIT];
-int QUALITYCONVERSIONFACTOR=33;
-//----------
-bool Methratio=false;
-//-------meth count
-unsigned long non_met_CG=0;
-unsigned long met_CG=0;
-unsigned long non_met_CHG=0;
-unsigned long met_CHG=0;
-unsigned long non_met_CHH=0;
-unsigned long met_CHH=0;
-bool bamformat=false;
 
 int Sam=1;//1 true 0 false
 unsigned Number_of_Tags = 0;
@@ -1919,6 +1924,7 @@ int main(int argc, char* argv[])
 		else if(!strcmp(argv[i], "-g") || !strcmp(argv[i], "--genome"))
 		{
 			Geno=argv[++i];
+            genomePath = Geno;
 		}else if(!strcmp(argv[i], "--chrom"))
         {
             strcpy(processRegion, argv[++i]);

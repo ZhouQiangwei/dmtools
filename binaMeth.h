@@ -273,6 +273,12 @@ static inline int bmApplyHeaderType(binaMethFile_t *fp) {
     if(!fp || !fp->hdr) return 0;
     int extFlags = fp->type & (BM_VAL_U16 | BM_PACK_SC);
     fp->type = fp->hdr->version | extFlags;
+    if(!(fp->hdr->version & BM_MAGIC)) {
+        /* Plain bigWig headers don't encode optional fields; default to
+         * start/end/value records so downstream decoding preserves interval
+         * width. */
+        fp->type |= BM_END;
+    }
     return fp->type;
 }
 

@@ -96,20 +96,23 @@ def main() -> int:
 
     adata = ad.AnnData(X=matrix, obs=obs, var=var)
 
+    adata.layers["post_mean"] = matrix
+
     layer_map = {
         "mC": f"{args.prefix}.mC.mtx",
         "cov": f"{args.prefix}.cov.mtx",
-        "post_var": f"{args.prefix}.var.mtx",
+        "post_var": f"{args.prefix}.matrix.eb_var.mtx",
     }
     for name, path in layer_map.items():
-        if os.path.exists(path):
-            layer = scipy_io.mmread(path).tocsr()
-            if layer.shape != matrix.shape:
-                fail(
-                    f"Error: layer {name} shape {layer.shape} does not match X {matrix.shape}.",
-                    code=1,
-                )
-            adata.layers[name] = layer
+        if not os.path.exists(path):
+            continue
+        layer = scipy_io.mmread(path).tocsr()
+        if layer.shape != matrix.shape:
+            fail(
+                f"Error: layer {name} shape {layer.shape} does not match X {matrix.shape}.",
+                code=1,
+            )
+        adata.layers[name] = layer
     adata.write_h5ad(args.output)
     return 0
 
