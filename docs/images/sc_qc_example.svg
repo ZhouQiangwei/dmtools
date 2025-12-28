@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="450" viewBox="0 0 900 450">
+  <style> text { font-family: Helvetica, Arial, sans-serif; font-size: 12px; } </style>
+  <rect x="0" y="0" width="900" height="450" fill="#fff"/>
+  <text x="50" y="35" font-size="14" font-weight="bold">Coverage distribution</text>
+  <rect x="50" y="70" width="30" height="120" fill="#4a90e2"/>
+  <rect x="90" y="110" width="30" height="80" fill="#4a90e2"/>
+  <rect x="130" y="90" width="30" height="100" fill="#4a90e2"/>
+  <rect x="170" y="150" width="30" height="40" fill="#4a90e2"/>
+  <rect x="210" y="180" width="30" height="10" fill="#4a90e2"/>
+  <text x="50" y="230">0</text>
+  <text x="210" y="230">max</text>
+
+  <text x="450" y="35" font-size="14" font-weight="bold">CG/CHH ratio &amp; features</text>
+  <rect x="450" y="50" width="380" height="320" fill="none" stroke="#ccc"/>
+  <text x="470" y="140" font-size="24" font-weight="bold">1.87</text>
+  <text x="470" y="160" fill="#666">mean CG/CHH</text>
+  <text x="470" y="200" font-size="16">median coverage ~ 1200</text>
+  <text x="470" y="220" font-size="16">avg detected sites ~ 5600</text>
+  <text x="470" y="350" font-size="16">features: 12000</text>
+</svg>

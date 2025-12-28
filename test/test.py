@@ -1,6 +1,6 @@
 #!/usr/bin/env python2.7
 from subprocess import Popen, PIPE, check_call
-from os import remove
+from os import remove, path
 
 # N.B., this MUST be run from within the source directory!
 
@@ -64,12 +64,15 @@ except:
 md5sum = p2.communicate()[0].strip().split()[0]
 assert(md5sum == "a15a3120c03ba44a81b025ebd411966c")
 
-# Try a bigBed file
-p1 = Popen(["./test/testBigBed", "https://www.encodeproject.org/files/ENCFF001JBR/@@download/ENCFF001JBR.bigBed"], stdout=PIPE)
-try:
-    p2 = Popen(["md5sum"], stdin=p1.stdout, stdout=PIPE)
-except:
-    p2 = Popen(["md5"], stdin=p1.stdout, stdout=PIPE)
-md5sum = p2.communicate()[0].strip().split()[0]
-assert(md5sum == "33ef99571bdaa8c9130149e99332b17b")
+test_bigbed = "./test/testBigBed"
+if path.exists(test_bigbed):
+    p1 = Popen([test_bigbed, "https://www.encodeproject.org/files/ENCFF001JBR/@@download/ENCFF001JBR.bigBed"], stdout=PIPE)
+    try:
+        p2 = Popen(["md5sum"], stdin=p1.stdout, stdout=PIPE)
+    except:
+        p2 = Popen(["md5"], stdin=p1.stdout, stdout=PIPE)
+    md5sum = p2.communicate()[0].strip().split()[0]
+    assert(md5sum == "33ef99571bdaa8c9130149e99332b17b")
+else:
+    print("Skipping bigBed download test (test/testBigBed not built)")
 print("success")

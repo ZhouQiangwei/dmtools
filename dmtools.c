@@ -31,8 +31,10 @@
 #include <stdint.h>
 #include <errno.h>
 #include <sys/wait.h>
+#include <sys/stat.h>
 #include <pthread.h>
 #include <curl/curl.h>
+#include <ctype.h>
 
 #include <glob.h>
 char* matchFiles(const char* pattern);
@@ -145,6 +147,193 @@ static const char *dm_format_entryid(uint32_t id, char *buf, size_t bufSize) {
     snprintf(buf, bufSize, "%" PRIu32, id);
     return buf;
 }
+
+typedef struct {
+    uint32_t *ids;
+    size_t n;
+    size_t cap;
+} dm_id_filter_t;
+
+static void dm_id_filter_free(dm_id_filter_t *f) {
+    if(!f) return;
+    free(f->ids);
+    f->ids = NULL;
+    f->n = 0;
+    f->cap = 0;
+}
+
+static int dm_id_filter_add(dm_id_filter_t *f, uint32_t id) {
+    if(!f || id == 0) return 1;
+    for(size_t i = 0; i < f->n; i++) {
+        if(f->ids[i] == id) return 0;
+    }
+    if(f->n == f->cap) {
+        size_t newCap = f->cap ? f->cap * 2 : 8;
+        uint32_t *tmp = realloc(f->ids, newCap * sizeof(uint32_t));
+        if(!tmp) return 1;
+        f->ids = tmp;
+        f->cap = newCap;
+    }
+    f->ids[f->n++] = id;
+    return 0;
+}
+
+static int dm_id_filter_match(const dm_id_filter_t *f, uint32_t id) {
+    if(!f || f->n == 0) return 1;
+    for(size_t i = 0; i < f->n; i++) {
+        if(f->ids[i] == id) return 1;
+    }
+    return 0;
+}
+
+static uint32_t dm_idmap_reverse_lookup(const dm_idmap_t *map, const char *name) {
+    if(!map || !map->names || !name) return 0;
+    for(size_t i = 1; i < map->n; i++) {
+        if(map->names[i] && strcmp(map->names[i], name) == 0) return (uint32_t)i;
+    }
+    return 0;
+}
+
+static int dm_append_tokens(char ***arr, size_t *n, size_t *cap, const char *csv) {
+    if(!arr || !n || !cap || !csv) return 1;
+    const char *cursor = csv;
+    while(*cursor) {
+        while(*cursor == ',' || *cursor == ' ' || *cursor == '\t' || *cursor == '\n') cursor++;
+        if(*cursor == '\0') break;
+        const char *start = cursor;
+        while(*cursor && *cursor != ',' && *cursor != '\n') cursor++;
+        size_t len = cursor - start;
+        if(len == 0) continue;
+        char *tok = strndup(start, len);
+        if(!tok) return 1;
+        if(*n == *cap) {
+            size_t newCap = *cap ? *cap * 2 : 8;
+            char **tmp = realloc(*arr, newCap * sizeof(char *));
+            if(!tmp) { free(tok); return 1; }
+            *arr = tmp;
+            *cap = newCap;
+        }
+        (*arr)[(*n)++] = tok;
+    }
+    return 0;
+}
+
+static int dm_append_tokens_from_file(char ***arr, size_t *n, size_t *cap, const char *path) {
+    if(!path) return 1;
+    FILE *f = fopen(path, "r");
+    if(!f) return 1;
+    char line[4096];
+    int rv = 0;
+    while(fgets(line, sizeof(line), f)) {
+        if(line[0] == '#' || line[0] == '\n') continue;
+        if(dm_append_tokens(arr, n, cap, line)) { rv = 1; break; }
+    }
+    fclose(f);
+    return rv;
+}
+
+static int dm_parse_id_filter(dm_id_filter_t *filter, char **tokens, size_t nTokens, const char *idmapPath, dm_idmap_t *map) {
+    if(!filter) return 1;
+    if(nTokens == 0) return 0;
+    if(map && idmapPath && map->n == 0) {
+        dm_idmap_load(idmapPath, map);
+    }
+    for(size_t i = 0; i < nTokens; i++) {
+        if(!tokens[i]) continue;
+        const char *tok = tokens[i];
+        char *endptr = NULL;
+        uint32_t id = (uint32_t)strtoul(tok, &endptr, 10);
+        if(!tok[0]) continue;
+        if(endptr && *endptr != '\0') {
+            if(!map || map->n == 0) return 2;
+            id = dm_idmap_reverse_lookup(map, tok);
+            if(id == 0) return 2;
+        } else if(endptr && *endptr == '\0' && id == 0) {
+            return 2;
+        }
+        if(dm_id_filter_add(filter, id)) return 3;
+    }
+    return 0;
+}
+
+static void dm_basename_no_ext(const char *path, char *out, size_t outSize) {
+    if(!out || outSize == 0) return;
+    out[0] = '\0';
+    if(!path) return;
+    const char *base = strrchr(path, '/');
+    base = base ? base + 1 : path;
+    size_t len = strlen(base);
+    const char *dot = strrchr(base, '.');
+    if(dot && dot > base) len = (size_t)(dot - base);
+    if(len >= outSize) len = outSize - 1;
+    memcpy(out, base, len);
+    out[len] = '\0';
+}
+
+static void dm_sanitize_label(const char *in, char *out, size_t outSize) {
+    if(!out || outSize == 0) return;
+    out[0] = '\0';
+    if(!in) return;
+    size_t len = strlen(in);
+    if(len >= outSize) len = outSize - 1;
+    for(size_t i = 0; i < len; i++) {
+        char c = in[i];
+        if(isalnum((unsigned char)c) || c == '_' || c == '-' || c == '.') out[i] = c;
+        else out[i] = '_';
+    }
+    out[len] = '\0';
+}
+
+static int dm_ensure_dir(const char *path) {
+    if(!path || !path[0]) return 1;
+    char tmp[PATH_MAX];
+    if(strlen(path) >= sizeof(tmp)) return 1;
+    strcpy(tmp, path);
+    size_t len = strlen(tmp);
+    if(len == 0) return 1;
+    if(tmp[len-1] == '/') tmp[len-1] = '\0';
+    for(char *p = tmp + 1; *p; p++) {
+        if(*p == '/') {
+            *p = '\0';
+            if(mkdir(tmp, 0777) && errno != EEXIST) return 1;
+            *p = '/';
+        }
+    }
+    if(mkdir(tmp, 0777) && errno != EEXIST) return 1;
+    return 0;
+}
+
+static int dm_resolve_script(const char *argv0, const char *overridePath, const char *scriptName, char *out, size_t outSize) {
+    if(!out || outSize == 0) return 1;
+    out[0] = '\0';
+    if(overridePath && overridePath[0]) {
+        snprintf(out, outSize, "%s", overridePath);
+        return access(out, R_OK) == 0 ? 0 : 1;
+    }
+    ssize_t n = readlink("/proc/self/exe", out, outSize - 1);
+    if(n > 0) {
+        out[n] = '\0';
+        char *slash = strrchr(out, '/');
+        if(slash) {
+            *slash = '\0';
+            snprintf(out, outSize, "%s/scripts/%s", out, scriptName);
+            if(access(out, R_OK) == 0) return 0;
+        }
+    }
+    if(argv0 && argv0[0] && strchr(argv0, '/')) {
+        char resolved[PATH_MAX];
+        if(realpath(argv0, resolved)) {
+            char *slash = strrchr(resolved, '/');
+            if(slash) {
+                *slash = '\0';
+                snprintf(out, outSize, "%s/scripts/%s", resolved, scriptName);
+                if(access(out, R_OK) == 0) return 0;
+            }
+        }
+    }
+    snprintf(out, outSize, "scripts/%s", scriptName);
+    return access(out, R_OK) == 0 ? 0 : 1;
+}
 int main_view_bm(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outformat, binaMethFile_t *ofp, \
     char** chromsUse, uint32_t* starts, uint32_t* ends, float* values, uint16_t* coverages, uint8_t* strands, \
     uint8_t* contexts, uint32_t* entryid);
@@ -158,8 +347,13 @@ int dm_sc_aggregate_main(int argc, char **argv);
 int dm_sc_export_main(int argc, char **argv);
 int dm_sc_shrinkage_main(int argc, char **argv);
 int dm_sc_pseudobulk_main(int argc, char **argv);
+int dm_sc_report_main(int argc, char **argv);
 int dm_validate_main(int argc, char **argv);
 int dm_dmr_bb_main(int argc, char **argv);
+int dm_dmr_indexed_main(int argc, char **argv);
+int dm_info_main(int argc, char **argv);
+int dm_export_main(int argc, char **argv);
+int dm_trackhub_main(int argc, char **argv);
 
 struct ARGS{
     char* runCMD;
@@ -184,7 +378,7 @@ struct Threading
 #define MAX_BUFF_PRINT 20000000
 const char* Help_String_main="Command Format :  dmtools <mode> [opnions]\n"
                 "\nUsage:\n"
-        "\t  [mode]         index align bam2dm mr2dm view ebsrate viewheader overlap regionstats bodystats profile chromstats sc-qc sc-matrix sc-aggregate sc-export sc-shrinkage sc-pseudobulk dmr-bb validate\n\n"
+        "\t  [mode]         index align bam2dm mr2dm view ebsrate viewheader overlap regionstats bodystats profile chromstats sc-qc sc-matrix sc-aggregate sc-export sc-shrinkage sc-pseudobulk dmr-indexed dmr-bb validate\n\n"
         "\t  index          build index for genome\n"
         "\t  align          alignment fastq\n"
         "\t  bam2dm         calculate DNA methylation (DM format) with BAM file\n"
@@ -193,6 +387,7 @@ const char* Help_String_main="Command Format :  dmtools <mode> [opnions]\n"
         "\t  merge          merge more than 1 dm files to one dm file\n"
         "\t  ebsrate        estimate bisulfite conversion rate\n"
         "\t  viewheader     view header of dm file\n"
+        "\t  info           print header and DWMP metadata\n"
         "\t  overlap        overlap cytosine site with more than two dm files\n"
         "\t  regionstats    calculate DNA methylation level of per region\n"
         "\t  bodystats      calculate DNA methylation level of body, upstream and downstream.\n"
@@ -203,12 +398,16 @@ const char* Help_String_main="Command Format :  dmtools <mode> [opnions]\n"
         "\t  stats          coverage and methylation level distribution of data\n"
         "\t  dmDMR          differential DNA methylation analysis\n"
         "\t  bw             convert dm file to bigwig file\n"
+        "\t  export         export utilities (e.g., bigwig)\n"
+        "\t  trackhub       build UCSC/IGV-ready track hubs from dm/bigwig\n"
         "\t  sc-qc          per-cell QC summary for single-cell dm files (ID as cell_id)\n"
         "\t  sc-matrix      build a cell x region methylation matrix from single-cell dm files (ID as cell_id)\n"
         "\t  sc-aggregate   aggregate single-cell methylation into group-level profiles (ID as cell_id)\n"
         "\t  sc-export      export sc-matrix output bundle (optionally to h5ad)\n"
         "\t  sc-shrinkage   empirical Bayes shrinkage on sc-matrix count bundles\n"
         "\t  sc-pseudobulk  build per-group pseudobulk dm files from single-cell DM\n"
+        "\t  sc-report      generate QC SVG from sc-qc/sc-matrix outputs\n"
+        "\t  dmr-indexed    DM-indexed multi-resolution DMR caller with replicate-aware stats\n"
         "\t  dmr-bb         beta-binomial style DMR test on region counts\n";
 
 static int dm_idmap_find_or_add(char ***names, size_t *n, size_t *cap, const char *name) {
@@ -310,6 +509,36 @@ const char* Help_String_scpseudobulk="Command Format :  dmtools sc-pseudobulk [o
         "\t    --groups         TSV mapping of cell_id to group label\n"
         "\t [sc-pseudobulk] mode parameters, options\n"
         "\t--context            context filter: C, CG, CHG, CHH (default: no filter)\n"
+        "\t--format             dm|bigwig|both (default: both)\n"
+        "\t--coverage           also write coverage bigWigs (default on when format includes bigwig)\n"
+        "\t-h|--help";
+
+const char* Help_String_screport="Command Format :  dmtools sc-report [options] --qc <obs_qc.tsv> --out <report.svg>\n"
+        "\nUsage: dmtools sc-report --qc sc_export/obs_qc.tsv --features sc_export/features.tsv --out report.svg\n"
+        "\t [sc-report] mode parameters, required\n"
+        "\t--qc <PATH>            obs_qc.tsv from sc-qc/sc-matrix/sc-export\n"
+        "\t--out <PATH>           output SVG report\n"
+        "\t [sc-report] mode parameters, options\n"
+        "\t--features <PATH>      features.tsv (for feature count summary)\n"
+        "\t--script <PATH>        override path to scripts/sc_report.py\n"
+        "\t-h|--help";
+
+const char* Help_String_dmrindexed="Command Format :  dmtools dmr-indexed --group1 <a.dm,b.dm> --group2 <c.dm,d.dm> [options]\n"
+        "\nUsage: dmtools dmr-indexed --group1 g1.dm --group2 g2.dm --out dmr.tsv [--tile-size 1000] [--step 1000]\n"
+        "\t [dmr-indexed] required\n"
+        "\t--group1             comma-separated group1 DM files (>=1)\n"
+        "\t--group2             comma-separated group2 DM files (>=1)\n"
+        "\t [dmr-indexed] options\n"
+        "\t--out                output TSV (default: stdout)\n"
+        "\t--tile-size          coarse tile size in bp (default: 1000)\n"
+        "\t--step               coarse step/stride in bp (default: tile-size)\n"
+        "\t--refine-step        refinement window size in bp (default: tile-size/5)\n"
+        "\t--min-delta          minimum absolute delta methylation to keep (default: 0.1)\n"
+        "\t--min-total          minimum total coverage across both groups to test (default: 10)\n"
+        "\t--min-coverage       minimum coverage per cytosine to include (default: 1)\n"
+        "\t--coarse-q           BH-FDR threshold for coarse tiles (default: 0.1)\n"
+        "\t--refine-p           per-window p-value threshold during refinement (default: 0.05)\n"
+        "\t--max-gap            maximum gap (bp) between significant tiles to merge (default: tile-size)\n"
         "\t-h|--help";
 
 const char* Help_String_dmrbb="Command Format :  dmtools dmr-bb --input <counts.tsv> [options]\n"
@@ -328,6 +557,14 @@ const char* Help_String_validate="Command Format :  dmtools validate -i <dm file
         "\t [validate] options\n"
         "\t--verbose            print additional index block details\n"
         "\t--region             region to query for records (default: chr1:1-1000000)\n"
+        "\t-h|--help";
+
+const char* Help_String_info="Command Format :  dmtools info -i <dm file>\n"
+        "\nUsage: dmtools info -i input.dm\n"
+        "\t [info] required\n"
+        "\t-i|--input           input DM file\n"
+        "\t [info] output\n"
+        "\t  prints header flags plus valEncoding/valScale from DWMP extension\n"
         "\t-h|--help";
 
 typedef struct {
@@ -497,6 +734,540 @@ int dm_dmr_bb_main(int argc, char **argv) {
     return 0;
 }
 
+typedef struct {
+    double k;
+    double n;
+} dm_counts_entry_t;
+
+typedef struct {
+    const char *chrom;
+    uint32_t start;
+    uint32_t end;
+    double pval;
+    double qval;
+    double delta;
+    double mu1;
+    double mu2;
+    double phi;
+    double k1;
+    double n1;
+    double k2;
+    double n2;
+} dm_tile_stat_t;
+
+typedef struct {
+    const char *chrom;
+    uint32_t start;
+    uint32_t end;
+    double sign;
+    int tile_count;
+} dm_candidate_region_t;
+
+typedef struct {
+    const char *chrom;
+    uint32_t start;
+    uint32_t end;
+    double delta;
+    double pval;
+    double qval;
+    double mu1;
+    double mu2;
+    double phi;
+    double k1;
+    double n1;
+    double k2;
+    double n2;
+    int coarse_tiles;
+    int refine_windows;
+} dm_region_stat_t;
+
+static void dm_collect_counts_for_file(binaMethFile_t *fp, const char *chrom, uint32_t start, uint32_t end, double min_cov_site, double *k, double *n) {
+    *k = 0.0;
+    *n = 0.0;
+    bmOverlappingIntervals_t *o = bmGetOverlappingIntervals(fp, (char *)chrom, start, end);
+    if(!o) return;
+    for(uint32_t j = 0; j < o->l; j++) {
+        if(o->coverage[j] < min_cov_site) continue;
+        double cov = o->coverage[j];
+        double meth = o->value[j];
+        *k += meth * cov;
+        *n += cov;
+    }
+    bmDestroyOverlappingIntervals(o);
+}
+
+static void dm_collect_counts_group(binaMethFile_t **fps, int n, const char *chrom, uint32_t start, uint32_t end, double min_cov_site, dm_counts_entry_t *out) {
+    for(int i = 0; i < n; i++) {
+        out[i].k = 0.0;
+        out[i].n = 0.0;
+        dm_collect_counts_for_file(fps[i], chrom, start, end, min_cov_site, &out[i].k, &out[i].n);
+    }
+}
+
+static double dm_sigmoid(double x) {
+    if(x > 50.0) return 1.0;
+    if(x < -50.0) return 0.0;
+    return 1.0 / (1.0 + exp(-x));
+}
+
+static int dm_glm_logit(const dm_counts_entry_t *g1, int n1, const dm_counts_entry_t *g2, int n2,
+                        double *delta, double *pval, double *mu1, double *mu2, double *phi,
+                        double *k1_out, double *n1_out, double *k2_out, double *n2_out) {
+    int ns = n1 + n2;
+    if(ns == 0) {
+        *delta = 0.0; *pval = 1.0; *mu1 = 0.0; *mu2 = 0.0; *phi = 1.0;
+        *k1_out = 0.0; *n1_out = 0.0; *k2_out = 0.0; *n2_out = 0.0;
+        return 0;
+    }
+    double *k = calloc(ns, sizeof(double));
+    double *n = calloc(ns, sizeof(double));
+    int *grp = calloc(ns, sizeof(int));
+    if(!k || !n || !grp) {
+        free(k); free(n); free(grp);
+        return 1;
+    }
+    double k1 = 0.0, k2 = 0.0, cov1 = 0.0, cov2 = 0.0;
+    for(int i = 0; i < n1; i++) {
+        k[i] = g1[i].k;
+        n[i] = g1[i].n;
+        grp[i] = 0;
+        k1 += k[i];
+        cov1 += n[i];
+    }
+    for(int i = 0; i < n2; i++) {
+        k[n1 + i] = g2[i].k;
+        n[n1 + i] = g2[i].n;
+        grp[n1 + i] = 1;
+        k2 += k[n1 + i];
+        cov2 += n[n1 + i];
+    }
+    *k1_out = k1; *k2_out = k2; *n1_out = cov1; *n2_out = cov2;
+    double p_init = (cov1 + cov2) > 0.0 ? (k1 + k2) / (cov1 + cov2) : 0.0;
+    double b0 = (p_init > 0.0 && p_init < 1.0) ? log(p_init / (1.0 - p_init)) : 0.0;
+    double b1 = 0.0;
+    for(int iter = 0; iter < 25; iter++) {
+        double xtwx00 = 0.0, xtwx01 = 0.0, xtwx11 = 0.0;
+        double xtwz0 = 0.0, xtwz1 = 0.0;
+        double max_change = 0.0;
+        for(int i = 0; i < ns; i++) {
+            if(n[i] <= 0.0) continue;
+            double eta = b0 + b1 * grp[i];
+            double mu = dm_sigmoid(eta);
+            double var = mu * (1.0 - mu);
+            if(var < 1e-9) var = 1e-9;
+            double weight = n[i] * var;
+            double yi = (n[i] > 0.0) ? (k[i] / n[i]) : 0.0;
+            double z = eta + (yi - mu) / var;
+            xtwx00 += weight;
+            xtwx01 += weight * grp[i];
+            xtwx11 += weight * grp[i] * grp[i];
+            xtwz0 += weight * z;
+            xtwz1 += weight * z * grp[i];
+        }
+        double det = xtwx00 * xtwx11 - xtwx01 * xtwx01;
+        if(det < 1e-12) break;
+        double nb0 = (xtwz0 * xtwx11 - xtwz1 * xtwx01) / det;
+        double nb1 = (xtwz1 * xtwx00 - xtwz0 * xtwx01) / det;
+        max_change = fmax(fabs(nb0 - b0), fabs(nb1 - b1));
+        b0 = nb0; b1 = nb1;
+        if(max_change < 1e-6) break;
+    }
+    double mu_g1 = dm_sigmoid(b0);
+    double mu_g2 = dm_sigmoid(b0 + b1);
+    *mu1 = mu_g1;
+    *mu2 = mu_g2;
+    *delta = mu_g1 - mu_g2;
+    double xtwx00 = 0.0, xtwx01 = 0.0, xtwx11 = 0.0;
+    double pearson = 0.0;
+    int df = 0;
+    for(int i = 0; i < ns; i++) {
+        if(n[i] <= 0.0) continue;
+        double eta = b0 + b1 * grp[i];
+        double mu = dm_sigmoid(eta);
+        double var = mu * (1.0 - mu);
+        if(var < 1e-9) var = 1e-9;
+        double weight = n[i] * var;
+        double yi = (n[i] > 0.0) ? (k[i] / n[i]) : 0.0;
+        double resid = (k[i] - n[i] * mu);
+        pearson += (n[i] > 0.0) ? (resid * resid) / (n[i] * var) : 0.0;
+        xtwx00 += weight;
+        xtwx01 += weight * grp[i];
+        xtwx11 += weight * grp[i] * grp[i];
+        df++;
+    }
+    double det = xtwx00 * xtwx11 - xtwx01 * xtwx01;
+    if(det < 1e-12 || df <= 2) {
+        *pval = 1.0;
+        *phi = 1.0;
+        free(k); free(n); free(grp);
+        return 0;
+    }
+    double inv00 = xtwx11 / det;
+    double inv11 = xtwx00 / det;
+    double phi_hat = (df > 2) ? pearson / (df - 2) : 1.0;
+    if(phi_hat < 1.0) phi_hat = 1.0;
+    *phi = phi_hat;
+    double se1 = sqrt(phi_hat * inv11);
+    if(se1 < 1e-12) {
+        *pval = 1.0;
+        free(k); free(n); free(grp);
+        return 0;
+    }
+    double z = b1 / se1;
+    *pval = erfc(fabs(z) / sqrt(2.0));
+    free(k); free(n); free(grp);
+    return 0;
+}
+
+static int dm_cmp_tile_pval(const void *a, const void *b) {
+    const dm_tile_stat_t *ra = *(const dm_tile_stat_t * const *)a;
+    const dm_tile_stat_t *rb = *(const dm_tile_stat_t * const *)b;
+    if (ra->pval < rb->pval) return -1;
+    if (ra->pval > rb->pval) return 1;
+    return 0;
+}
+
+static int dm_cmp_region_pval(const void *a, const void *b) {
+    const dm_region_stat_t *ra = *(const dm_region_stat_t * const *)a;
+    const dm_region_stat_t *rb = *(const dm_region_stat_t * const *)b;
+    if (ra->pval < rb->pval) return -1;
+    if (ra->pval > rb->pval) return 1;
+    return 0;
+}
+
+static void dm_assign_qvalues_tiles(dm_tile_stat_t *tiles, size_t nTiles) {
+    if(nTiles == 0) return;
+    dm_tile_stat_t **order = malloc(nTiles * sizeof(dm_tile_stat_t *));
+    if(!order) return;
+    for(size_t i = 0; i < nTiles; i++) order[i] = &tiles[i];
+    qsort(order, nTiles, sizeof(dm_tile_stat_t *), dm_cmp_tile_pval);
+    for(size_t i = 0; i < nTiles; i++) {
+        double q = order[i]->pval * (double)nTiles / (double)(i + 1);
+        if(q > 1.0) q = 1.0;
+        order[i]->qval = q;
+    }
+    for(size_t i = nTiles; i-- > 1;) {
+        if(order[i - 1]->qval > order[i]->qval) order[i - 1]->qval = order[i]->qval;
+    }
+    free(order);
+}
+
+static void dm_assign_qvalues_regions(dm_region_stat_t *regs, size_t nRegs) {
+    if(nRegs == 0) return;
+    dm_region_stat_t **order = malloc(nRegs * sizeof(dm_region_stat_t *));
+    if(!order) return;
+    for(size_t i = 0; i < nRegs; i++) order[i] = &regs[i];
+    qsort(order, nRegs, sizeof(dm_region_stat_t *), dm_cmp_region_pval);
+    for(size_t i = 0; i < nRegs; i++) {
+        double q = order[i]->pval * (double)nRegs / (double)(i + 1);
+        if(q > 1.0) q = 1.0;
+        order[i]->qval = q;
+    }
+    for(size_t i = nRegs; i-- > 1;) {
+        if(order[i - 1]->qval > order[i]->qval) order[i - 1]->qval = order[i]->qval;
+    }
+    free(order);
+}
+
+static int dm_parse_file_list(const char *arg, char ***outPaths, int *nOut) {
+    if(!arg || !outPaths || !nOut) return 1;
+    char *buf = strdup(arg);
+    if(!buf) return 1;
+    int count = 0;
+    for(char *p = buf; *p; p++) {
+        if(*p == ',') count++;
+    }
+    count += 1;
+    char **paths = calloc(count, sizeof(char *));
+    if(!paths) { free(buf); return 1; }
+    int idx = 0;
+    char *save = NULL;
+    char *tok = strtok_r(buf, ",", &save);
+    while(tok) {
+        paths[idx++] = strdup(tok);
+        tok = strtok_r(NULL, ",", &save);
+    }
+    *outPaths = paths;
+    *nOut = idx;
+    free(buf);
+    return (idx == 0);
+}
+
+static void dm_free_file_list(char **paths, int n) {
+    if(!paths) return;
+    for(int i = 0; i < n; i++) free(paths[i]);
+    free(paths);
+}
+
+int dm_dmr_indexed_main(int argc, char **argv) {
+    char *group1 = NULL;
+    char *group2 = NULL;
+    char *outPath = NULL;
+    uint32_t tileSize = 1000;
+    uint32_t step = 0;
+    uint32_t refineStep = 0;
+    uint32_t maxGap = 0;
+    double minDelta = 0.1;
+    double minTotal = 10.0;
+    double minCovSite = 1.0;
+    double coarseQ = 0.1;
+    double refineP = 0.05;
+    int ret = 0;
+
+    for(int i = 1; i < argc; i++) {
+        if(strcmp(argv[i], "--group1") == 0 && i + 1 < argc) {
+            group1 = argv[++i];
+        } else if(strcmp(argv[i], "--group2") == 0 && i + 1 < argc) {
+            group2 = argv[++i];
+        } else if(strcmp(argv[i], "--out") == 0 && i + 1 < argc) {
+            outPath = argv[++i];
+        } else if(strcmp(argv[i], "--tile-size") == 0 && i + 1 < argc) {
+            tileSize = (uint32_t)strtoul(argv[++i], NULL, 10);
+        } else if(strcmp(argv[i], "--step") == 0 && i + 1 < argc) {
+            step = (uint32_t)strtoul(argv[++i], NULL, 10);
+        } else if(strcmp(argv[i], "--refine-step") == 0 && i + 1 < argc) {
+            refineStep = (uint32_t)strtoul(argv[++i], NULL, 10);
+        } else if(strcmp(argv[i], "--min-delta") == 0 && i + 1 < argc) {
+            minDelta = atof(argv[++i]);
+        } else if(strcmp(argv[i], "--min-total") == 0 && i + 1 < argc) {
+            minTotal = atof(argv[++i]);
+        } else if(strcmp(argv[i], "--min-coverage") == 0 && i + 1 < argc) {
+            minCovSite = atof(argv[++i]);
+        } else if(strcmp(argv[i], "--coarse-q") == 0 && i + 1 < argc) {
+            coarseQ = atof(argv[++i]);
+        } else if(strcmp(argv[i], "--refine-p") == 0 && i + 1 < argc) {
+            refineP = atof(argv[++i]);
+        } else if(strcmp(argv[i], "--max-gap") == 0 && i + 1 < argc) {
+            maxGap = (uint32_t)strtoul(argv[++i], NULL, 10);
+        } else if(strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
+            fprintf(stderr, "%s\n", Help_String_dmrindexed);
+            return 0;
+        } else {
+            fprintf(stderr, "%s\n", Help_String_dmrindexed);
+            return 1;
+        }
+    }
+
+    if(!group1 || !group2) {
+        fprintf(stderr, "%s\n", Help_String_dmrindexed);
+        return 1;
+    }
+    if(tileSize == 0) tileSize = 1000;
+    if(step == 0) step = tileSize;
+    if(refineStep == 0) {
+        refineStep = tileSize / 5;
+        if(refineStep == 0) refineStep = tileSize;
+        if(refineStep == 0) refineStep = 50;
+    }
+    if(maxGap == 0) maxGap = tileSize;
+
+    char **g1_paths = NULL, **g2_paths = NULL;
+    int n1 = 0, n2 = 0;
+    if(dm_parse_file_list(group1, &g1_paths, &n1) != 0 || dm_parse_file_list(group2, &g2_paths, &n2) != 0 || n1 == 0 || n2 == 0) {
+        fprintf(stderr, "Error: unable to parse --group1/--group2\n");
+        dm_free_file_list(g1_paths, n1);
+        dm_free_file_list(g2_paths, n2);
+        return 1;
+    }
+
+    binaMethFile_t **g1_fp = calloc(n1, sizeof(binaMethFile_t *));
+    binaMethFile_t **g2_fp = calloc(n2, sizeof(binaMethFile_t *));
+    if(!g1_fp || !g2_fp) {
+        fprintf(stderr, "Error: unable to allocate file handles\n");
+        dm_free_file_list(g1_paths, n1);
+        dm_free_file_list(g2_paths, n2);
+        free(g1_fp); free(g2_fp);
+        return 1;
+    }
+    for(int i = 0; i < n1; i++) {
+        g1_fp[i] = bmOpen(g1_paths[i], NULL, "r");
+        if(!g1_fp[i]) { fprintf(stderr, "Error: cannot open %s\n", g1_paths[i]); ret = 1; goto cleanup_files; }
+    }
+    for(int i = 0; i < n2; i++) {
+        g2_fp[i] = bmOpen(g2_paths[i], NULL, "r");
+        if(!g2_fp[i]) { fprintf(stderr, "Error: cannot open %s\n", g2_paths[i]); ret = 1; goto cleanup_files; }
+    }
+
+    dm_tile_stat_t *tiles = NULL;
+    size_t nTiles = 0, capTiles = 0;
+    dm_counts_entry_t *counts1 = calloc(n1, sizeof(dm_counts_entry_t));
+    dm_counts_entry_t *counts2 = calloc(n2, sizeof(dm_counts_entry_t));
+    if(!counts1 || !counts2) { fprintf(stderr, "Error: out of memory\n"); ret = 1; goto cleanup_files; }
+
+    binaMethFile_t *templateFp = g1_fp[0];
+    for(uint32_t tid = 0; tid < templateFp->cl->nKeys; tid++) {
+        const char *chrom = templateFp->cl->chrom[tid];
+        uint32_t chromLen = templateFp->cl->len[tid];
+        for(uint32_t start = 0; start < chromLen; start += step) {
+            uint32_t end = start + tileSize;
+            if(end > chromLen) end = chromLen;
+            dm_collect_counts_group(g1_fp, n1, chrom, start, end, minCovSite, counts1);
+            dm_collect_counts_group(g2_fp, n2, chrom, start, end, minCovSite, counts2);
+            double delta = 0.0, pval = 1.0, mu1 = 0.0, mu2 = 0.0, phi = 1.0;
+            double k1 = 0.0, k2 = 0.0, cov1 = 0.0, cov2 = 0.0;
+            dm_glm_logit(counts1, n1, counts2, n2, &delta, &pval, &mu1, &mu2, &phi, &k1, &cov1, &k2, &cov2);
+            if(nTiles == capTiles) {
+                size_t newCap = capTiles ? capTiles * 2 : 1024;
+                dm_tile_stat_t *tmp = realloc(tiles, newCap * sizeof(dm_tile_stat_t));
+                if(!tmp) { fprintf(stderr, "Error: out of memory\n"); ret = 1; goto cleanup_files; }
+                tiles = tmp;
+                capTiles = newCap;
+            }
+            tiles[nTiles].chrom = chrom;
+            tiles[nTiles].start = start;
+            tiles[nTiles].end = end;
+            tiles[nTiles].pval = pval;
+            tiles[nTiles].qval = 1.0;
+            tiles[nTiles].delta = delta;
+            tiles[nTiles].mu1 = mu1;
+            tiles[nTiles].mu2 = mu2;
+            tiles[nTiles].phi = phi;
+            tiles[nTiles].k1 = k1;
+            tiles[nTiles].n1 = cov1;
+            tiles[nTiles].k2 = k2;
+            tiles[nTiles].n2 = cov2;
+            nTiles++;
+        }
+    }
+
+    dm_assign_qvalues_tiles(tiles, nTiles);
+
+    dm_candidate_region_t *cands = NULL;
+    size_t nCands = 0, capCands = 0;
+    dm_candidate_region_t *curr = NULL;
+    for(size_t i = 0; i < nTiles; i++) {
+        double totCov = tiles[i].n1 + tiles[i].n2;
+        int pass = (tiles[i].qval <= coarseQ) && (fabs(tiles[i].delta) >= minDelta) && (totCov >= minTotal);
+        if(!pass) continue;
+        double sign = (tiles[i].delta >= 0.0) ? 1.0 : -1.0;
+        if(curr && strcmp(curr->chrom, tiles[i].chrom) == 0 && sign == curr->sign && tiles[i].start <= curr->end + maxGap) {
+            curr->end = tiles[i].end;
+            curr->tile_count += 1;
+        } else {
+            if(nCands == capCands) {
+                size_t newCap = capCands ? capCands * 2 : 128;
+                dm_candidate_region_t *tmp = realloc(cands, newCap * sizeof(dm_candidate_region_t));
+                if(!tmp) { fprintf(stderr, "Error: out of memory\n"); ret = 1; goto cleanup_files; }
+                cands = tmp;
+                capCands = newCap;
+            }
+            cands[nCands].chrom = tiles[i].chrom;
+            cands[nCands].start = tiles[i].start;
+            cands[nCands].end = tiles[i].end;
+            cands[nCands].sign = sign;
+            cands[nCands].tile_count = 1;
+            curr = &cands[nCands];
+            nCands++;
+        }
+    }
+
+    dm_region_stat_t *regions = NULL;
+    size_t nRegs = 0, capRegs = 0;
+    for(size_t ci = 0; ci < nCands; ci++) {
+        const dm_candidate_region_t *cand = &cands[ci];
+        uint32_t winStart = cand->start;
+        uint32_t winEnd = cand->end;
+        int leftIdx = -1, rightIdx = -1;
+        int winCount = 0;
+        for(uint32_t pos = winStart; pos < winEnd; pos += refineStep) {
+            uint32_t rEnd = pos + refineStep;
+            if(rEnd > winEnd) rEnd = winEnd;
+            dm_collect_counts_group(g1_fp, n1, cand->chrom, pos, rEnd, minCovSite, counts1);
+            dm_collect_counts_group(g2_fp, n2, cand->chrom, pos, rEnd, minCovSite, counts2);
+            double delta = 0.0, pval = 1.0, mu1 = 0.0, mu2 = 0.0, phi = 1.0;
+            double k1 = 0.0, k2 = 0.0, cov1 = 0.0, cov2 = 0.0;
+            dm_glm_logit(counts1, n1, counts2, n2, &delta, &pval, &mu1, &mu2, &phi, &k1, &cov1, &k2, &cov2);
+            double totCov = cov1 + cov2;
+            int support = (fabs(delta) >= minDelta) && (pval <= refineP) && (totCov >= minTotal);
+            if(support) {
+                if(leftIdx == -1) leftIdx = winCount;
+                rightIdx = winCount;
+            }
+            winCount++;
+        }
+        if(leftIdx == -1 || rightIdx == -1) continue;
+        uint32_t finalStart = winStart + (uint32_t)leftIdx * refineStep;
+        uint32_t finalEnd = winStart + (uint32_t)(rightIdx + 1) * refineStep;
+        if(finalEnd > winEnd) finalEnd = winEnd;
+        dm_collect_counts_group(g1_fp, n1, cand->chrom, finalStart, finalEnd, minCovSite, counts1);
+        dm_collect_counts_group(g2_fp, n2, cand->chrom, finalStart, finalEnd, minCovSite, counts2);
+        double delta = 0.0, pval = 1.0, mu1 = 0.0, mu2 = 0.0, phi = 1.0;
+        double k1 = 0.0, k2 = 0.0, cov1 = 0.0, cov2 = 0.0;
+        dm_glm_logit(counts1, n1, counts2, n2, &delta, &pval, &mu1, &mu2, &phi, &k1, &cov1, &k2, &cov2);
+        if(nRegs == capRegs) {
+            size_t newCap = capRegs ? capRegs * 2 : 128;
+            dm_region_stat_t *tmp = realloc(regions, newCap * sizeof(dm_region_stat_t));
+            if(!tmp) { fprintf(stderr, "Error: out of memory\n"); ret = 1; goto cleanup_files; }
+            regions = tmp;
+            capRegs = newCap;
+        }
+        regions[nRegs].chrom = cand->chrom;
+        regions[nRegs].start = finalStart;
+        regions[nRegs].end = finalEnd;
+        regions[nRegs].delta = delta;
+        regions[nRegs].pval = pval;
+        regions[nRegs].qval = 1.0;
+        regions[nRegs].mu1 = mu1;
+        regions[nRegs].mu2 = mu2;
+        regions[nRegs].phi = phi;
+        regions[nRegs].k1 = k1;
+        regions[nRegs].n1 = cov1;
+        regions[nRegs].k2 = k2;
+        regions[nRegs].n2 = cov2;
+        regions[nRegs].coarse_tiles = cand->tile_count;
+        regions[nRegs].refine_windows = rightIdx - leftIdx + 1;
+        nRegs++;
+    }
+
+    dm_assign_qvalues_regions(regions, nRegs);
+
+    FILE *out = stdout;
+    if(outPath) {
+        out = fopen(outPath, "w");
+        if(!out) {
+            fprintf(stderr, "Error: cannot open output %s\n", outPath);
+            ret = 1;
+            goto cleanup_files;
+        }
+    }
+    fprintf(out, "chrom\tstart\tend\tdelta\tp_value\tq_value\tmu1\tmu2\tphi\tk1\tn1\tk2\tn2\tcoarse_tiles\trefine_windows\n");
+    for(size_t i = 0; i < nRegs; i++) {
+        fprintf(out, "%s\t%u\t%u\t%.6f\t%.6g\t%.6g\t%.6f\t%.6f\t%.4f\t%.1f\t%.1f\t%.1f\t%.1f\t%d\t%d\n",
+                regions[i].chrom,
+                regions[i].start,
+                regions[i].end,
+                regions[i].delta,
+                regions[i].pval,
+                regions[i].qval,
+                regions[i].mu1,
+                regions[i].mu2,
+                regions[i].phi,
+                regions[i].k1,
+                regions[i].n1,
+                regions[i].k2,
+                regions[i].n2,
+                regions[i].coarse_tiles,
+                regions[i].refine_windows);
+    }
+    if(out && out != stdout) fclose(out);
+
+cleanup_files:
+    if(g1_fp) {
+        for(int i = 0; i < n1; i++) if(g1_fp[i]) bmClose(g1_fp[i]);
+    }
+    if(g2_fp) {
+        for(int i = 0; i < n2; i++) if(g2_fp[i]) bmClose(g2_fp[i]);
+    }
+    free(g1_fp); free(g2_fp);
+    dm_free_file_list(g1_paths, n1);
+    dm_free_file_list(g2_paths, n2);
+    free(counts1); free(counts2);
+    free(tiles);
+    free(cands);
+    free(regions);
+    return ret;
+}
+
 int dm_validate_main(int argc, char **argv){
     char *input = NULL;
     int verbose = 0;
@@ -623,6 +1394,38 @@ int dm_validate_main(int argc, char **argv){
     return 0;
 }
 
+int dm_info_main(int argc, char **argv){
+    char *input = NULL;
+    for(int i = 1; i < argc; ++i){
+        if(strcmp(argv[i], "-i") == 0 || strcmp(argv[i], "--input") == 0){
+            if(i + 1 < argc){
+                input = argv[++i];
+            }else{
+                fprintf(stderr, "%s\n", Help_String_info);
+                return 1;
+            }
+        }else if(strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0){
+            fprintf(stderr, "%s\n", Help_String_info);
+            return 0;
+        }
+    }
+
+    if(!input){
+        fprintf(stderr, "%s\n", Help_String_info);
+        return 1;
+    }
+
+    binaMethFile_t *fp = bmOpen(input, NULL, "r");
+    if(!fp){
+        fprintf(stderr, "dmtools info: failed to open %s\n", input);
+        return 1;
+    }
+    bmApplyHeaderType(fp);
+    bmPrintHdr(fp);
+    bmClose(fp);
+    return 0;
+}
+
 const char* Help_String_bw="Command Format :  dmtools bw [options] -i <dm> -o <out bigwig file>\n"
         "\nUsage: dmtools bw -i input.dm -o meth.bw\n"
         "\t [bw] mode paramaters, required\n"
@@ -638,6 +1441,42 @@ const char* Help_String_bw="Command Format :  dmtools bw [options] -i <dm> -o <o
         "\t--maxcover            <= maximum coverage show, default: 10000\n"
         "\t--zl                  The maximum number of zoom levels. [0-10], default: 2\n"
         "\t-h|--help";
+
+const char* Help_String_export="Command Format :  dmtools export <subcommand>\n"
+        "\nUsage: dmtools export bigwig [options]\n"
+        "\tSubcommands:\n"
+        "\t  bigwig    export dm to bigWig (optionally split by ID)\n";
+
+const char* Help_String_export_bigwig="Command Format :  dmtools export bigwig [options] -i <dm> -o <out dir>\n"
+        "\nUsage: dmtools export bigwig -i sample.dm -o out_dir [--prefix sample] [--coverage]\n"
+        "\t [required]\n"
+        "\t-i|--input            input DM file\n"
+        "\t-o|--out-dir          output directory for bigWig files (will be created)\n"
+        "\t [options]\n"
+        "\t--prefix <STR>        prefix for output names (default: basename of input)\n"
+        "\t--coverage            also write a coverage bigWig (<prefix>.cov.bw)\n"
+        "\t--id <ID|name>        export only records with the given numeric ID or idmap name (repeatable)\n"
+        "\t--id-list <FILE>      file with one ID/name per line\n"
+        "\t--idmap <PATH>        explicit idmap path (default: <dm>.idmap.tsv|.idmap)\n"
+        "\t-h|--help             print this message\n";
+
+const char* Help_String_trackhub="Command Format :  dmtools trackhub build [options]\n"
+        "\nUsage: dmtools trackhub build --dm sample1.dm --dm sample2.dm --genome hg38 --out-dir hub_out\n"
+        "   or: dmtools trackhub build --merged-dm merged.dm --id cellA --id cellB --genome hg38 --out-dir hub_out\n"
+        "\t [required]\n"
+        "\t--dm <PATH>           per-sample DM input (repeatable)\n"
+        "\t--merged-dm <PATH>    merged DM with ID field\n"
+        "\t--genome <ASSEMBLY>   genome/assembly name for hub.txt/genomes.txt\n"
+        "\t--out-dir <DIR>       output directory for the hub (will be created)\n"
+        "\t [options]\n"
+        "\t--id <ID|name>        IDs/names to export when using --merged-dm (repeatable)\n"
+        "\t--id-list <FILE>      file with IDs/names (one per line)\n"
+        "\t--idmap <PATH>        explicit idmap path (default: <dm>.idmap.tsv|.idmap)\n"
+        "\t--prefix <STR>        base prefix for bigWig names (default: input basename)\n"
+        "\t--coverage|--with-coverage  include coverage tracks\n"
+        "\t--hub <STR>           hub name (default: dmtools_hub)\n"
+        "\t--email <STR>         contact email for hub.txt (default: none)\n"
+        "\t-h|--help             print this message\n";
 
 const char* Help_String_bam2dm="Command Format :  dmtools bam2dm [options] -g genome.fa -b <BamfileSorted> -m <methratio dm outfile>\n"
                 "\nUsage: dmtools bam2dm -C -S --Cx -g genome.fa -b align.sort.bam -m meth.dm\n"
@@ -961,10 +1800,20 @@ int main(int argc, char *argv[]) {
         return dm_sc_shrinkage_main(argc-1, argv+1);
     } else if(argc>1 && strcmp(argv[1], "sc-pseudobulk") == 0){
         return dm_sc_pseudobulk_main(argc-1, argv+1);
+    } else if(argc>1 && strcmp(argv[1], "sc-report") == 0){
+        return dm_sc_report_main(argc-1, argv+1);
+    } else if(argc>1 && strcmp(argv[1], "dmr-indexed") == 0){
+        return dm_dmr_indexed_main(argc-1, argv+1);
     } else if(argc>1 && strcmp(argv[1], "dmr-bb") == 0){
         return dm_dmr_bb_main(argc-1, argv+1);
     } else if(argc>1 && strcmp(argv[1], "validate") == 0){
         return dm_validate_main(argc-1, argv+1);
+    } else if(argc>1 && strcmp(argv[1], "info") == 0){
+        return dm_info_main(argc-1, argv+1);
+    } else if(argc>1 && strcmp(argv[1], "export") == 0){
+        return dm_export_main(argc-1, argv+1);
+    } else if(argc>1 && strcmp(argv[1], "trackhub") == 0){
+        return dm_trackhub_main(argc-1, argv+1);
     }
 
     binaMethFile_t *fp = NULL;
@@ -994,7 +1843,7 @@ int main(int argc, char *argv[]) {
     char methfile[100]; char *outbmfile = NULL;
     char *inbmfile = malloc(10000);
     char *bmfile2 = malloc(1000);
-    char mode[10]; char *region = NULL;
+    char mode[32]; char *region = NULL;
     char *inbmfiles = malloc(10000);
     int inbm_mul = 0;
     char *method = malloc(100);
@@ -1089,10 +1938,16 @@ int main(int argc, char *argv[]) {
            fprintf(stderr, "%s\n", Help_String_scshrinkage);
         }else if(strcmp(mode, "sc-pseudobulk") == 0){
            fprintf(stderr, "%s\n", Help_String_scpseudobulk);
+        }else if(strcmp(mode, "sc-report") == 0){
+           fprintf(stderr, "%s\n", Help_String_screport);
         }else if(strcmp(mode, "validate") == 0){
            fprintf(stderr, "%s\n", Help_String_validate);
          }else if(strcmp(mode, "addzm") == 0){
              fprintf(stderr, "%s\n", Help_String_addzm);
+        }else if(strcmp(mode, "export") == 0){
+           fprintf(stderr, "%s\n", Help_String_export);
+        }else if(strcmp(mode, "trackhub") == 0){
+           fprintf(stderr, "%s\n", Help_String_trackhub);
          }else{
             fprintf(stderr, "Please define correct mode!!!\n");
             fprintf(stderr, "%s\n", Help_String_main);
@@ -4225,24 +5080,27 @@ int calregionstats_file(char *inbmfile, char *method, char *bedfile, int format,
     char *PerLine = malloc(2000);
     //int printL = 0;
     char *chrom = malloc(100*sizeof(char)); int start=0, end=0;
-    char *strand = malloc(2); int pstrand = 2; //.
+    char strand[8] = {0}; int pstrand = 2; //.
     int splitN = 1, Tsize = 4; //, i =0
     char *geneid = malloc(200*sizeof(char));
+    geneid[0] = '\0';
     uint32_t *countC = malloc(sizeof(uint32_t)*splitN*Tsize);
     uint32_t *countCT = malloc(sizeof(uint32_t)*splitN*Tsize);
     while(fgets(PerLine,2000,Fbedfile)!=NULL){
         if(PerLine[0] == '#') continue;
+        int matched = 0;
         if(format == 0){
-            sscanf(PerLine, "%s%d%d%s", chrom, &start, &end, strand);
-            if(!(strand[0]=='+' || strand[0]=='-' || strand[0]=='.')) {
-                strand[0] = '.';
-                strand[1] = '\0';
-            }
+            matched = sscanf(PerLine, "%99s%d%d%7s", chrom, &start, &end, strand);
+            if(matched < 3) continue;
+            if(matched < 4) { strand[0] = '.'; strand[1] = '\0'; }
+            geneid[0] = '\0';
         }else if(format == 1){
-            sscanf(PerLine, "%s\t%*s\t%*s\t%d\t%d\t%*s\t%s\t%*s\t%*s%s", chrom, &start, &end, strand, geneid);
+            matched = sscanf(PerLine, "%99s\t%*s\t%*s\t%d\t%d\t%*s\t%7s\t%*s\t%199s", chrom, &start, &end, strand, geneid);
+            if(matched < 4) continue;
             delete_char2(geneid, '"', ';');
         }else if(format == 2){
-            sscanf(PerLine, "%s\t%*s\t%*s\t%d\t%d\t%*s\t%s\t%*s\t%*[^=]=%[^;\n\t]", chrom, &start, &end, strand, geneid);
+            matched = sscanf(PerLine, "%99s\t%*s\t%*s\t%d\t%d\t%*s\t%7s\t%*s\t%*[^=]=%199[^;\n\t]", chrom, &start, &end, strand, geneid);
+            if(matched < 4) continue;
             delete_char2(geneid, '"', ';');
         }else{
             fprintf(stderr, "\nE: unexpected file format!!!\n");
@@ -4271,7 +5129,7 @@ int calregionstats_file(char *inbmfile, char *method, char *bedfile, int format,
     bmClose(fp);
     bmCleanupOnce();
     fclose(Fbedfile);
-    free(chrom); free(PerLine); free(strand);
+    free(chrom); free(PerLine);
     free(countC); free(countCT);
     return 0;
 }
@@ -4839,6 +5697,7 @@ int main_view(binaMethFile_t *ifp, char *region, FILE* outfileF, char *outformat
     char *pszBuf = malloc(sizeof(char)*40000000);
     char *tempstore = pszBuf;
     char *tempchar = malloc(20);
+    char idbuf[64];
     int Nprint = 0; int cover = 0; float methlevel = 0;
     int usingLine = 0; int keyvalue = 0;
     if(strcmp(outformat, "dm") == 0) {
@@ -5888,6 +6747,13 @@ void bmPrintHdr(binaMethFile_t *bm) {
     //fprintf(stderr, "summaryOffset:      0x%"PRIx64"\n", bm->hdr->summaryOffset);
     fprintf(stderr, "bufSize:    %"PRIu32"\n", bm->hdr->bufSize);
     fprintf(stderr, "extensionOffset:    0x%"PRIx64"\n", bm->hdr->extensionOffset);
+    fprintf(stderr, "valEncoding: %s\n", (bm->type & BM_VAL_U16) ? "uint16 (quantized)" : "float32");
+    fprintf(stderr, "valScale:    %"PRIu32"\n", bm->valScale);
+    fprintf(stderr, "packStrandContext: %s\n", (bm->type & BM_PACK_SC) ? "yes" : "no");
+    if(bm->type & BM_VAL_U16) {
+        double step = (bm->valScale ? 1.0 / (double)bm->valScale : 0.0);
+        fprintf(stderr, "quantizationStep: %.6g\n", step);
+    }
 
     if(bm->hdr->nLevels) {
         fprintf(stderr, "	i	level	data	index\n");
@@ -6244,3 +7110,620 @@ int fileExists(const char *filePath) {
 //
 //    return fileList;
 //}
+
+static binaMethFile_t *dm_open_bw_writer(binaMethFile_t *templateFp, const char *path, int zoomlevel) {
+    binaMethFile_t *out = bmOpen((char *)path, NULL, "w");
+    if(!out) return NULL;
+    out->type = BM_END; // 0-based bigWig: start/end/value only
+    out->valScale = 0;
+    out->valEncoding = 0;
+    if(bmCreateHdr(out, zoomlevel)) {
+        bmClose(out);
+        return NULL;
+    }
+    out->cl = bmCreateChromList_ifp(templateFp);
+    if(!out->cl) {
+        bmClose(out);
+        return NULL;
+    }
+    if(bmWriteHdr(out)) {
+        bmClose(out);
+        return NULL;
+    }
+    return out;
+}
+
+static int dm_add_bw_interval(binaMethFile_t *out, const char *chrom, uint32_t start, uint32_t end, float value) {
+    char *chroms[1];
+    uint32_t starts[1];
+    uint32_t ends[1];
+    float values[1];
+    chroms[0] = (char *)chrom;
+    starts[0] = start;
+    ends[0] = end;
+    values[0] = value;
+    return bmAddIntervals(out, chroms, starts, ends, values, NULL, NULL, NULL, NULL, 1);
+}
+
+static int dm_export_bigwig_for_id(binaMethFile_t *in, const char *outDir, const char *prefix, const char *label,
+    uint32_t filterId, int writeCoverage, int hasCoverage, char *valuePath, size_t valuePathSz, char *covPath, size_t covPathSz) {
+    if(!in || !outDir || !prefix || !valuePath || !covPath) return 1;
+    char safeLabel[256];
+    safeLabel[0] = '\0';
+    if(label) dm_sanitize_label(label, safeLabel, sizeof(safeLabel));
+    char basePrefix[PATH_MAX];
+    if(filterId > 0 && safeLabel[0] != '\0') {
+        snprintf(basePrefix, sizeof(basePrefix), "%s.%s", prefix, safeLabel);
+    } else {
+        snprintf(basePrefix, sizeof(basePrefix), "%s", prefix);
+    }
+
+    if(dm_ensure_dir(outDir)) {
+        fprintf(stderr, "[export bigwig] failed to create output dir %s\n", outDir);
+        return 1;
+    }
+    snprintf(valuePath, valuePathSz, "%s/%s.ml.bw", outDir, basePrefix);
+    if(writeCoverage && hasCoverage) {
+        snprintf(covPath, covPathSz, "%s/%s.cov.bw", outDir, basePrefix);
+    } else {
+        covPath[0] = '\0';
+    }
+
+    binaMethFile_t *valueOut = dm_open_bw_writer(in, valuePath, 0);
+    if(!valueOut) {
+        fprintf(stderr, "[export bigwig] failed to open %s for writing\n", valuePath);
+        return 1;
+    }
+    binaMethFile_t *covOut = NULL;
+    if(covPath[0]) {
+        covOut = dm_open_bw_writer(in, covPath, 0);
+        if(!covOut) {
+            fprintf(stderr, "[export bigwig] failed to open %s for writing\n", covPath);
+            bmClose(valueOut);
+            return 1;
+        }
+    }
+
+    for(int64_t c = 0; c < in->cl->nKeys; c++) {
+        const char *chrom = in->cl->chrom[c];
+        uint32_t len = in->cl->len[c];
+        bmOverlapIterator_t *iter = bmOverlappingIntervalsIterator(in, (char *)chrom, 0, len, 512);
+        while(iter && iter->data) {
+            bmOverlappingIntervals_t *o = iter->intervals;
+            for(uint32_t i = 0; i < o->l; i++) {
+                if(filterId > 0) {
+                    if(!o->entryid || o->entryid[i] != filterId) continue;
+                }
+                uint32_t start = o->start ? o->start[i] : 0;
+                uint32_t end = (o->end && o->end[i] > 0) ? o->end[i] : start + 1;
+                if(start == 0 || end == 0 || end <= start) continue;
+                /* bigWig expects 0-based half-open coordinates; DM stores 1-based */
+                start -= 1;
+                end -= 1;
+                float value = o->value ? o->value[i] : 0.0f;
+                if(dm_add_bw_interval(valueOut, chrom, start, end, value)) {
+                    bmIteratorDestroy(iter);
+                    bmClose(valueOut);
+                    if(covOut) bmClose(covOut);
+                    return 1;
+                }
+                if(covOut && o->coverage) {
+                    float cov = (float)o->coverage[i];
+                    if(dm_add_bw_interval(covOut, chrom, start, end, cov)) {
+                        bmIteratorDestroy(iter);
+                        bmClose(valueOut);
+                        bmClose(covOut);
+                        return 1;
+                    }
+                }
+            }
+            iter = bmIteratorNext(iter);
+        }
+        bmIteratorDestroy(iter);
+    }
+
+    bmClose(valueOut);
+    if(covOut) bmClose(covOut);
+    return 0;
+}
+
+static int dm_export_bigwig_main(int argc, char **argv) {
+    char *input = NULL;
+    char *outDir = ".";
+    char *prefix = NULL;
+    char *idmapPath = NULL;
+    int writeCoverage = 0;
+    char **idTokens = NULL;
+    size_t nTokens = 0, capTokens = 0;
+
+    for(int i = 1; i < argc; i++) {
+        if(strcmp(argv[i], "-i") == 0 || strcmp(argv[i], "--input") == 0) {
+            if(i + 1 < argc) input = argv[++i];
+        } else if(strcmp(argv[i], "-o") == 0 || strcmp(argv[i], "--out-dir") == 0) {
+            if(i + 1 < argc) outDir = argv[++i];
+        } else if(strcmp(argv[i], "--prefix") == 0) {
+            if(i + 1 < argc) prefix = argv[++i];
+        } else if(strcmp(argv[i], "--coverage") == 0 || strcmp(argv[i], "--with-coverage") == 0) {
+            writeCoverage = 1;
+        } else if(strcmp(argv[i], "--id") == 0) {
+            if(i + 1 < argc) dm_append_tokens(&idTokens, &nTokens, &capTokens, argv[++i]);
+        } else if(strcmp(argv[i], "--id-list") == 0) {
+            if(i + 1 < argc) {
+                if(dm_append_tokens_from_file(&idTokens, &nTokens, &capTokens, argv[++i])) {
+                    fprintf(stderr, "Failed to read --id-list\n");
+                    return 1;
+                }
+            }
+        } else if(strcmp(argv[i], "--idmap") == 0) {
+            if(i + 1 < argc) idmapPath = argv[++i];
+        } else if(strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
+            fprintf(stderr, "%s\n", Help_String_export_bigwig);
+            return 0;
+        } else {
+            fprintf(stderr, "Unknown option for export bigwig: %s\n", argv[i]);
+            fprintf(stderr, "%s\n", Help_String_export_bigwig);
+            return 1;
+        }
+    }
+
+    if(!input) {
+        fprintf(stderr, "%s\n", Help_String_export_bigwig);
+        return 1;
+    }
+    char derivedPrefix[PATH_MAX];
+    if(!prefix) {
+        dm_basename_no_ext(input, derivedPrefix, sizeof(derivedPrefix));
+        prefix = derivedPrefix;
+    }
+
+    if(bmInit(1<<17) != 0) {
+        fprintf(stderr, "export bigwig: bmInit failed\n");
+        return 1;
+    }
+    binaMethFile_t *fp = bmOpen(input, NULL, "r");
+    if(!fp) {
+        fprintf(stderr, "export bigwig: failed to open %s\n", input);
+        return 1;
+    }
+    bmApplyHeaderType(fp);
+    int hasCoverage = (fp->hdr->version & BM_COVER);
+    int hasId = (fp->hdr->version & BM_ID);
+
+    dm_idmap_t idmap = {0};
+    char defaultIdmap[PATH_MAX];
+    if(!idmapPath) {
+        snprintf(defaultIdmap, sizeof(defaultIdmap), "%s.idmap.tsv", input);
+        idmapPath = defaultIdmap;
+    }
+    dm_id_filter_t filter = {0};
+    int parseRv = dm_parse_id_filter(&filter, idTokens, nTokens, idmapPath, &idmap);
+    if(parseRv) {
+        fprintf(stderr, "[export bigwig] failed to parse --id/--id-list (missing idmap?)\n");
+        bmClose(fp);
+        dm_idmap_free(&idmap);
+        dm_id_filter_free(&filter);
+        for(size_t k = 0; k < nTokens; k++) free(idTokens[k]);
+        free(idTokens);
+        return 1;
+    }
+    if(filter.n > 0 && !hasId) {
+        fprintf(stderr, "[export bigwig] --id supplied but %s has no ID field\n", input);
+        bmClose(fp);
+        dm_idmap_free(&idmap);
+        dm_id_filter_free(&filter);
+        for(size_t k = 0; k < nTokens; k++) free(idTokens[k]);
+        free(idTokens);
+        return 1;
+    }
+
+    if(writeCoverage && !hasCoverage) {
+        fprintf(stderr, "[export bigwig] input missing coverage field; skipping coverage track\n");
+        writeCoverage = 0;
+    }
+
+    if(filter.n == 0) {
+        char valuePath[PATH_MAX], covPath[PATH_MAX];
+        if(dm_export_bigwig_for_id(fp, outDir, prefix, NULL, 0, writeCoverage, hasCoverage, valuePath, sizeof(valuePath), covPath, sizeof(covPath))) {
+            fprintf(stderr, "[export bigwig] failed to export %s\n", input);
+            bmClose(fp);
+            dm_idmap_free(&idmap);
+            dm_id_filter_free(&filter);
+            for(size_t k = 0; k < nTokens; k++) free(idTokens[k]);
+            free(idTokens);
+            return 1;
+        }
+        fprintf(stderr, "[export bigwig] wrote %s\n", valuePath);
+        if(covPath[0]) fprintf(stderr, "[export bigwig] wrote %s\n", covPath);
+    } else {
+        for(size_t i = 0; i < filter.n; i++) {
+            uint32_t id = filter.ids[i];
+            const char *name = dm_idmap_lookup(&idmap, id);
+            char labelBuf[64];
+            if(name && name[0]) {
+                snprintf(labelBuf, sizeof(labelBuf), "%s", name);
+            } else {
+                snprintf(labelBuf, sizeof(labelBuf), "%" PRIu32, id);
+            }
+            char valuePath[PATH_MAX], covPath[PATH_MAX];
+            if(dm_export_bigwig_for_id(fp, outDir, prefix, labelBuf, id, writeCoverage, hasCoverage, valuePath, sizeof(valuePath), covPath, sizeof(covPath))) {
+                fprintf(stderr, "[export bigwig] failed to export ID %" PRIu32 "\n", id);
+                bmClose(fp);
+                dm_idmap_free(&idmap);
+                dm_id_filter_free(&filter);
+                for(size_t k = 0; k < nTokens; k++) free(idTokens[k]);
+                free(idTokens);
+                return 1;
+            }
+            fprintf(stderr, "[export bigwig] wrote %s for ID %" PRIu32 "\n", valuePath, id);
+            if(covPath[0]) fprintf(stderr, "[export bigwig] wrote %s for ID %" PRIu32 "\n", covPath, id);
+        }
+    }
+
+    bmClose(fp);
+    dm_idmap_free(&idmap);
+    dm_id_filter_free(&filter);
+    for(size_t k = 0; k < nTokens; k++) free(idTokens[k]);
+    free(idTokens);
+    bmCleanupOnce();
+    return 0;
+}
+
+int dm_export_main(int argc, char **argv) {
+    if(argc < 2) {
+        fprintf(stderr, "%s\n", Help_String_export);
+        return 1;
+    }
+    if(strcmp(argv[1], "bigwig") == 0) {
+        return dm_export_bigwig_main(argc-1, argv+1);
+    }
+    fprintf(stderr, "Unknown export subcommand: %s\n", argv[1]);
+    fprintf(stderr, "%s\n", Help_String_export);
+    return 1;
+}
+
+typedef struct {
+    char label[256];
+    char valuePath[PATH_MAX];
+    char covPath[PATH_MAX];
+} trackhub_entry_t;
+
+static int dm_write_trackhub_files(const char *outDir, const char *genome, const char *hubName, const char *email,
+    trackhub_entry_t *entries, size_t nEntries) {
+    char hubPath[PATH_MAX], genomesPath[PATH_MAX], trackDbPath[PATH_MAX];
+    snprintf(hubPath, sizeof(hubPath), "%s/hub.txt", outDir);
+    snprintf(genomesPath, sizeof(genomesPath), "%s/genomes.txt", outDir);
+    snprintf(trackDbPath, sizeof(trackDbPath), "%s/trackDb.txt", outDir);
+
+    FILE *hub = fopen(hubPath, "w");
+    if(!hub) return 1;
+    fprintf(hub, "hub %s\n", hubName);
+    fprintf(hub, "shortLabel %s\n", hubName);
+    fprintf(hub, "longLabel %s\n", hubName);
+    fprintf(hub, "genomesFile genomes.txt\n");
+    if(email && email[0]) fprintf(hub, "email %s\n", email);
+    fclose(hub);
+
+    FILE *genomes = fopen(genomesPath, "w");
+    if(!genomes) return 1;
+    fprintf(genomes, "genome %s\n", genome);
+    fprintf(genomes, "trackDb trackDb.txt\n");
+    fclose(genomes);
+
+    FILE *tdb = fopen(trackDbPath, "w");
+    if(!tdb) return 1;
+    for(size_t i = 0; i < nEntries; i++) {
+        fprintf(tdb, "track %s_ml\n", entries[i].label);
+        fprintf(tdb, "bigDataUrl %s\n", entries[i].valuePath);
+        fprintf(tdb, "shortLabel %s ml\n", entries[i].label);
+        fprintf(tdb, "longLabel %s methylation level\n", entries[i].label);
+        fprintf(tdb, "type bigWig\n\n");
+        if(entries[i].covPath[0]) {
+            fprintf(tdb, "track %s_cov\n", entries[i].label);
+            fprintf(tdb, "bigDataUrl %s\n", entries[i].covPath);
+            fprintf(tdb, "shortLabel %s cov\n", entries[i].label);
+            fprintf(tdb, "longLabel %s coverage\n", entries[i].label);
+            fprintf(tdb, "type bigWig\n\n");
+        }
+    }
+    fclose(tdb);
+    return 0;
+}
+
+int dm_trackhub_main(int argc, char **argv) {
+    char **dmInputs = NULL;
+    size_t nDm = 0, capDm = 0;
+    char *mergedDm = NULL;
+    char *genome = NULL;
+    char *outDir = NULL;
+    char *idmapPath = NULL;
+    char *prefix = NULL;
+    char *hubName = "dmtools_hub";
+    char *email = "";
+    int writeCoverage = 0;
+    char **idTokens = NULL;
+    size_t nTokens = 0, capTokens = 0;
+
+    int startIdx = 1;
+    if(argc > 1 && strcmp(argv[1], "build") == 0) startIdx = 2;
+
+    for(int i = startIdx; i < argc; i++) {
+        if(strcmp(argv[i], "--dm") == 0) {
+            if(i + 1 < argc) {
+                if(nDm == capDm) {
+                    size_t newCap = capDm ? capDm * 2 : 4;
+                    char **tmp = realloc(dmInputs, newCap * sizeof(char *));
+                    if(!tmp) return 1;
+                    dmInputs = tmp;
+                    capDm = newCap;
+                }
+                dmInputs[nDm++] = argv[++i];
+            }
+        } else if(strcmp(argv[i], "--merged-dm") == 0) {
+            if(i + 1 < argc) mergedDm = argv[++i];
+        } else if(strcmp(argv[i], "--genome") == 0) {
+            if(i + 1 < argc) genome = argv[++i];
+        } else if(strcmp(argv[i], "--out-dir") == 0) {
+            if(i + 1 < argc) outDir = argv[++i];
+        } else if(strcmp(argv[i], "--id") == 0) {
+            if(i + 1 < argc) dm_append_tokens(&idTokens, &nTokens, &capTokens, argv[++i]);
+        } else if(strcmp(argv[i], "--id-list") == 0) {
+            if(i + 1 < argc) {
+                if(dm_append_tokens_from_file(&idTokens, &nTokens, &capTokens, argv[++i])) {
+                    fprintf(stderr, "Failed to read --id-list\n");
+                    return 1;
+                }
+            }
+        } else if(strcmp(argv[i], "--idmap") == 0) {
+            if(i + 1 < argc) idmapPath = argv[++i];
+        } else if(strcmp(argv[i], "--coverage") == 0 || strcmp(argv[i], "--with-coverage") == 0) {
+            writeCoverage = 1;
+        } else if(strcmp(argv[i], "--prefix") == 0) {
+            if(i + 1 < argc) prefix = argv[++i];
+        } else if(strcmp(argv[i], "--hub") == 0) {
+            if(i + 1 < argc) hubName = argv[++i];
+        } else if(strcmp(argv[i], "--email") == 0) {
+            if(i + 1 < argc) email = argv[++i];
+        } else if(strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
+            fprintf(stderr, "%s\n", Help_String_trackhub);
+            return 0;
+        } else {
+            fprintf(stderr, "Unknown option for trackhub build: %s\n", argv[i]);
+            fprintf(stderr, "%s\n", Help_String_trackhub);
+            return 1;
+        }
+    }
+
+    if(!genome || !outDir) {
+        fprintf(stderr, "%s\n", Help_String_trackhub);
+        return 1;
+    }
+    if(mergedDm && nDm > 0) {
+        fprintf(stderr, "[trackhub] use either --merged-dm or one/more --dm inputs, not both\n");
+        return 1;
+    }
+    if(!mergedDm && nDm == 0) {
+        fprintf(stderr, "[trackhub] no inputs provided\n");
+        return 1;
+    }
+    if(bmInit(1<<17) != 0) {
+        fprintf(stderr, "[trackhub] bmInit failed\n");
+        return 1;
+    }
+    if(dm_ensure_dir(outDir)) {
+        fprintf(stderr, "[trackhub] failed to create %s\n", outDir);
+        return 1;
+    }
+    char bwDir[PATH_MAX];
+    snprintf(bwDir, sizeof(bwDir), "%s/bw", outDir);
+    if(dm_ensure_dir(bwDir)) {
+        fprintf(stderr, "[trackhub] failed to create %s\n", bwDir);
+        return 1;
+    }
+
+    trackhub_entry_t *entries = NULL;
+    size_t nEntries = 0, capEntries = 0;
+
+    if(mergedDm) {
+        binaMethFile_t *fp = bmOpen(mergedDm, NULL, "r");
+        if(!fp) {
+            fprintf(stderr, "[trackhub] failed to open %s\n", mergedDm);
+            return 1;
+        }
+        bmApplyHeaderType(fp);
+        int hasCoverage = (fp->hdr->version & BM_COVER);
+        int hasId = (fp->hdr->version & BM_ID);
+        if(nTokens > 0 && !hasId) {
+            fprintf(stderr, "[trackhub] --id requires an ID-enabled DM\n");
+            bmClose(fp);
+            return 1;
+        }
+
+        dm_idmap_t idmap = {0};
+        char defaultIdmap[PATH_MAX];
+        if(!idmapPath) {
+            snprintf(defaultIdmap, sizeof(defaultIdmap), "%s.idmap.tsv", mergedDm);
+            idmapPath = defaultIdmap;
+        }
+        dm_id_filter_t filter = {0};
+        int parseRv = dm_parse_id_filter(&filter, idTokens, nTokens, idmapPath, &idmap);
+        if(parseRv) {
+            fprintf(stderr, "[trackhub] failed to resolve IDs (missing idmap?)\n");
+            bmClose(fp);
+            dm_idmap_free(&idmap);
+            dm_id_filter_free(&filter);
+            return 1;
+        }
+        if(writeCoverage && !hasCoverage) {
+            fprintf(stderr, "[trackhub] input missing coverage; skipping coverage tracks\n");
+            writeCoverage = 0;
+        }
+
+        char basePrefix[PATH_MAX];
+        if(prefix) snprintf(basePrefix, sizeof(basePrefix), "%s", prefix);
+        else dm_basename_no_ext(mergedDm, basePrefix, sizeof(basePrefix));
+
+        if(filter.n == 0) {
+            char valuePath[PATH_MAX], covPath[PATH_MAX];
+            if(dm_export_bigwig_for_id(fp, bwDir, basePrefix, NULL, 0, writeCoverage, hasCoverage, valuePath, sizeof(valuePath), covPath, sizeof(covPath))) {
+                fprintf(stderr, "[trackhub] failed to export %s\n", mergedDm);
+                bmClose(fp);
+                dm_idmap_free(&idmap);
+                dm_id_filter_free(&filter);
+                return 1;
+            }
+            if(nEntries == capEntries) {
+                size_t newCap = capEntries ? capEntries * 2 : 4;
+                trackhub_entry_t *tmp = realloc(entries, newCap * sizeof(trackhub_entry_t));
+                if(!tmp) return 1;
+                entries = tmp;
+                capEntries = newCap;
+            }
+            dm_sanitize_label(basePrefix, entries[nEntries].label, sizeof(entries[nEntries].label));
+            snprintf(entries[nEntries].valuePath, sizeof(entries[nEntries].valuePath), "bw/%s", strrchr(valuePath, '/') ? strrchr(valuePath, '/') + 1 : valuePath);
+            if(covPath[0]) snprintf(entries[nEntries].covPath, sizeof(entries[nEntries].covPath), "bw/%s", strrchr(covPath, '/') ? strrchr(covPath, '/') + 1 : covPath);
+            else entries[nEntries].covPath[0] = '\0';
+            nEntries++;
+        } else {
+            for(size_t i = 0; i < filter.n; i++) {
+                uint32_t id = filter.ids[i];
+                const char *name = dm_idmap_lookup(&idmap, id);
+                char labelBuf[128];
+                if(name && name[0]) snprintf(labelBuf, sizeof(labelBuf), "%s", name);
+                else snprintf(labelBuf, sizeof(labelBuf), "%" PRIu32, id);
+                char valuePath[PATH_MAX], covPath[PATH_MAX];
+                if(dm_export_bigwig_for_id(fp, bwDir, basePrefix, labelBuf, id, writeCoverage, hasCoverage, valuePath, sizeof(valuePath), covPath, sizeof(covPath))) {
+                    fprintf(stderr, "[trackhub] failed to export ID %" PRIu32 "\n", id);
+                    bmClose(fp);
+                    dm_idmap_free(&idmap);
+                    dm_id_filter_free(&filter);
+                    free(entries);
+                    return 1;
+                }
+                if(nEntries == capEntries) {
+                    size_t newCap = capEntries ? capEntries * 2 : 4;
+                    trackhub_entry_t *tmp = realloc(entries, newCap * sizeof(trackhub_entry_t));
+                    if(!tmp) return 1;
+                    entries = tmp;
+                    capEntries = newCap;
+                }
+                dm_sanitize_label(labelBuf, entries[nEntries].label, sizeof(entries[nEntries].label));
+                snprintf(entries[nEntries].valuePath, sizeof(entries[nEntries].valuePath), "bw/%s", strrchr(valuePath, '/') ? strrchr(valuePath, '/') + 1 : valuePath);
+                if(covPath[0]) snprintf(entries[nEntries].covPath, sizeof(entries[nEntries].covPath), "bw/%s", strrchr(covPath, '/') ? strrchr(covPath, '/') + 1 : covPath);
+                else entries[nEntries].covPath[0] = '\0';
+                nEntries++;
+            }
+        }
+        bmClose(fp);
+        dm_idmap_free(&idmap);
+        dm_id_filter_free(&filter);
+    } else {
+        for(size_t idx = 0; idx < nDm; idx++) {
+            binaMethFile_t *fp = bmOpen(dmInputs[idx], NULL, "r");
+            if(!fp) {
+                fprintf(stderr, "[trackhub] failed to open %s\n", dmInputs[idx]);
+                free(entries);
+                return 1;
+            }
+            bmApplyHeaderType(fp);
+            int hasCoverage = (fp->hdr->version & BM_COVER);
+            if(writeCoverage && !hasCoverage) {
+                fprintf(stderr, "[trackhub] %s missing coverage; skipping coverage track\n", dmInputs[idx]);
+            }
+            char basePrefix[PATH_MAX];
+            if(prefix) {
+                if(nDm > 1) {
+                    char sampleName[PATH_MAX];
+                    dm_basename_no_ext(dmInputs[idx], sampleName, sizeof(sampleName));
+                    snprintf(basePrefix, sizeof(basePrefix), "%s.%s", prefix, sampleName);
+                } else {
+                    snprintf(basePrefix, sizeof(basePrefix), "%s", prefix);
+                }
+            } else {
+                dm_basename_no_ext(dmInputs[idx], basePrefix, sizeof(basePrefix));
+            }
+
+            char valuePath[PATH_MAX], covPath[PATH_MAX];
+            if(dm_export_bigwig_for_id(fp, bwDir, basePrefix, NULL, 0, writeCoverage && hasCoverage, hasCoverage, valuePath, sizeof(valuePath), covPath, sizeof(covPath))) {
+                fprintf(stderr, "[trackhub] failed to export %s\n", dmInputs[idx]);
+                bmClose(fp);
+                free(entries);
+                return 1;
+            }
+            if(nEntries == capEntries) {
+                size_t newCap = capEntries ? capEntries * 2 : 4;
+                trackhub_entry_t *tmp = realloc(entries, newCap * sizeof(trackhub_entry_t));
+                if(!tmp) return 1;
+                entries = tmp;
+                capEntries = newCap;
+            }
+            dm_sanitize_label(basePrefix, entries[nEntries].label, sizeof(entries[nEntries].label));
+            snprintf(entries[nEntries].valuePath, sizeof(entries[nEntries].valuePath), "bw/%s", strrchr(valuePath, '/') ? strrchr(valuePath, '/') + 1 : valuePath);
+            if(covPath[0]) snprintf(entries[nEntries].covPath, sizeof(entries[nEntries].covPath), "bw/%s", strrchr(covPath, '/') ? strrchr(covPath, '/') + 1 : covPath);
+            else entries[nEntries].covPath[0] = '\0';
+            nEntries++;
+            bmClose(fp);
+        }
+    }
+
+    if(dm_write_trackhub_files(outDir, genome, hubName, email, entries, nEntries)) {
+        fprintf(stderr, "[trackhub] failed to write hub files\n");
+        free(entries);
+        return 1;
+    }
+    fprintf(stderr, "[trackhub] hub written to %s (tracks: %zu)\n", outDir, nEntries);
+    free(entries);
+    for(size_t k = 0; k < nTokens; k++) free(idTokens[k]);
+    free(idTokens);
+    bmCleanupOnce();
+    return 0;
+}
+
+int dm_sc_report_main(int argc, char **argv) {
+    char *qc = NULL;
+    char *features = NULL;
+    char *out = NULL;
+    char *scriptOverride = NULL;
+
+    for(int i = 1; i < argc; i++) {
+        if(strcmp(argv[i], "--qc") == 0 && i + 1 < argc) {
+            qc = argv[++i];
+        } else if(strcmp(argv[i], "--out") == 0 && i + 1 < argc) {
+            out = argv[++i];
+        } else if(strcmp(argv[i], "--features") == 0 && i + 1 < argc) {
+            features = argv[++i];
+        } else if(strcmp(argv[i], "--script") == 0 && i + 1 < argc) {
+            scriptOverride = argv[++i];
+        } else if(strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
+            fprintf(stderr, "%s\n", Help_String_screport);
+            return 0;
+        } else {
+            fprintf(stderr, "Unknown option for sc-report: %s\n", argv[i]);
+            fprintf(stderr, "%s\n", Help_String_screport);
+            return 1;
+        }
+    }
+    if(!qc || !out) {
+        fprintf(stderr, "%s\n", Help_String_screport);
+        return 1;
+    }
+    char scriptPath[PATH_MAX];
+    if(dm_resolve_script(argv[0], scriptOverride, "sc_report.py", scriptPath, sizeof(scriptPath)) != 0) {
+        fprintf(stderr, "Error: cannot find sc_report.py (use --script to set path)\n");
+        return 1;
+    }
+    char cmd[PATH_MAX * 3];
+    if(features && features[0]) {
+        snprintf(cmd, sizeof(cmd), "python3 %s --qc %s --features %s --out %s", scriptPath, qc, features, out);
+    } else {
+        snprintf(cmd, sizeof(cmd), "python3 %s --qc %s --out %s", scriptPath, qc, out);
+    }
+    int rc = system(cmd);
+    if(rc != 0) {
+        int exitCode = -1;
+        if(rc != -1 && WIFEXITED(rc)) exitCode = WEXITSTATUS(rc);
+        fprintf(stderr, "Error: sc-report failed (exit code %d)\n", exitCode);
+        return 1;
+    }
+    fprintf(stderr, "[sc-report] wrote %s\n", out);
+    return 0;
+}

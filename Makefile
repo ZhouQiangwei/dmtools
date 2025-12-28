@@ -40,6 +40,8 @@ EXTRA_CFLAGS_PIC = -fpic
 LDFLAGS_SUB = htslib/libhts.a -lz -lpthread -llzma -lbz2 -lcurl
 LDLIBS =
 INCLUDES = 
+BIGWIG_CFLAGS ?=
+BIGWIG_LIBS ?= -lBigWig
 
 # Create a simple test-program to check if gcc can compile with curl
 #tmpfile:=$(shell mktemp --suffix=.c)
@@ -67,6 +69,19 @@ else
    # and if not, disable CURL specific code compilation
    CFLAGS += -DNOCURL
    #$(info LIBS: $(CFLAGS))
+endif
+
+bigwig_tmp:=$(shell mktemp -t bigwigcheckXXXXX.c 2>/dev/null || (TMPDIR=$${TMPDIR:-/tmp}; mktemp $$TMPDIR/bigwigcheckXXXXX.c))
+$(file >$(bigwig_tmp),#include <bigWig.h>)
+$(file >>$(bigwig_tmp),int main(){ return bwInit(1024); })
+HAVE_BIGWIG := $(shell $(CC) $(CFLAGS) $(BIGWIG_CFLAGS) $(bigwig_tmp) $(LIBS) $(BIGWIG_LIBS) -o /dev/null >/dev/null 2>&1 && echo "YES")
+$(shell rm -f $(bigwig_tmp))
+
+ifeq ($(HAVE_BIGWIG),YES)
+    $(info Found libBigWig; enabling bigWig compatibility tests.)
+else
+    $(info libBigWig not found; skipping bigWig compatibility tests. Set BIGWIG_CFLAGS/BIGWIG_LIBS to override.)
+    BIGWIG_LIBS :=
 endif
 
 #ifeq ($(HAVE_CURL),YES)
@@ -134,16 +149,16 @@ libBinaMeth.so: $(OBJS:.o=.pico)
 #$(CC) -shared $(LDFLAGS) -o $@ $(OBJS:.o=.pico) $(LDLIBS) $(LIBS)
 
 test/testLocal: libBinaMeth.a
-	$(CC) -o $@ -I. $(CFLAGS) test/testLocal.c libBinaMeth.a $(LIBS)
+	$(CC) -o $@ -I. $(CFLAGS) $(BIGWIG_CFLAGS) test/testLocal.c libBinaMeth.a $(LIBS) $(BIGWIG_LIBS)
 
 test/testRemoteManyContigs: libBinaMeth.a
-	$(CC) -o $@ -I. $(CFLAGS) test/testRemoteManyContigs.c libBinaMeth.a $(LIBS)
+	$(CC) -o $@ -I. $(CFLAGS) $(BIGWIG_CFLAGS) test/testRemoteManyContigs.c libBinaMeth.a $(LIBS) $(BIGWIG_LIBS)
 
 test/testRemote: libBinaMeth.a
-	$(CC) -o $@ -I. $(CFLAGS) test/testRemote.c libBinaMeth.a $(LIBS)
+	$(CC) -o $@ -I. $(CFLAGS) $(BIGWIG_CFLAGS) test/testRemote.c libBinaMeth.a $(LIBS) $(BIGWIG_LIBS)
 
 test/testWrite: libBinaMeth.a
-	$(CC) -o $@ -I. $(CFLAGS) test/testWrite.c libBinaMeth.a $(LIBS)
+	$(CC) -o $@ -I. $(CFLAGS) $(BIGWIG_CFLAGS) test/testWrite.c libBinaMeth.a $(LIBS) $(BIGWIG_LIBS)
 
 dmtools: libBinaMeth.so
 	$(CC) -o $@ -I. -L. $(CFLAGS) dmtools.c dmSingleCell.c dmScShrinkage.c -lBinaMeth $(LIBS) -Wl,-rpath $(RPATH) -lpthread
@@ -176,10 +191,10 @@ bam2motif: libBinaMeth.a htslib/libhts.a
 	$(CXX) $(CXXFLAGS) -no-pie bam2motif.cpp -o bam2motif -m64 -I. libBinaMeth.a -Wl,-rpath $(RPATH) htslib/libhts.a $(LDFLAGS_SUB)
 
 test/exampleWrite: libBinaMeth.so
-	$(CC) -o $@ -I. -L. $(CFLAGS) test/exampleWrite.c -lBinaMeth $(LIBS) -Wl,-rpath .
+	$(CC) -o $@ -I. -L. $(CFLAGS) $(BIGWIG_CFLAGS) test/exampleWrite.c -lBinaMeth $(LIBS) $(BIGWIG_LIBS) -Wl,-rpath .
 
 test/testIterator: libBinaMeth.a
-	$(CC) -o $@ -I. $(CFLAGS) test/testIterator.c libBinaMeth.a $(LIBS)
+	$(CC) -o $@ -I. $(CFLAGS) $(BIGWIG_CFLAGS) test/testIterator.c libBinaMeth.a $(LIBS) $(BIGWIG_LIBS)
 
 test/testBinOrder: htslib/libhts.a
 	$(CC) -o $@ -I. $(CFLAGS) test/testBinOrder.c htslib/libhts.a $(LDFLAGS_SUB)
@@ -190,13 +205,30 @@ test/testCoordinates: libBinaMeth.a
 test/test_id_roundtrip: libBinaMeth.a
 	$(CC) -o $@ -I. $(CFLAGS) test/test_id_roundtrip.c libBinaMeth.a $(LIBS)
 
+test/test_quantize_roundtrip: libBinaMeth.a dmtools
+	$(CC) -o $@ -I. $(CFLAGS) test/test_quantize_roundtrip.c libBinaMeth.a $(LIBS)
+
 install: dmtools bam2dm dmDMR dmalign bam2motif
 
-test: test/testLocal test/testRemote test/testWrite test/testLocal dmtools bam2dm-asan test/exampleWrite test/testRemoteManyContigs test/testIterator test/testBinOrder test/testCoordinates test/test_id_roundtrip
+BASE_TESTS = test/testBinOrder test/testCoordinates test/test_id_roundtrip test/test_quantize_roundtrip
+BIGWIG_TESTS = test/testLocal test/testRemote test/testWrite test/testRemoteManyContigs test/exampleWrite test/testIterator
+
+ifeq ($(HAVE_BIGWIG),YES)
+    ENABLED_BIGWIG_TESTS := $(BIGWIG_TESTS)
+else
+    ENABLED_BIGWIG_TESTS :=
+endif
+
+test: $(BASE_TESTS) dmtools bam2dm-asan $(ENABLED_BIGWIG_TESTS)
+ifeq ($(HAVE_BIGWIG),YES)
 	./test/test.py
+else
+	@echo "Skipping bigWig compatibility tests (libBigWig not available)."
+endif
 	./test/testBinOrder.sh
 	./test/testCoordinates
 	./test/test_id_roundtrip
+	./test/test_quantize_roundtrip
 	./test/test_sc_shrinkage_toy.py
 	./test/test_sc_shrinkage_integration.py
 	./test/test_dmr_bb_toy.py
@@ -215,5 +247,5 @@ install-env: libBinaMeth.a libBinaMeth.so
 	install *.h $(prefix)/include
 
 libs:
-	chmod +x htslib/version.sh || true
+	chmod +x htslib/version.sh 2>/dev/null || true
 	$(MAKE) -C htslib libhts.a

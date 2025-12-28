@@ -157,7 +157,9 @@ int bmCreateHdr(binaMethFile_t *fp, int32_t maxZooms) {
     binaMethHdr_t *hdr = calloc(1, sizeof(binaMethHdr_t));
     if(!hdr) return 2;
 
-    hdr->version = 4;
+    /* DM files encode optional fields in the version bitmask (BM_MAGIC |
+     * BM_*). For plain bigWig output we keep the canonical version (4). */
+    hdr->version = (fp->type & BM_MAGIC) ? fp->type : 4;
     /*
      * fieldCount/definedFieldCount describe the on-disk record layout and
      * should include optional fields flagged in fp->type (BM_* bitmask).
@@ -314,12 +316,15 @@ typedef struct {
 //Still need to fill in indexOffset
 int bmWriteHdr(binaMethFile_t *bm) {
     uint32_t magic = BIGWIG_MAGIC;
-    //
-    uint16_t magic2 = BM_MAGIC;
-    magic2 |= (uint16_t) bm->type;
-    //if(DEBUG>1) printf("|||||| %ld\n", bm->type);
+    uint16_t version = 0;
+    if(bm->hdr && bm->hdr->version) {
+        version = bm->hdr->version;
+    } else {
+        version = (uint16_t) bm->type;
+    }
+    if(version == 0) version = (bm->type & BM_MAGIC) ? bm->type : 4;
 
-    uint16_t two = magic2; //4;
+    uint16_t two = version; //version/flags
     FILE *fp;
     void *p = calloc(58, sizeof(uint8_t)); //58 bytes of nothing
     if(!bm->isWrite) return 1;
@@ -353,20 +358,24 @@ int bmWriteHdr(binaMethFile_t *bm) {
     if(writeChromList(fp, bm->cl)) return 7;
     if(writeAtPos(&(bm->hdr->ctOffset), sizeof(uint64_t), 1, 0x8, fp)) return 8;
 
-    //Write extension with write parameters
-    bm->hdr->extensionOffset = ftell(fp);
-    bmWriteParams_t params;
-    params.magic = BM_WRITE_PARAMS_MAGIC;
-    params.version = 3;
-    params.size = sizeof(bmWriteParams_t);
-    params.bufSize = bm->hdr->bufSize;
-    params.blockSize = bm->writeBuffer->blockSize;
-    params.valScale = (bm->type & BM_VAL_U16) ? bm->valScale : 0;
-    params.valEncoding = (bm->type & BM_VAL_U16) ? 1 : 0;
-    params.packSc = (bm->type & BM_PACK_SC) ? 1 : 0;
-    params.padding[0] = 0;
-    params.padding[1] = 0;
-    if(fwrite(&params, sizeof(params), 1, fp) != 1) return 12;
+    /* DM stores an extension describing write parameters; plain bigWig output
+     * leaves extensionOffset unset (0). */
+    bm->hdr->extensionOffset = 0;
+    if(bm->hdr->version & BM_MAGIC) {
+        bm->hdr->extensionOffset = ftell(fp);
+        bmWriteParams_t params;
+        params.magic = BM_WRITE_PARAMS_MAGIC;
+        params.version = 3;
+        params.size = sizeof(bmWriteParams_t);
+        params.bufSize = bm->hdr->bufSize;
+        params.blockSize = bm->writeBuffer->blockSize;
+        params.valScale = (bm->type & BM_VAL_U16) ? bm->valScale : 0;
+        params.valEncoding = (bm->type & BM_VAL_U16) ? 1 : 0;
+        params.packSc = (bm->type & BM_PACK_SC) ? 1 : 0;
+        params.padding[0] = 0;
+        params.padding[1] = 0;
+        if(fwrite(&params, sizeof(params), 1, fp) != 1) return 12;
+    }
     if(writeAtPos(&(bm->hdr->extensionOffset), sizeof(uint64_t), 1, 0x38, fp)) return 12;
 
     //Update the dataOffset
